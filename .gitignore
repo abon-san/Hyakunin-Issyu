@@ -12,3 +12,4 @@
 *.jks
 *.keystore
 /tools/fonts-src/
+/.claude/worktrees/
