@@ -195,10 +195,10 @@ internal val POEMS_51_TO_100: List<Poem> = listOf(
     Poem(
         no = 70,
         kami = "寂しさに　宿を立ち出でて　眺むれば",
-        shimo = "いづくも同じ　秋の夕暮れ",
+        shimo = "いづこも同じ　秋の夕暮れ",
         kamiYomi = "さびしさに　やどをたちいでて　ながむれば",
-        shimoYomi = "いずくもおなじ　あきのゆうぐれ",
-        shimoKana = "いづくもおなじ　あきのゆふぐれ",
+        shimoYomi = "いずこもおなじ　あきのゆうぐれ",
+        shimoKana = "いづこもおなじ　あきのゆふぐれ",
         author = "良暹法師",
         authorYomi = "りょうぜんほうし",
     ),
