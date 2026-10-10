@@ -110,7 +110,7 @@ internal val POEMS_51_TO_100: List<Poem> = listOf(
         shimoYomi = "きょうここのえに　においぬるかな",
         shimoKana = "けふここのへに　にほひぬるかな",
         author = "伊勢大輔",
-        authorYomi = "いせのおおすけ",
+        authorYomi = "いせのたいふ",
     ),
     Poem(
         no = 62,
@@ -400,7 +400,7 @@ internal val POEMS_51_TO_100: List<Poem> = listOf(
         shimoYomi = "ぬれにぞぬれし　いろはかわらず",
         shimoKana = "ぬれにぞぬれし　いろはかはらず",
         author = "殷富門院大輔",
-        authorYomi = "いんぶもんいんのたいふ",
+        authorYomi = "いんぷもんいんのたいふ",
     ),
     Poem(
         no = 91,
