@@ -74,7 +74,7 @@ class SimpleRulesTest {
         assertTrue(r.transfers.isEmpty())
         assertEquals(listOf(2, 3, 4, 5), st.playerNos)
         assertEquals(listOf(6, 7, 8, 9, 10), st.cpuNos)
-        assertEquals("相手が自陣の札を取りました。お手つき", r.message)
+        assertEquals("相手が自陣の札を取りました。あなたのお手つき", r.message)
     }
 
     @Test
@@ -91,7 +91,7 @@ class SimpleRulesTest {
         assertTrue(st.lastResult!!.transfers.isEmpty())
         assertEquals(5, st.playerCards.size)
         assertEquals(5, st.cpuCards.size)
-        assertEquals("空札でした。お手つき", st.lastResult!!.message)
+        assertEquals("空札でした。あなたのお手つき", st.lastResult!!.message)
         // お手つきがあった空札は自動では進まない
         e.advanceBy(30_000L)
         assertEquals(MatchPhase.Result, e.state.phase)

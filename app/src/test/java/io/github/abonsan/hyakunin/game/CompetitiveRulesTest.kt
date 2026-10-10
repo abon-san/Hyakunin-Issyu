@@ -295,7 +295,7 @@ class CompetitiveRulesTest {
         assertEquals(5, st.playerCards.size)
         assertEquals(5, st.cpuCards.size)
         assertEquals(
-            "空札でした。お手つき。相手のお手つき。お互いのお手つきなので札は動きません",
+            "空札でした。あなたのお手つき。相手のお手つき。お互いのお手つきなので札は動きません",
             r.message,
         )
     }

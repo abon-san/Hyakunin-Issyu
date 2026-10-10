@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 起動直後から和紙の色で表示する（画面の中身は Compose で描く） -->
+    <style name="Theme.Hyakunin" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/washi</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

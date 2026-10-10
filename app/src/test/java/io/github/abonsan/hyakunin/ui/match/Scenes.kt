@@ -1,0 +1,212 @@
+package io.github.abonsan.hyakunin.ui.match
+
+import io.github.abonsan.hyakunin.game.CpuLevel
+import io.github.abonsan.hyakunin.game.GameConfig
+import io.github.abonsan.hyakunin.game.MatchPhase
+import io.github.abonsan.hyakunin.game.MatchUiState
+import io.github.abonsan.hyakunin.game.RuleMode
+import io.github.abonsan.hyakunin.game.Side
+import io.github.abonsan.hyakunin.game.Transfer
+import io.github.abonsan.hyakunin.ui.Fixtures
+import io.github.abonsan.hyakunin.ui.Fixtures.card
+import io.github.abonsan.hyakunin.ui.Fixtures.cards
+
+/**
+ * スクリーンショットに使う対戦の場面（偽の [MatchUiState]）。
+ * 自陣は 1・17・33・61・87番、敵陣は 12・23・46・70・99番から始まる。
+ */
+internal object Scenes {
+    fun waiting(): MatchUiState = Fixtures.state(phase = MatchPhase.Waiting)
+
+    /** 自陣の61番「いにしえの」を読んでいる途中。 */
+    fun reading(revealed: Int = 9): MatchUiState = Fixtures.state(
+        reading = Fixtures.reading(no = 61, readNumber = 4, totalReads = 20, revealed = revealed),
+        readsDone = 3,
+        playerTaken = 1,
+        cpuTaken = 1,
+        cpuFaults = 1,
+    )
+
+    /** 簡易ルール。下の句まで読み進めたところ。 */
+    fun readingShimo(): MatchUiState = Fixtures.state(
+        config = GameConfig(ruleMode = RuleMode.SIMPLE, emptyCardCount = 30, cpuLevel = CpuLevel.MASTER),
+        reading = Fixtures.reading(no = 41, readNumber = 12, totalReads = 40, revealed = 23),
+        readsDone = 11,
+        playerTaken = 2,
+        cpuTaken = 3,
+    )
+
+    /** 自陣の1番を7文字目で取った（決まり字3文字・緑3文字と赤4文字）。 */
+    fun result(): MatchUiState = Fixtures.state(
+        phase = MatchPhase.Result,
+        player = cards(17, 33, 61, 87),
+        reading = Fixtures.reading(no = 1, readNumber = 5, totalReads = 20, revealed = 7),
+        lastResult = Fixtures.result(
+            no = 1,
+            kimarijiLength = 3,
+            revealedAtTake = 7,
+            takenBy = Side.PLAYER,
+            takenFrom = Side.PLAYER,
+            message = "自陣の札を取りました",
+        ),
+        readsDone = 5,
+        playerTaken = 2,
+        cpuTaken = 1,
+    )
+
+    /** 敵陣の札に触れてお手つきし、相手が自陣の87番を取った。相手から2枚送られて自陣は6枚。 */
+    fun resultAfterFault(): MatchUiState = Fixtures.state(
+        phase = MatchPhase.Result,
+        player = cards(1, 17, 33, 61) + listOf(card(12, isNew = true), card(70, isNew = true)),
+        cpu = cards(23, 46, 99),
+        reading = Fixtures.reading(no = 87, readNumber = 6, totalReads = 20, revealed = 4),
+        lastResult = Fixtures.result(
+            no = 87,
+            kimarijiLength = 1,
+            revealedAtTake = 4,
+            takenBy = Side.CPU,
+            takenFrom = Side.PLAYER,
+            faults = setOf(Side.PLAYER),
+            transfers = listOf(
+                Transfer(Side.CPU, Side.PLAYER, 12, Transfer.Reason.SEND_AFTER_TAKE),
+                Transfer(Side.CPU, Side.PLAYER, 70, Transfer.Reason.FAULT_PENALTY),
+            ),
+            message = "相手が自陣の札を取りました。お手つき！相手から2枚送られます",
+        ),
+        readsDone = 6,
+        playerTaken = 1,
+        cpuTaken = 2,
+        playerFaults = 1,
+    )
+
+    /** 敵陣の12番を取ったので、自陣から1枚送る札を選ぶ。 */
+    fun choosingSend(): MatchUiState = Fixtures.state(
+        phase = MatchPhase.Result,
+        cpu = cards(23, 46, 70, 99),
+        reading = Fixtures.reading(no = 12, readNumber = 7, totalReads = 20, revealed = 5),
+        lastResult = Fixtures.result(
+            no = 12,
+            kimarijiLength = 3,
+            revealedAtTake = 5,
+            takenBy = Side.PLAYER,
+            takenFrom = Side.CPU,
+            message = "敵陣の札を取りました。自陣から1枚送ってください",
+        ),
+        pendingPlayerSends = 1,
+        readsDone = 7,
+        playerTaken = 3,
+        cpuTaken = 2,
+    )
+
+    /** 簡易ルール。決まり字（2文字）が出る前、1文字目で取った。 */
+    fun takenEarly(): MatchUiState = Fixtures.state(
+        config = GameConfig(ruleMode = RuleMode.SIMPLE),
+        phase = MatchPhase.Result,
+        cpu = cards(12, 46, 70, 99),
+        reading = Fixtures.reading(no = 23, readNumber = 9, totalReads = 20, revealed = 1),
+        lastResult = Fixtures.result(
+            no = 23,
+            kimarijiLength = 2,
+            revealedAtTake = 1,
+            takenBy = Side.PLAYER,
+            takenFrom = Side.CPU,
+            message = "敵陣の札を取りました",
+        ),
+        readsDone = 9,
+        playerTaken = 4,
+        cpuTaken = 2,
+    )
+
+    /** 空札（場にない35番）を上の句まで読んだ。 */
+    fun emptyCard(): MatchUiState = Fixtures.state(
+        phase = MatchPhase.Result,
+        reading = Fixtures.reading(no = 35, readNumber = 10, totalReads = 20, revealed = 17),
+        lastResult = Fixtures.result(
+            no = 35,
+            kimarijiLength = 3,
+            revealedAtTake = null,
+            takenBy = null,
+            takenFrom = null,
+            isEmptyCard = true,
+            message = "空札でした",
+        ),
+        readsDone = 10,
+        playerTaken = 2,
+        cpuTaken = 2,
+    )
+
+    /** 両者お手つきで誰も取れなかった（罰の送り札は相殺）。 */
+    fun nobodyTook(): MatchUiState = Fixtures.state(
+        phase = MatchPhase.Result,
+        player = cards(1, 17, 33, 87),
+        reading = Fixtures.reading(no = 61, readNumber = 8, totalReads = 20, revealed = 30),
+        lastResult = Fixtures.result(
+            no = 61,
+            kimarijiLength = 2,
+            revealedAtTake = null,
+            takenBy = null,
+            takenFrom = null,
+            faults = setOf(Side.PLAYER, Side.CPU),
+            message = "誰も取れませんでした。お手つき。相手のお手つき。お互いのお手つきなので札は動きません",
+        ),
+        readsDone = 8,
+        playerTaken = 2,
+        cpuTaken = 2,
+        playerFaults = 1,
+        cpuFaults = 1,
+    )
+
+    /** 敵陣9枚・自陣1枚。送られてきた2枚は金の縁。 */
+    fun nineAgainstOne(): MatchUiState = Fixtures.state(
+        player = cards(61),
+        cpu = cards(12, 23, 46, 70, 99, 1, 17) + listOf(card(33, isNew = true), card(87, isNew = true)),
+        reading = Fixtures.reading(no = 99, readNumber = 15, totalReads = 20, revealed = 12),
+        readsDone = 14,
+        playerTaken = 6,
+        cpuTaken = 2,
+        playerFaults = 2,
+        cpuFaults = 1,
+    )
+
+    /** 簡易ルールで、場の札をすべて読み終えて同数（引き分け）。 */
+    fun draw(): MatchUiState = Fixtures.state(
+        config = GameConfig(ruleMode = RuleMode.SIMPLE, emptyCardCount = 0),
+        phase = MatchPhase.Finished(null),
+        player = emptyList(),
+        cpu = emptyList(),
+        reading = Fixtures.reading(no = 99, readNumber = 10, totalReads = 10, revealed = 6),
+        lastResult = Fixtures.result(
+            no = 99,
+            kimarijiLength = 3,
+            revealedAtTake = 6,
+            takenBy = Side.CPU,
+            takenFrom = Side.CPU,
+            message = "相手が敵陣の札を取りました",
+        ),
+        readsDone = 10,
+        playerTaken = 5,
+        cpuTaken = 5,
+        playerFaults = 2,
+    )
+
+    /** 自陣の最後の1枚を取って勝った。 */
+    fun finished(winner: Side? = Side.PLAYER): MatchUiState = Fixtures.state(
+        phase = MatchPhase.Finished(winner),
+        player = emptyList(),
+        cpu = cards(23, 46, 99),
+        reading = Fixtures.reading(no = 61, readNumber = 16, totalReads = 20, revealed = 3),
+        lastResult = Fixtures.result(
+            no = 61,
+            kimarijiLength = 2,
+            revealedAtTake = 3,
+            takenBy = Side.PLAYER,
+            takenFrom = Side.PLAYER,
+            message = "自陣の札を取りました",
+        ),
+        readsDone = 16,
+        playerTaken = 7,
+        cpuTaken = 3,
+        playerFaults = 1,
+        cpuFaults = 2,
+    )
+}

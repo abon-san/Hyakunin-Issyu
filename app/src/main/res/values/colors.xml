@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 和紙の生成り（起動時の背景） -->
+    <color name="washi">#FFF4ECD8</color>
+    <!-- アイコンの背景（朱） -->
+    <color name="ic_launcher_background">#FFC8452D</color>
+</resources>

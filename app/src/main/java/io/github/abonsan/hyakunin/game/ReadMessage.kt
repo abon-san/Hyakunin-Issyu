@@ -29,7 +29,7 @@ internal fun buildResultMessage(
     val received = transfers.count { it.to == Side.PLAYER }
     val bothFaulted = faults.size == 2
     if (Side.PLAYER in faults) {
-        parts += if (received > 0) "お手つき！相手から${received}枚送られます" else "お手つき"
+        parts += if (received > 0) "お手つき！相手から${received}枚送られます" else "あなたのお手つき"
     }
     if (Side.CPU in faults) parts += "相手のお手つき"
     if (bothFaulted) parts += "お互いのお手つきなので札は動きません"
