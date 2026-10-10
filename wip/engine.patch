@@ -1,0 +1,3301 @@
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/game/CpuProfile.kt b/app/src/main/java/io/github/abonsan/hyakunin/game/CpuProfile.kt
+new file mode 100644
+index 0000000..fc88e89
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/game/CpuProfile.kt
+@@ -0,0 +1,28 @@
++package io.github.abonsan.hyakunin.game
++
++/**
++ * コンピュータの強さごとの振る舞い。
++ *
++ * @property reactionMinMillis 決まり字を聞いてから札を取るまでの反応時間の下限（ms）
++ * @property reactionMaxMillis 同上限（ms）
++ * @property faultProbability 読みごとに「友札」へ誤って飛び出す確率（0.0〜1.0）
++ */
++data class CpuProfile(
++    val reactionMinMillis: Long,
++    val reactionMaxMillis: Long,
++    val faultProbability: Double,
++) {
++    init {
++        require(reactionMinMillis in 0..reactionMaxMillis) { "reaction=$reactionMinMillis..$reactionMaxMillis" }
++        require(faultProbability in 0.0..1.0) { "faultProbability=$faultProbability" }
++    }
++
++    companion object {
++        fun of(level: CpuLevel): CpuProfile = when (level) {
++            CpuLevel.BEGINNER -> CpuProfile(1400L, 2600L, 0.10)
++            CpuLevel.INTERMEDIATE -> CpuProfile(750L, 1500L, 0.05)
++            CpuLevel.ADVANCED -> CpuProfile(350L, 800L, 0.02)
++            CpuLevel.MASTER -> CpuProfile(150L, 400L, 0.0)
++        }
++    }
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/game/Kana.kt b/app/src/main/java/io/github/abonsan/hyakunin/game/Kana.kt
+new file mode 100644
+index 0000000..5a7b6df
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/game/Kana.kt
+@@ -0,0 +1,62 @@
++package io.github.abonsan.hyakunin.game
++
++// 読み（現代仮名遣い、ひらがな）を扱うユーティリティ。
++// 句の区切りは全角スペースなどの空白で、仮名の数には数えない。
++
++/** お段の仮名。直後の「う」は長音として「お」と同じ音になる。 */
++private const val O_ROW = "おこそとのほもよろごぞどぼぽょ"
++
++/** 直前の仮名と合わせて一音で読む小書き仮名。 */
++private const val SMALL_KANA = "ゃゅょぁぃぅぇぉゎ"
++
++/** 句の区切り（空白）かどうか。 */
++internal fun isYomiSpace(c: Char): Boolean = c.isWhitespace()
++
++/** 小書き仮名（拗音など）かどうか。 */
++fun isSmallKana(c: Char): Boolean = c in SMALL_KANA
++
++/** 空白を除いた仮名の数。 */
++fun kanaCount(yomi: String): Int = yomi.count { !isYomiSpace(it) }
++
++/** 空白を取り除いた読み。 */
++fun stripYomiSpaces(yomi: String): String = yomi.filterNot { isYomiSpace(it) }
++
++/**
++ * 決まり字の比較用に読みを正規化する。空白は取り除く。
++ *
++ * - を→お、ゐ→い、ゑ→え、ぢ→じ、づ→ず（読み上げ音が同じため）
++ * - お段の仮名の直後の「う」は「お」にする（長音。「おう」と「おお」は同じ音）
++ *
++ * 1文字を1文字に置き換えるだけなので、正規化後の位置は元の仮名の位置（空白を除く）と一致する。
++ */
++fun normalizeYomi(yomi: String): String {
++    val sb = StringBuilder(yomi.length)
++    // 直前の仮名（う→お の置換前）。句の区切りでは長音として扱わない。
++    var prev: Char? = null
++    for (c in yomi) {
++        if (isYomiSpace(c)) {
++            prev = null
++            continue
++        }
++        val mapped = when (c) {
++            'を' -> 'お'
++            'ゐ' -> 'い'
++            'ゑ' -> 'え'
++            'ぢ' -> 'じ'
++            'づ' -> 'ず'
++            else -> c
++        }
++        val p = prev
++        sb.append(if (mapped == 'う' && p != null && p in O_ROW) 'お' else mapped)
++        prev = mapped
++    }
++    return sb.toString()
++}
++
++/** 2つの文字列の先頭から一致している文字数。 */
++fun commonPrefixLength(a: String, b: String): Int {
++    val n = minOf(a.length, b.length)
++    var i = 0
++    while (i < n && a[i] == b[i]) i++
++    return i
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/game/Kimariji.kt b/app/src/main/java/io/github/abonsan/hyakunin/game/Kimariji.kt
+new file mode 100644
+index 0000000..cadce23
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/game/Kimariji.kt
+@@ -0,0 +1,28 @@
++package io.github.abonsan.hyakunin.game
++
++import io.github.abonsan.hyakunin.data.Poem
++
++/**
++ * [target] の決まり字（上の句の読みの先頭から数えた仮名の数）。
++ *
++ * [unread] はまだ読まれていない札（[target] 自身を含んでいてよい）。
++ * 正規化した上の句の読み（[normalizeYomi]）の先頭が、[unread] 内の他のどの歌とも一致しなくなる最小の文字数。
++ * 直後が小書き仮名なら一音として読むので、それも含める。上限は上の句全体の長さ。
++ * 100首すべてを渡せば、試合開始時点の決まり字になる。
++ */
++fun kimarijiLength(target: Poem, unread: Collection<Poem>): Int {
++    val others = unread.filter { it.no != target.no }.map { normalizeYomi(it.kamiYomi) }
++    return kimarijiLength(normalizeYomi(target.kamiYomi), others)
++}
++
++/** 正規化済みの上の句の読み [target] と、他の未読札の正規化済みの読み [others] から決まり字を求める。 */
++internal fun kimarijiLength(target: String, others: Collection<String>): Int {
++    if (target.isEmpty()) return 0
++    var longestCommon = 0
++    for (other in others) {
++        longestCommon = maxOf(longestCommon, commonPrefixLength(target, other))
++    }
++    var k = minOf(longestCommon + 1, target.length)
++    while (k < target.length && isSmallKana(target[k])) k++
++    return k
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/game/MatchEngine.kt b/app/src/main/java/io/github/abonsan/hyakunin/game/MatchEngine.kt
+new file mode 100644
+index 0000000..0c0dc1c
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/game/MatchEngine.kt
+@@ -0,0 +1,557 @@
++package io.github.abonsan.hyakunin.game
++
++import io.github.abonsan.hyakunin.data.Poem
++import io.github.abonsan.hyakunin.data.Poems
++import kotlin.random.Random
++
++/** CPU の行動予定（読みの開始時に決める）。 */
++internal sealed interface CpuPlan {
++    /** 行動する時刻（エンジンの経過時間、ms）。 */
++    val atMillis: Long
++
++    /** 出札を取る。 */
++    data class Take(override val atMillis: Long) : CpuPlan
++
++    /** 出札以外の札（友札）に誤って触れる。 */
++    data class Fault(override val atMillis: Long, val poemNo: Int, val cardSide: Side) : CpuPlan
++}
++
++/** 1回の読みの進行状態。時刻はすべてエンジンの経過時間（ms）。 */
++internal class ReadSession(
++    val poem: Poem,
++    /** 何枚目の読みか（1始まり）。 */
++    val readNumber: Int,
++    /** 出札がある陣。空札なら null。 */
++    val fieldSide: Side?,
++    /** 読み開始時点の決まり字の仮名の数。 */
++    val kimarijiLength: Int,
++    val startMillis: Long,
++    /** n 番目（0始まりの添字 n-1）の仮名が表示される時刻。上の句→下の句の通し。 */
++    val kanaAt: LongArray,
++    /** 上の句の仮名の数。 */
++    val kamiCount: Int,
++) {
++    val isEmpty: Boolean get() = fieldSide == null
++    val totalCount: Int get() = kanaAt.size
++
++    /** 上の句を表示し終えた時刻。 */
++    val kamiEnd: Long get() = if (kamiCount > 0) kanaAt[kamiCount - 1] else startMillis
++
++    /** 下の句まで表示し終えた時刻。 */
++    val shimoEnd: Long get() = if (kanaAt.isNotEmpty()) kanaAt[kanaAt.size - 1] else startMillis
++
++    var cpuPlan: CpuPlan? = null
++    var playerLocked = false
++    var cpuLocked = false
++
++    /** 両者がロックアウトした時刻。 */
++    var bothLockedAt = 0L
++    val faults = mutableSetOf<Side>()
++    val safeMisses = mutableSetOf<Side>()
++
++    /** 読みが終わった時点で表示済みだった仮名の数。読み上げ中は null。 */
++    var frozenRevealed: Int? = null
++
++    /** 表示される仮名の数の上限。空札は上の句までで終わるので、下の句は表示しない。 */
++    val revealableCount: Int get() = if (isEmpty) kamiCount else kanaAt.size
++
++    /** 時刻 [t] までに表示される仮名の数。 */
++    fun revealedAt(t: Long): Int {
++        var n = 0
++        while (n < revealableCount && kanaAt[n] <= t) n++
++        return n
++    }
++}
++
++/**
++ * 対戦の進行（純粋な Kotlin）。時間は [advanceTo] / [advanceBy] で外から与える。
++ * 乱数は [Random] を注入するので、シードを固定すれば決定的に動く。スレッド安全ではない。
++ */
++internal class MatchEngine private constructor(
++    val config: GameConfig,
++    private val random: Random,
++    poems: List<Poem>,
++    private val timing: ReadTiming,
++    private val profile: CpuProfile,
++    playerNos: List<Int>,
++    cpuNos: List<Int>,
++    /** 読む順の歌番号。場にない歌番号は空札になる。 */
++    val readOrder: List<Int>,
++) {
++    private enum class Phase { WAITING, READING, RESULT, FINISHED }
++
++    private class Outcome(val winner: Side?)
++
++    private val poemByNo: Map<Int, Poem> = poems.associateBy { it.no }
++    private val normalizedKami: Map<Int, String> = poems.associate { it.no to normalizeYomi(it.kamiYomi) }
++
++    /** まだ読まれていない歌（決まり字の判定に使う。場にあるか空札かは問わない）。 */
++    private val unreadNos: MutableSet<Int> = poems.mapTo(mutableSetOf()) { it.no }
++
++    private val playerCards: MutableList<FieldCard> = playerNos.map(::fieldCard).toMutableList()
++    private val cpuCards: MutableList<FieldCard> = cpuNos.map(::fieldCard).toMutableList()
++
++    /** 経過時間（ms）。 */
++    var nowMillis: Long = 0L
++        private set
++
++    private var phase = Phase.WAITING
++    private var phaseStartedAt = 0L
++    private var nextReadIndex = 0
++
++    /** 現在（または直前）の読み。最初の読みの前は null。 */
++    var session: ReadSession? = null
++        private set
++
++    private var lastResult: ReadResult? = null
++    private var pendingPlayerSends = 0
++    private val pendingReasons = mutableListOf<Transfer.Reason>()
++    private var outcome: Outcome? = null
++    private var autoAdvance = false
++
++    private var playerTaken = 0
++    private var cpuTaken = 0
++    private var playerFaults = 0
++    private var cpuFaults = 0
++    private var readsDone = 0
++
++    val totalReads: Int get() = readOrder.size
++
++    // ---- 時間の進行 ----
++
++    fun advanceBy(deltaMillis: Long) = advanceTo(nowMillis + deltaMillis)
++
++    /** 経過時間を [timeMillis] まで進める。途中にある出来事は発生した時刻の順にすべて処理する。 */
++    fun advanceTo(timeMillis: Long) {
++        while (true) {
++            val at = nextEventTime() ?: break
++            if (at > timeMillis) break
++            nowMillis = maxOf(nowMillis, at)
++            fireEvent()
++        }
++        nowMillis = maxOf(nowMillis, timeMillis)
++    }
++
++    private fun nextEventTime(): Long? = when (phase) {
++        Phase.WAITING -> phaseStartedAt + timing.waitMillis
++        Phase.READING -> {
++            val s = session!!
++            listOfNotNull(s.cpuPlan?.atMillis, readEndTime(s)).minOrNull()
++        }
++        Phase.RESULT -> if (autoAdvance) phaseStartedAt + timing.resultAutoMillis else null
++        Phase.FINISHED -> null
++    }
++
++    /** 誰も取らずに読みが終わる時刻。まだ決まっていなければ null。 */
++    private fun readEndTime(s: ReadSession): Long? = when {
++        s.isEmpty -> s.kamiEnd + timing.emptyTailMillis
++        s.playerLocked && s.cpuLocked -> maxOf(s.shimoEnd + timing.noTakerMillis, s.bothLockedAt)
++        else -> null
++    }
++
++    private fun fireEvent() {
++        when (phase) {
++            Phase.WAITING -> startRead()
++            Phase.READING -> fireReadingEvent()
++            Phase.RESULT -> {
++                // 空札の結果表示が終わったので自動で次へ
++                phase = Phase.WAITING
++                phaseStartedAt = nowMillis
++                autoAdvance = false
++            }
++            Phase.FINISHED -> Unit
++        }
++    }
++
++    private fun fireReadingEvent() {
++        val s = session!!
++        val plan = s.cpuPlan
++        val end = readEndTime(s)
++        if (plan != null && (end == null || plan.atMillis <= end)) {
++            s.cpuPlan = null
++            when (plan) {
++                is CpuPlan.Take -> if (!s.cpuLocked) take(Side.CPU)
++                is CpuPlan.Fault -> if (!s.cpuLocked) touchWrong(Side.CPU, plan.cardSide)
++            }
++        } else {
++            finishRead(takenBy = null, takenFrom = null)
++        }
++    }
++
++    // ---- 読みの開始 ----
++
++    private fun startRead() {
++        if (nextReadIndex >= readOrder.size) {
++            // 読み札が尽きた（通常は直前の読みの終わりで勝敗が付いている）
++            outcome = outcome ?: evaluateOutcome() ?: Outcome(null)
++            phase = Phase.FINISHED
++            return
++        }
++        val no = readOrder[nextReadIndex]
++        nextReadIndex++
++        val poem = poemByNo.getValue(no)
++
++        val kimariji = kimarijiLength(
++            normalizedKami.getValue(no),
++            unreadNos.filter { it != no }.map { normalizedKami.getValue(it) },
++        )
++        unreadNos.remove(no)
++
++        // 前の送り札の強調表示を戻す
++        for (cards in listOf(playerCards, cpuCards)) {
++            for (i in cards.indices) if (cards[i].isNew) cards[i] = cards[i].copy(isNew = false)
++        }
++
++        val (kanaAt, kamiCount) = buildKanaTimeline(poem, nowMillis)
++        val s = ReadSession(
++            poem = poem,
++            readNumber = nextReadIndex,
++            fieldSide = sideOf(no),
++            kimarijiLength = kimariji,
++            startMillis = nowMillis,
++            kanaAt = kanaAt,
++            kamiCount = kamiCount,
++        )
++        s.cpuPlan = planCpu(s)
++        session = s
++        phase = Phase.READING
++        phaseStartedAt = nowMillis
++    }
++
++    /** 各仮名が表示される時刻を求める。句の区切りと上下の句の間には間を足す。 */
++    private fun buildKanaTimeline(poem: Poem, start: Long): Pair<LongArray, Int> {
++        val times = ArrayList<Long>()
++        var t = start
++        var gap = 0L
++        var kamiCount = 0
++        for ((part, yomi) in listOf(poem.kamiYomi, poem.shimoYomi).withIndex()) {
++            if (part == 1) {
++                kamiCount = times.size
++                gap = timing.kamiShimoGapMillis
++            } else {
++                gap = 0L
++            }
++            var started = false
++            for (c in yomi) {
++                if (isYomiSpace(c)) {
++                    if (started) gap += timing.phraseGapMillis
++                    continue
++                }
++                t += gap + timing.charMillis
++                gap = 0L
++                started = true
++                times += t
++            }
++        }
++        return times.toLongArray() to kamiCount
++    }
++
++    // ---- CPU ----
++
++    private fun planCpu(s: ReadSession): CpuPlan? {
++        val friend = if (profile.faultProbability > 0.0 && random.nextDouble() < profile.faultProbability) {
++            pickFriendCard(s)
++        } else {
++            null
++        }
++        val reaction = random.nextLong(profile.reactionMinMillis, profile.reactionMaxMillis + 1)
++        if (friend != null) {
++            val (card, side, common) = friend
++            val at = s.kanaAt[common - 1] + reaction / 2
++            return CpuPlan.Fault(at, card.poemNo, side)
++        }
++        if (s.isEmpty || s.totalCount == 0) return null
++        val kimarijiAt = s.kanaAt[s.kimarijiLength.coerceIn(1, s.totalCount) - 1]
++        return CpuPlan.Take(minOf(kimarijiAt + reaction, s.shimoEnd + timing.cpuLateLimitMillis))
++    }
++
++    private data class Friend(val card: FieldCard, val side: Side, val common: Int)
++
++    /** 出札以外の場の札のうち、上の句の読みの共通接頭辞が最長（1文字以上）の札。同じ長さならランダム。 */
++    private fun pickFriendCard(s: ReadSession): Friend? {
++        val target = normalizedKami.getValue(s.poem.no)
++        var best = 0
++        val candidates = mutableListOf<Friend>()
++        for (side in Side.entries) {
++            for (card in cardsOf(side)) {
++                if (card.poemNo == s.poem.no) continue
++                val common = commonPrefixLength(target, normalizedKami.getValue(card.poemNo))
++                if (common < 1 || common < best) continue
++                if (common > best) {
++                    best = common
++                    candidates.clear()
++                }
++                candidates += Friend(card, side, common)
++            }
++        }
++        if (candidates.isEmpty()) return null
++        return candidates[random.nextInt(candidates.size)]
++    }
++
++    // ---- 札に触れる ----
++
++    /** 札に触れた。Reading 中は取る操作、Result 中は送る札を選ぶ操作。それ以外は無視する。 */
++    fun tapCard(side: Side, poemNo: Int) {
++        when (phase) {
++            Phase.READING -> playerTap(side, poemNo)
++            Phase.RESULT -> chooseSendCard(side, poemNo)
++            else -> Unit
++        }
++    }
++
++    private fun playerTap(side: Side, poemNo: Int) {
++        val s = session ?: return
++        if (s.playerLocked) return
++        if (cardsOf(side).none { it.poemNo == poemNo }) return
++        if (poemNo == s.poem.no) take(Side.PLAYER) else touchWrong(Side.PLAYER, side)
++    }
++
++    private fun take(taker: Side) {
++        val s = session!!
++        val from = s.fieldSide ?: return
++        if (taker == Side.PLAYER) playerTaken++ else cpuTaken++
++        finishRead(takenBy = taker, takenFrom = from)
++    }
++
++    /** 出札以外の札 ([cardSide] の陣) に触れた。 */
++    private fun touchWrong(actor: Side, cardSide: Side) {
++        val s = session!!
++        // 競技かるた: 出札が場にあり、触れた札が出札と同じ陣ならお手つきにならない
++        val safe = config.ruleMode == RuleMode.COMPETITIVE && s.fieldSide == cardSide
++        if (actor == Side.PLAYER) s.playerLocked = true else s.cpuLocked = true
++        if (s.playerLocked && s.cpuLocked) s.bothLockedAt = nowMillis
++        if (safe) {
++            s.safeMisses += actor
++        } else {
++            s.faults += actor
++            if (actor == Side.PLAYER) playerFaults++ else cpuFaults++
++        }
++    }
++
++    // ---- 読みの終了 ----
++
++    private fun finishRead(takenBy: Side?, takenFrom: Side?) {
++        val s = session!!
++        s.cpuPlan = null
++        s.frozenRevealed = s.revealedAt(nowMillis)
++        readsDone++
++
++        // 出札を場から取り除く（取られた場合も、取り手なしの場合も）
++        s.fieldSide?.let { side -> cardsOf(side).removeAll { it.poemNo == s.poem.no } }
++
++        val transfers = mutableListOf<Transfer>()
++        pendingReasons.clear()
++        pendingPlayerSends = 0
++        if (config.ruleMode == RuleMode.COMPETITIVE) applyTransfers(s, takenBy, takenFrom, transfers)
++
++        outcome = if (pendingPlayerSends == 0) evaluateOutcome() else null
++        autoAdvance = s.isEmpty && s.faults.isEmpty() && outcome == null
++        lastResult = ReadResult(
++            poem = s.poem,
++            isEmptyCard = s.isEmpty,
++            kimarijiLength = s.kimarijiLength,
++            revealedAtTake = if (takenBy != null) s.frozenRevealed else null,
++            takenBy = takenBy,
++            takenFrom = takenFrom,
++            faults = s.faults.toSet(),
++            safeMisses = s.safeMisses.toSet(),
++            transfers = transfers,
++            message = buildResultMessage(
++                isEmptyCard = s.isEmpty,
++                takenBy = takenBy,
++                takenFrom = takenFrom,
++                faults = s.faults,
++                safeMisses = s.safeMisses,
++                transfers = transfers,
++                pendingPlayerSends = pendingPlayerSends,
++            ),
++        )
++        phase = Phase.RESULT
++        phaseStartedAt = nowMillis
++    }
++
++    /**
++     * 競技かるたの送り札。CPU が送る札は即座に移し、プレイヤーが送る札は [pendingPlayerSends] にして選ばせる。
++     * 送る札が足りなければある分だけ送る。
++     */
++    private fun applyTransfers(
++        s: ReadSession,
++        takenBy: Side?,
++        takenFrom: Side?,
++        transfers: MutableList<Transfer>,
++    ) {
++        val sender: Side
++        val afterTake: Int
++        val penalty: Int
++        if (takenBy != null) {
++            // 取った側が、(相手の陣の札を取ったら1枚) + (相手がお手つきしていたら1枚) を相手へ送る
++            sender = takenBy
++            afterTake = if (takenFrom == takenBy.opponent) 1 else 0
++            penalty = if (takenBy.opponent in s.faults) 1 else 0
++        } else if (s.faults.size == 1) {
++            // 空札・取り手なし: 片方だけお手つきなら、もう片方がお手つきした側へ1枚送る。両方なら相殺
++            sender = s.faults.first().opponent
++            afterTake = 0
++            penalty = 1
++        } else {
++            return
++        }
++        repeat(afterTake) { sendCard(sender, Transfer.Reason.SEND_AFTER_TAKE, transfers) }
++        repeat(penalty) { sendCard(sender, Transfer.Reason.FAULT_PENALTY, transfers) }
++    }
++
++    private fun sendCard(sender: Side, reason: Transfer.Reason, transfers: MutableList<Transfer>) {
++        if (sender == Side.CPU) {
++            if (cpuCards.isEmpty()) return
++            val card = cpuCards.removeAt(random.nextInt(cpuCards.size))
++            playerCards += card.copy(isNew = true)
++            transfers += Transfer(Side.CPU, Side.PLAYER, card.poemNo, reason)
++        } else if (pendingPlayerSends < playerCards.size) {
++            pendingPlayerSends++
++            pendingReasons += reason
++        }
++    }
++
++    /** Result 中、プレイヤーが送る札を1枚選ぶ。 */
++    private fun chooseSendCard(side: Side, poemNo: Int) {
++        if (pendingPlayerSends <= 0 || side != Side.PLAYER) return
++        val index = playerCards.indexOfFirst { it.poemNo == poemNo }
++        if (index < 0) return
++        val card = playerCards.removeAt(index)
++        cpuCards += card.copy(isNew = true)
++        val transfer = Transfer(Side.PLAYER, Side.CPU, card.poemNo, pendingReasons.removeAt(0))
++        pendingPlayerSends--
++        lastResult = lastResult?.let { it.copy(transfers = it.transfers + transfer) }
++        if (pendingPlayerSends == 0) {
++            outcome = evaluateOutcome()
++            autoAdvance = false
++        }
++    }
++
++    /** 勝敗が付いていれば返す。付いていなければ null。 */
++    private fun evaluateOutcome(): Outcome? {
++        val playerEmpty = playerCards.isEmpty()
++        val cpuEmpty = cpuCards.isEmpty()
++        // 読み札が尽きた（読みの途中でなければ、これ以上続けられない）
++        val exhausted = nextReadIndex >= readOrder.size
++        return when (config.ruleMode) {
++            RuleMode.COMPETITIVE -> when {
++                playerEmpty && cpuEmpty -> Outcome(null)
++                playerEmpty -> Outcome(Side.PLAYER)
++                cpuEmpty -> Outcome(Side.CPU)
++                // 残りの札が少ない方の勝ち
++                exhausted -> Outcome(winnerBy(playerPoints = cpuCards.size, cpuPoints = playerCards.size))
++                else -> null
++            }
++            RuleMode.SIMPLE -> {
++                // 場の札がすべて読まれたら、取った枚数の多い方の勝ち
++                if ((playerEmpty && cpuEmpty) || exhausted) {
++                    Outcome(winnerBy(playerPoints = playerTaken, cpuPoints = cpuTaken))
++                } else {
++                    null
++                }
++            }
++        }
++    }
++
++    /** 点が大きい方が勝ち。同じなら引き分け（null）。 */
++    private fun winnerBy(playerPoints: Int, cpuPoints: Int): Side? = when {
++        playerPoints > cpuPoints -> Side.PLAYER
++        playerPoints < cpuPoints -> Side.CPU
++        else -> null
++    }
++
++    /** 結果表示から進む。送る札の選択が残っている間は何もしない。 */
++    fun next() {
++        if (phase != Phase.RESULT || pendingPlayerSends > 0) return
++        phase = if (outcome != null) Phase.FINISHED else Phase.WAITING
++        phaseStartedAt = nowMillis
++        autoAdvance = false
++    }
++
++    // ---- 状態の取り出し ----
++
++    fun snapshot(): MatchUiState {
++        val s = session
++        return MatchUiState(
++            config = config,
++            phase = when (phase) {
++                Phase.WAITING -> MatchPhase.Waiting
++                Phase.READING -> MatchPhase.Reading
++                Phase.RESULT -> MatchPhase.Result
++                Phase.FINISHED -> MatchPhase.Finished(outcome?.winner)
++            },
++            playerCards = playerCards.toList(),
++            cpuCards = cpuCards.toList(),
++            reading = s?.let {
++                ReadingState(
++                    poem = it.poem,
++                    readNumber = it.readNumber,
++                    totalReads = readOrder.size,
++                    revealedKana = it.frozenRevealed ?: it.revealedAt(nowMillis),
++                    kamiKanaCount = it.kamiCount,
++                    totalKanaCount = it.totalCount,
++                )
++            },
++            lastResult = lastResult,
++            // ロックアウトは読み上げ中だけの状態。Result 中は送る札を選ぶため false にする
++            playerLockedOut = phase == Phase.READING && s?.playerLocked == true,
++            pendingPlayerSends = pendingPlayerSends,
++            playerTakenCount = playerTaken,
++            cpuTakenCount = cpuTaken,
++            playerFaultCount = playerFaults,
++            cpuFaultCount = cpuFaults,
++            readsDone = readsDone,
++            totalReads = readOrder.size,
++            isPaused = false,
++        )
++    }
++
++    // ---- 補助 ----
++
++    private fun fieldCard(no: Int) = FieldCard(no, poemByNo.getValue(no).shimoKana)
++
++    private fun cardsOf(side: Side): MutableList<FieldCard> = if (side == Side.PLAYER) playerCards else cpuCards
++
++    private fun sideOf(no: Int): Side? = when {
++        playerCards.any { it.poemNo == no } -> Side.PLAYER
++        cpuCards.any { it.poemNo == no } -> Side.CPU
++        else -> null
++    }
++
++    companion object {
++        /**
++         * 通常の準備。100首（[poems]）をシャッフルし、先頭から自陣・敵陣に [GameConfig.CARDS_PER_SIDE] 枚ずつ、
++         * 次の [GameConfig.emptyCardCount] 枚を空札とする。読み札は場の札と空札をシャッフルした順。
++         * [poems] が少ないときは、置ける範囲に枚数を減らす。
++         */
++        fun create(
++            config: GameConfig,
++            random: Random,
++            poems: List<Poem> = Poems.all,
++            timing: ReadTiming = ReadTiming.of(config.readingSpeed),
++            profile: CpuProfile = CpuProfile.of(config.cpuLevel),
++        ): MatchEngine {
++            val shuffled = poems.map { it.no }.shuffled(random)
++            val perSide = minOf(GameConfig.CARDS_PER_SIDE, shuffled.size / 2)
++            val emptyCount = minOf(config.emptyCardCount, shuffled.size - 2 * perSide)
++            val player = shuffled.take(perSide)
++            val cpu = shuffled.drop(perSide).take(perSide)
++            val empty = shuffled.drop(2 * perSide).take(emptyCount)
++            val order = (player + cpu + empty).shuffled(random)
++            return MatchEngine(config, random, poems, timing, profile, player, cpu, order)
++        }
++
++        /** テスト用。配置と読み順を直接指定する。[readOrder] のうち場にない歌が空札になる。 */
++        fun withLayout(
++            config: GameConfig,
++            random: Random,
++            poems: List<Poem>,
++            playerNos: List<Int>,
++            cpuNos: List<Int>,
++            readOrder: List<Int>,
++            timing: ReadTiming = ReadTiming.of(config.readingSpeed),
++            profile: CpuProfile = CpuProfile.of(config.cpuLevel),
++        ): MatchEngine = MatchEngine(config, random, poems, timing, profile, playerNos, cpuNos, readOrder)
++    }
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/game/MatchViewModel.kt b/app/src/main/java/io/github/abonsan/hyakunin/game/MatchViewModel.kt
+index 1d3672c..251dbf1 100644
+--- a/app/src/main/java/io/github/abonsan/hyakunin/game/MatchViewModel.kt
++++ b/app/src/main/java/io/github/abonsan/hyakunin/game/MatchViewModel.kt
+@@ -1,44 +1,108 @@
+ package io.github.abonsan.hyakunin.game
+ 
+ import androidx.lifecycle.ViewModel
++import androidx.lifecycle.viewModelScope
++import io.github.abonsan.hyakunin.data.Poem
+ import io.github.abonsan.hyakunin.data.Poems
++import kotlinx.coroutines.delay
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.StateFlow
+ import kotlinx.coroutines.flow.asStateFlow
++import kotlinx.coroutines.launch
+ import kotlin.random.Random
+ 
+-// 暫定スタブ。対戦ロジック実装時に置き換える（コンストラクタと公開APIは変更しない）。
+-class MatchViewModel(
+-    config: GameConfig,
+-    random: Random = Random.Default,
++/**
++ * 対戦の進行役。生成と同時に試合を始める。
++ *
++ * [viewModelScope] で 1 本のループを回し、[tickMillis] ごとに [clock] で測った経過時間をエンジンへ渡す。
++ * 一時停止中は経過時間を進めない。UI のスレッド（メイン）からだけ呼ぶこと。
++ */
++class MatchViewModel internal constructor(
++    private val engineFactory: () -> MatchEngine,
++    private val clock: () -> Long,
++    private val tickMillis: Long,
+ ) : ViewModel(), MatchActions {
+ 
+-    private val _uiState = MutableStateFlow(
+-        MatchUiState(
+-            config = config,
+-            phase = MatchPhase.Waiting,
+-            playerCards = Poems.all.take(2).map { FieldCard(it.no, it.shimoKana) },
+-            cpuCards = Poems.all.drop(2).take(1).map { FieldCard(it.no, it.shimoKana) },
+-            reading = null,
+-            lastResult = null,
+-            playerLockedOut = false,
+-            pendingPlayerSends = 0,
+-            playerTakenCount = 0,
+-            cpuTakenCount = 0,
+-            playerFaultCount = 0,
+-            cpuFaultCount = 0,
+-            readsDone = 0,
+-            totalReads = 2 * GameConfig.CARDS_PER_SIDE + config.emptyCardCount,
+-            isPaused = false,
+-        ),
++    /**
++     * @param poems 100首。決まり字の判定と配札に使う
++     * @param timing 読み上げと進行のタイミング。既定は [GameConfig.readingSpeed] に合わせる
++     * @param clock 単調増加の時計（ms）。テストでは仮想時間を渡す
++     */
++    constructor(
++        config: GameConfig,
++        random: Random = Random.Default,
++        poems: List<Poem> = Poems.all,
++        timing: ReadTiming = ReadTiming.of(config.readingSpeed),
++        clock: () -> Long = ::monotonicMillis,
++        tickMillis: Long = DEFAULT_TICK_MILLIS,
++    ) : this(
++        engineFactory = { MatchEngine.create(config, random, poems, timing) },
++        clock = clock,
++        tickMillis = tickMillis,
+     )
++
++    private var engine: MatchEngine = engineFactory()
++    private var paused = false
++    private var lastClock = clock()
++
++    private val _uiState = MutableStateFlow(engine.snapshot())
+     val uiState: StateFlow<MatchUiState> = _uiState.asStateFlow()
+ 
+-    override fun onCardTap(side: Side, poemNo: Int) = Unit
++    init {
++        viewModelScope.launch {
++            while (true) {
++                delay(tickMillis)
++                tick()
++            }
++        }
++    }
++
++    private fun tick() {
++        val now = clock()
++        val elapsed = now - lastClock
++        lastClock = now
++        if (paused) return
++        // 実時間の遅れ（delay のずれ）を取り込む。仮想時間では 1 刻みぶんだけ進む
++        engine.advanceBy(elapsed.coerceIn(tickMillis, MAX_STEP_MILLIS))
++        publish()
++    }
++
++    private fun publish() {
++        _uiState.value = engine.snapshot().copy(isPaused = paused)
++    }
+ 
+-    override fun onNext() = Unit
++    override fun onCardTap(side: Side, poemNo: Int) {
++        if (paused) return
++        engine.tapCard(side, poemNo)
++        publish()
++    }
+ 
+-    override fun onRestart() = Unit
++    override fun onNext() {
++        if (paused) return
++        engine.next()
++        publish()
++    }
+ 
+-    override fun setPaused(paused: Boolean) = Unit
++    override fun onRestart() {
++        engine = engineFactory()
++        lastClock = clock()
++        publish()
++    }
++
++    override fun setPaused(paused: Boolean) {
++        if (this.paused == paused) return
++        this.paused = paused
++        // 一時停止していた間の時間は進めない
++        lastClock = clock()
++        publish()
++    }
++
++    private companion object {
++        const val DEFAULT_TICK_MILLIS = 20L
++
++        /** 1 回の刻みで進める時間の上限。長時間止まった後にいきなり進まないようにする。 */
++        const val MAX_STEP_MILLIS = 100L
++    }
+ }
++
++private fun monotonicMillis(): Long = System.nanoTime() / 1_000_000L
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/game/ReadMessage.kt b/app/src/main/java/io/github/abonsan/hyakunin/game/ReadMessage.kt
+new file mode 100644
+index 0000000..9585fb5
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/game/ReadMessage.kt
+@@ -0,0 +1,41 @@
++package io.github.abonsan.hyakunin.game
++
++/** プレイヤーから見た陣の呼び名。自陣＝プレイヤーの陣、敵陣＝CPU の陣。 */
++private fun Side.label(): String = if (this == Side.PLAYER) "自陣" else "敵陣"
++
++/**
++ * 1回の読みの結果の説明文（プレイヤー視点）。相手＝CPU。
++ *
++ * @param transfers この読みで既に行われた札の移動（CPU が送った札）
++ * @param pendingPlayerSends プレイヤーがこれから送る札の枚数
++ */
++internal fun buildResultMessage(
++    isEmptyCard: Boolean,
++    takenBy: Side?,
++    takenFrom: Side?,
++    faults: Set<Side>,
++    safeMisses: Set<Side>,
++    transfers: List<Transfer>,
++    pendingPlayerSends: Int,
++): String {
++    val parts = mutableListOf<String>()
++    parts += when {
++        isEmptyCard -> "空札でした"
++        takenBy == Side.PLAYER && takenFrom != null -> "${takenFrom.label()}の札を取りました"
++        takenBy == Side.CPU && takenFrom != null -> "相手が${takenFrom.label()}の札を取りました"
++        else -> "誰も取れませんでした"
++    }
++
++    val received = transfers.count { it.to == Side.PLAYER }
++    val bothFaulted = faults.size == 2
++    if (Side.PLAYER in faults) {
++        parts += if (received > 0) "お手つき！相手から${received}枚送られます" else "お手つき"
++    }
++    if (Side.CPU in faults) parts += "相手のお手つき"
++    if (bothFaulted) parts += "お互いのお手つきなので札は動きません"
++    if (Side.PLAYER !in faults && received > 0) parts += "相手から${received}枚送られます"
++    if (pendingPlayerSends > 0) parts += "自陣から${pendingPlayerSends}枚送ってください"
++    if (Side.PLAYER in safeMisses) parts += "お手つきにはなりませんが、この読みでは取れません"
++    if (Side.CPU in safeMisses) parts += "相手は同じ陣の別の札に触れました"
++    return parts.joinToString("。")
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/game/ReadTiming.kt b/app/src/main/java/io/github/abonsan/hyakunin/game/ReadTiming.kt
+new file mode 100644
+index 0000000..35c1607
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/game/ReadTiming.kt
+@@ -0,0 +1,30 @@
++package io.github.abonsan.hyakunin.game
++
++/**
++ * 読み上げと進行のタイミング定数（ms）。
++ *
++ * @property charMillis 仮名1文字ごとの表示間隔
++ * @property waitMillis 次の読みを始めるまでの待ち（Waiting）
++ * @property emptyTailMillis 空札で、上の句を表示し終えてから読みを終えるまでの間
++ * @property noTakerMillis 両者がロックアウトしたとき、下の句を表示し終えてから出札を取り除くまでの間
++ * @property resultAutoMillis 空札（お手つきなし）の Result を表示してから自動で進むまでの間
++ * @property cpuLateLimitMillis CPU が遅くとも下の句を表示し終えてから取るまでの間
++ */
++data class ReadTiming(
++    val charMillis: Long,
++    val waitMillis: Long = 1500L,
++    val emptyTailMillis: Long = 1200L,
++    val noTakerMillis: Long = 1500L,
++    val resultAutoMillis: Long = 1200L,
++    val cpuLateLimitMillis: Long = 500L,
++) {
++    /** 句の区切り（空白）で追加する間。 */
++    val phraseGapMillis: Long get() = charMillis
++
++    /** 上の句と下の句の間に追加する間。 */
++    val kamiShimoGapMillis: Long get() = charMillis * 3
++
++    companion object {
++        fun of(speed: ReadingSpeed): ReadTiming = ReadTiming(speed.charMillis)
++    }
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/CompetitiveRulesTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/CompetitiveRulesTest.kt
+new file mode 100644
+index 0000000..1b46c88
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/CompetitiveRulesTest.kt
+@@ -0,0 +1,547 @@
++package io.github.abonsan.hyakunin.game
++
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import kotlin.random.Random
++
++/**
++ * 競技かるたルール。CPU は既定で [SLOW_CPU]（下の句の後 500ms に取る）なので、
++ * プレイヤーが先に触れなければ読みの 3700ms 後に CPU が出札を取る。乱数は [ZeroRandom]（常に先頭の候補を選ぶ）。
++ */
++class CompetitiveRulesTest {
++    /** 下の句を表示し終えた 500ms 後。SLOW_CPU が取る時刻。 */
++    private val cpuTakeOffset = 3200L + 500L
++
++    @Test
++    fun playerTakesCardOnOwnSide() {
++        val e = layoutEngine(order = listOf(1, 11))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 250L)
++        e.tapCard(Side.PLAYER, 1)
++
++        val st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertEquals(listOf(2, 3, 4, 5), st.playerNos)
++        assertEquals(listOf(6, 7, 8, 9, 10), st.cpuNos)
++        assertEquals(1, st.playerTakenCount)
++        assertEquals(0, st.cpuTakenCount)
++        assertEquals(0, st.pendingPlayerSends)
++        assertEquals(1, st.readsDone)
++        assertFalse(st.playerLockedOut)
++        val r = st.lastResult!!
++        assertEquals(Side.PLAYER, r.takenBy)
++        assertEquals(Side.PLAYER, r.takenFrom)
++        assertEquals(2, r.revealedAtTake)
++        assertEquals(2, r.kimarijiLength)
++        assertFalse(r.isEmptyCard)
++        assertTrue(r.faults.isEmpty())
++        assertTrue(r.transfers.isEmpty())
++        assertEquals("自陣の札を取りました", r.message)
++    }
++
++    @Test
++    fun canTakeBeforeKimarijiIsRevealed() {
++        val e = layoutEngine(order = listOf(1))
++        val s = e.beginRead()
++        // 決まり字（2文字）が出る前、1文字だけ表示された時点でも、正しい札なら取れる
++        e.advanceToOffset(s, 100L)
++        e.tapCard(Side.PLAYER, 1)
++        assertEquals(Side.PLAYER, e.state.lastResult!!.takenBy)
++        assertEquals(1, e.state.lastResult!!.revealedAtTake)
++    }
++
++    @Test
++    fun playerTakesEnemyCardAndChoosesCardToSend() {
++        val e = layoutEngine(order = listOf(6, 11))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 300L)
++        e.tapCard(Side.CPU, 6)
++
++        var st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertEquals(listOf(7, 8, 9, 10), st.cpuNos)
++        assertEquals(listOf(1, 2, 3, 4, 5), st.playerNos)
++        assertEquals(1, st.pendingPlayerSends)
++        assertEquals(Side.PLAYER, st.lastResult!!.takenBy)
++        assertEquals(Side.CPU, st.lastResult!!.takenFrom)
++        assertTrue(st.lastResult!!.transfers.isEmpty())
++        assertEquals("敵陣の札を取りました。自陣から1枚送ってください", st.lastResult!!.message)
++
++        // 送る札を選ぶまで次へ進めない。敵陣の札のタップは無視される
++        e.next()
++        assertEquals(MatchPhase.Result, e.state.phase)
++        e.tapCard(Side.CPU, 7)
++        assertEquals(listOf(7, 8, 9, 10), e.state.cpuNos)
++        assertEquals(1, e.state.pendingPlayerSends)
++        // 自陣にない札は無視される
++        e.tapCard(Side.PLAYER, 99)
++        assertEquals(1, e.state.pendingPlayerSends)
++
++        e.tapCard(Side.PLAYER, 3)
++        st = e.state
++        assertEquals(0, st.pendingPlayerSends)
++        assertEquals(listOf(1, 2, 4, 5), st.playerNos)
++        assertEquals(listOf(7, 8, 9, 10, 3), st.cpuNos)
++        assertTrue(st.cpuCards.last().isNew)
++        assertFalse(st.cpuCards.first().isNew)
++        assertEquals(
++            listOf(Transfer(Side.PLAYER, Side.CPU, 3, Transfer.Reason.SEND_AFTER_TAKE)),
++            st.lastResult!!.transfers,
++        )
++
++        // 送った後は札を選べない
++        e.tapCard(Side.PLAYER, 4)
++        assertEquals(listOf(1, 2, 4, 5), e.state.playerNos)
++
++        // 次の読みの開始で強調表示が戻る
++        e.next()
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++        assertTrue(e.state.cpuCards.last().isNew)
++        e.beginRead()
++        assertFalse(e.state.cpuCards.last().isNew)
++    }
++
++    @Test
++    fun cpuTakesPlayerCardAndSendsOneToPlayer() {
++        val e = layoutEngine(order = listOf(1, 11))
++        val s = e.beginRead()
++        e.advanceToOffset(s, cpuTakeOffset)
++
++        val st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertEquals(1, st.cpuTakenCount)
++        assertEquals(0, st.pendingPlayerSends)
++        // CPU の陣からランダムに選んだ札（ZeroRandom では先頭）が即座に移る
++        assertEquals(listOf(2, 3, 4, 5, 6), st.playerNos)
++        assertEquals(listOf(7, 8, 9, 10), st.cpuNos)
++        assertTrue(st.playerCards.last().isNew)
++        val r = st.lastResult!!
++        assertEquals(Side.CPU, r.takenBy)
++        assertEquals(Side.PLAYER, r.takenFrom)
++        assertEquals(26, r.revealedAtTake)
++        assertEquals(
++            listOf(Transfer(Side.CPU, Side.PLAYER, 6, Transfer.Reason.SEND_AFTER_TAKE)),
++            r.transfers,
++        )
++        assertEquals("相手が自陣の札を取りました。相手から1枚送られます", r.message)
++    }
++
++    @Test
++    fun cpuPicksCardToSendAtRandom() {
++        // 送られる札は CPU の陣の札から乱数で選ばれ、乱数によって変わる
++        val sent = (0 until 50).map { seed ->
++            val e = layoutEngine(order = listOf(1), random = Random(seed))
++            val s = e.beginRead()
++            e.advanceToOffset(s, cpuTakeOffset)
++            val st = e.state
++            assertEquals(5, st.playerCards.size)
++            assertEquals(4, st.cpuCards.size)
++            val moved = st.lastResult!!.transfers.single().poemNo
++            assertTrue(moved in 6..10)
++            assertTrue(moved !in st.cpuNos)
++            moved
++        }
++        assertTrue(sent.toSet().size > 1)
++    }
++
++    @Test
++    fun cpuTakesCardOnItsOwnSideWithoutTransfers() {
++        val e = layoutEngine(order = listOf(6))
++        val s = e.beginRead()
++        e.advanceToOffset(s, cpuTakeOffset)
++
++        val st = e.state
++        assertEquals(listOf(7, 8, 9, 10), st.cpuNos)
++        assertEquals(listOf(1, 2, 3, 4, 5), st.playerNos)
++        assertTrue(st.lastResult!!.transfers.isEmpty())
++        assertEquals(Side.CPU, st.lastResult!!.takenFrom)
++        assertEquals("相手が敵陣の札を取りました", st.lastResult!!.message)
++    }
++
++    @Test
++    fun touchingOtherSidesCardIsFaultAndPenaltyIsApplied() {
++        val e = layoutEngine(order = listOf(1, 11))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 500L)
++        // 出札は自陣の 1。敵陣の 6 に触れるとお手つき
++        e.tapCard(Side.CPU, 6)
++        var st = e.state
++        assertEquals(MatchPhase.Reading, st.phase)
++        assertTrue(st.playerLockedOut)
++        assertEquals(1, st.playerFaultCount)
++        assertEquals(0, st.cpuFaultCount)
++
++        // ロックアウト後は正しい札でも取れない。触れ直してもお手つきは増えない
++        e.tapCard(Side.PLAYER, 1)
++        e.tapCard(Side.CPU, 7)
++        assertEquals(MatchPhase.Reading, e.state.phase)
++        assertEquals(1, e.state.playerFaultCount)
++
++        e.advanceToOffset(s, cpuTakeOffset)
++        st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertFalse(st.playerLockedOut)
++        // CPU が自陣の札を取った分と、お手つきの罰の分で2枚送られる
++        assertEquals(listOf(2, 3, 4, 5, 6, 7), st.playerNos)
++        assertEquals(listOf(8, 9, 10), st.cpuNos)
++        val r = st.lastResult!!
++        assertEquals(setOf(Side.PLAYER), r.faults)
++        assertTrue(r.safeMisses.isEmpty())
++        assertEquals(
++            listOf(
++                Transfer(Side.CPU, Side.PLAYER, 6, Transfer.Reason.SEND_AFTER_TAKE),
++                Transfer(Side.CPU, Side.PLAYER, 7, Transfer.Reason.FAULT_PENALTY),
++            ),
++            r.transfers,
++        )
++        assertEquals("相手が自陣の札を取りました。お手つき！相手から2枚送られます", r.message)
++    }
++
++    @Test
++    fun touchingAnotherCardOnTheSameSideIsSafe() {
++        val e = layoutEngine(order = listOf(1, 11))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 500L)
++        // 出札は自陣の 1。同じ自陣の 2 に触れてもお手つきにならない（その読みではもう取れない）
++        e.tapCard(Side.PLAYER, 2)
++        var st = e.state
++        assertTrue(st.playerLockedOut)
++        assertEquals(0, st.playerFaultCount)
++
++        e.tapCard(Side.PLAYER, 1)
++        assertEquals(MatchPhase.Reading, e.state.phase)
++
++        e.advanceToOffset(s, cpuTakeOffset)
++        st = e.state
++        val r = st.lastResult!!
++        assertEquals(Side.CPU, r.takenBy)
++        assertTrue(r.faults.isEmpty())
++        assertEquals(setOf(Side.PLAYER), r.safeMisses)
++        // 罰はなく、CPU が自陣の札を取った分の1枚だけ送られる
++        assertEquals(listOf(2, 3, 4, 5, 6), st.playerNos)
++        assertEquals(0, st.playerFaultCount)
++        assertEquals(
++            "相手が自陣の札を取りました。相手から1枚送られます。お手つきにはなりませんが、この読みでは取れません",
++            r.message,
++        )
++    }
++
++    @Test
++    fun safeMissOnEnemySideCard() {
++        val e = layoutEngine(order = listOf(6))
++        val s = e.beginRead()
++        e.tapCard(Side.CPU, 7)
++        assertTrue(e.state.playerLockedOut)
++        assertEquals(0, e.state.playerFaultCount)
++        e.advanceToOffset(s, cpuTakeOffset)
++        val r = e.state.lastResult!!
++        assertEquals(setOf(Side.PLAYER), r.safeMisses)
++        assertTrue(r.faults.isEmpty())
++        assertTrue(r.transfers.isEmpty())
++        assertEquals(listOf(1, 2, 3, 4, 5), e.state.playerNos)
++    }
++
++    @Test
++    fun touchingCardOnEmptyReadingIsFault() {
++        val e = layoutEngine(order = listOf(11, 12))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 500L)
++        // 空札なので、どの札に触れてもお手つき（自陣の札でも）
++        e.tapCard(Side.PLAYER, 2)
++        assertEquals(1, e.state.playerFaultCount)
++        assertTrue(e.state.playerLockedOut)
++
++        e.advanceToOffset(s, 1800L + 1200L)
++        val st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        val r = st.lastResult!!
++        assertTrue(r.isEmptyCard)
++        assertEquals(setOf(Side.PLAYER), r.faults)
++        assertEquals(listOf(Transfer(Side.CPU, Side.PLAYER, 6, Transfer.Reason.FAULT_PENALTY)), r.transfers)
++        assertEquals(listOf(1, 2, 3, 4, 5, 6), st.playerNos)
++        assertEquals(listOf(7, 8, 9, 10), st.cpuNos)
++        assertEquals("空札でした。お手つき！相手から1枚送られます", r.message)
++
++        // お手つきがあったときは自動では進まない
++        e.advanceBy(60_000L)
++        assertEquals(MatchPhase.Result, e.state.phase)
++        e.next()
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++    }
++
++    @Test
++    fun faultsOnBothSidesCancelEachOtherOnEmptyReading() {
++        // 空札 10 の友札（先頭が同じ）に CPU が必ず触れる
++        val e = layoutEngine(
++            order = listOf(10),
++            cpu = listOf(6, 7, 8, 9, 11),
++            profile = FAULTY_CPU,
++        )
++        val s = e.beginRead()
++        e.advanceToOffset(s, 500L)
++        assertEquals(1, e.state.cpuFaultCount)
++        e.tapCard(Side.CPU, 6)
++        e.advanceToOffset(s, 3000L)
++
++        val st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        val r = st.lastResult!!
++        assertEquals(setOf(Side.PLAYER, Side.CPU), r.faults)
++        assertTrue(r.transfers.isEmpty())
++        assertEquals(0, st.pendingPlayerSends)
++        assertEquals(5, st.playerCards.size)
++        assertEquals(5, st.cpuCards.size)
++        assertEquals(
++            "空札でした。お手つき。相手のお手つき。お互いのお手つきなので札は動きません",
++            r.message,
++        )
++    }
++
++    @Test
++    fun cpuOnlyFaultOnEmptyReadingMakesPlayerSend() {
++        val e = layoutEngine(order = listOf(10, 12), cpu = listOf(6, 7, 8, 9, 11), profile = FAULTY_CPU)
++        val s = e.beginRead()
++        e.advanceToOffset(s, 3000L)
++
++        var st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertEquals(setOf(Side.CPU), st.lastResult!!.faults)
++        assertEquals(1, st.pendingPlayerSends)
++        assertTrue(st.lastResult!!.transfers.isEmpty())
++        assertEquals("空札でした。相手のお手つき。自陣から1枚送ってください", st.lastResult!!.message)
++
++        // お手つきがあったので自動では進まず、送る札を選ぶまで次へも進めない
++        e.advanceBy(10_000L)
++        e.next()
++        assertEquals(MatchPhase.Result, e.state.phase)
++
++        e.tapCard(Side.PLAYER, 4)
++        st = e.state
++        assertEquals(listOf(1, 2, 3, 5), st.playerNos)
++        assertEquals(listOf(6, 7, 8, 9, 11, 4), st.cpuNos)
++        assertEquals(
++            listOf(Transfer(Side.PLAYER, Side.CPU, 4, Transfer.Reason.FAULT_PENALTY)),
++            st.lastResult!!.transfers,
++        )
++        e.next()
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++    }
++
++    @Test
++    fun takingEnemyCardAfterCpuFaultRequiresTwoSends() {
++        // CPU は友札（自陣の 1）に触れてお手つき。プレイヤーが敵陣の 6 を取ると、2枚送る
++        val e = layoutEngine(order = listOf(6, 11), profile = FAULTY_CPU)
++        val s = e.beginRead()
++        e.advanceToOffset(s, 500L)
++        assertEquals(1, e.state.cpuFaultCount)
++        e.tapCard(Side.CPU, 6)
++
++        var st = e.state
++        assertEquals(2, st.pendingPlayerSends)
++        assertEquals(setOf(Side.CPU), st.lastResult!!.faults)
++        assertEquals(
++            "敵陣の札を取りました。相手のお手つき。自陣から2枚送ってください",
++            st.lastResult!!.message,
++        )
++        e.tapCard(Side.PLAYER, 2)
++        assertEquals(1, e.state.pendingPlayerSends)
++        e.next()
++        assertEquals(MatchPhase.Result, e.state.phase)
++        e.tapCard(Side.PLAYER, 4)
++        st = e.state
++        assertEquals(0, st.pendingPlayerSends)
++        assertEquals(
++            listOf(
++                Transfer(Side.PLAYER, Side.CPU, 2, Transfer.Reason.SEND_AFTER_TAKE),
++                Transfer(Side.PLAYER, Side.CPU, 4, Transfer.Reason.FAULT_PENALTY),
++            ),
++            st.lastResult!!.transfers,
++        )
++        assertEquals(listOf(1, 3, 5), st.playerNos)
++        assertEquals(listOf(7, 8, 9, 10, 2, 4), st.cpuNos)
++    }
++
++    @Test
++    fun faultsOnBothSidesCancelWhenNobodyTakesFieldCard() {
++        // 出札は敵陣の 6。CPU は自陣の友札 1（違う陣）に、プレイヤーも自陣の 1 に触れてお手つき
++        val e = layoutEngine(order = listOf(6), profile = FAULTY_CPU)
++        val s = e.beginRead()
++        e.advanceToOffset(s, 500L)
++        e.tapCard(Side.PLAYER, 1)
++        e.advanceToOffset(s, 3200L + 1500L)
++
++        val st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        val r = st.lastResult!!
++        assertNull(r.takenBy)
++        assertEquals(setOf(Side.PLAYER, Side.CPU), r.faults)
++        assertTrue(r.transfers.isEmpty())
++        assertEquals(0, st.pendingPlayerSends)
++        // 出札だけが場から取り除かれる
++        assertEquals(listOf(1, 2, 3, 4, 5), st.playerNos)
++        assertEquals(listOf(7, 8, 9, 10), st.cpuNos)
++    }
++
++    @Test
++    fun takingTheLastCardWins() {
++        val e = layoutEngine(order = listOf(1, 11), player = listOf(1))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 300L)
++        e.tapCard(Side.PLAYER, 1)
++
++        // まず結果を見せ、next で終了する
++        var st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertTrue(st.playerCards.isEmpty())
++        assertEquals("自陣の札を取りました", st.lastResult!!.message)
++        e.advanceBy(10_000L)
++        assertEquals(MatchPhase.Result, e.state.phase)
++        e.next()
++        st = e.state
++        assertEquals(MatchPhase.Finished(Side.PLAYER), st.phase)
++        assertEquals(1, st.playerTakenCount)
++        // 終了後は何も起きない
++        e.tapCard(Side.PLAYER, 1)
++        e.advanceBy(10_000L)
++        assertEquals(MatchPhase.Finished(Side.PLAYER), e.state.phase)
++    }
++
++    @Test
++    fun cpuTakingItsLastCardWins() {
++        val e = layoutEngine(order = listOf(6, 11), cpu = listOf(6))
++        val s = e.beginRead()
++        e.advanceToOffset(s, cpuTakeOffset)
++        assertEquals(MatchPhase.Result, e.state.phase)
++        assertTrue(e.state.cpuCards.isEmpty())
++        e.next()
++        assertEquals(MatchPhase.Finished(Side.CPU), e.state.phase)
++    }
++
++    @Test
++    fun cpuSendsItsLastCardWhenItTakesPlayersCard() {
++        // 自陣の札を取った CPU は1枚送る。持っている1枚を送って自陣が0枚になり、CPU の勝ち
++        val e = layoutEngine(order = listOf(1, 11), cpu = listOf(6))
++        val s = e.beginRead()
++        e.advanceToOffset(s, cpuTakeOffset)
++
++        val st = e.state
++        assertTrue(st.cpuCards.isEmpty())
++        assertEquals(listOf(2, 3, 4, 5, 6), st.playerNos)
++        assertEquals(1, st.lastResult!!.transfers.size)
++        e.next()
++        assertEquals(MatchPhase.Finished(Side.CPU), e.state.phase)
++    }
++
++    @Test
++    fun sendsAreLimitedToCardsInHand() {
++        // プレイヤーがお手つきし、CPU が自陣の札を取ると、本来2枚送るが CPU は1枚しか持っていない
++        val e = layoutEngine(order = listOf(1, 11), cpu = listOf(6))
++        val s = e.beginRead()
++        e.tapCard(Side.CPU, 6)
++        e.advanceToOffset(s, cpuTakeOffset)
++
++        val st = e.state
++        assertEquals(listOf(Transfer(Side.CPU, Side.PLAYER, 6, Transfer.Reason.SEND_AFTER_TAKE)), st.lastResult!!.transfers)
++        assertEquals(listOf(2, 3, 4, 5, 6), st.playerNos)
++        assertTrue(st.cpuCards.isEmpty())
++        assertEquals("相手が自陣の札を取りました。お手つき！相手から1枚送られます", st.lastResult!!.message)
++        e.next()
++        assertEquals(MatchPhase.Finished(Side.CPU), e.state.phase)
++    }
++
++    @Test
++    fun playerSendsOnlyWhatItHas() {
++        // プレイヤーの札は1枚だけ。CPU のお手つきがあっても送るのは1枚まで。送って0枚になれば勝ち
++        val e = layoutEngine(order = listOf(6, 11), player = listOf(1), profile = FAULTY_CPU)
++        val s = e.beginRead()
++        e.advanceToOffset(s, 500L)
++        e.tapCard(Side.CPU, 6)
++
++        var st = e.state
++        assertEquals(1, st.pendingPlayerSends)
++        assertEquals("敵陣の札を取りました。相手のお手つき。自陣から1枚送ってください", st.lastResult!!.message)
++        // 送る札を選ぶまでは勝敗が付かない
++        e.next()
++        assertEquals(MatchPhase.Result, e.state.phase)
++
++        e.tapCard(Side.PLAYER, 1)
++        st = e.state
++        assertTrue(st.playerCards.isEmpty())
++        assertEquals(0, st.pendingPlayerSends)
++        e.next()
++        assertEquals(MatchPhase.Finished(Side.PLAYER), e.state.phase)
++    }
++
++    @Test
++    fun takingEnemyLastCardDoesNotEndGameBecauseOfTheSentCard() {
++        // 敵陣の最後の1枚を取っても、1枚送ることで敵陣は0枚でなくなる
++        val e = layoutEngine(order = listOf(6, 11), cpu = listOf(6))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 200L)
++        e.tapCard(Side.CPU, 6)
++        assertTrue(e.state.cpuCards.isEmpty())
++        assertEquals(1, e.state.pendingPlayerSends)
++        e.tapCard(Side.PLAYER, 2)
++
++        assertEquals(listOf(2), e.state.cpuNos)
++        assertEquals(listOf(1, 3, 4, 5), e.state.playerNos)
++        e.next()
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++    }
++
++    @Test
++    fun readsRunningOutDecidesByRemainingCards() {
++        // 読み札が尽きても決着が付かないとき、残りが少ない方の勝ち
++        val e = layoutEngine(order = listOf(11), player = listOf(1, 2, 3), cpu = listOf(6, 7))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 3000L)
++        assertEquals(MatchPhase.Result, e.state.phase)
++        // 決着が付いているので自動では進まない
++        e.advanceBy(10_000L)
++        assertEquals(MatchPhase.Result, e.state.phase)
++        e.next()
++        assertEquals(MatchPhase.Finished(Side.CPU), e.state.phase)
++    }
++
++    @Test
++    fun readsRunningOutWithEqualCardsIsDraw() {
++        val e = layoutEngine(order = listOf(11, 12), player = listOf(1, 2), cpu = listOf(6, 7))
++        e.beginRead()
++        e.advanceBy(3000L)
++        assertEquals(MatchPhase.Result, e.state.phase)
++        // 1回目は決着が付かないので自動で進む
++        e.advanceBy(1200L)
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++        e.beginRead()
++        e.advanceBy(3000L)
++        assertEquals(MatchPhase.Result, e.state.phase)
++        assertEquals(2, e.state.readsDone)
++        e.next()
++        assertEquals(MatchPhase.Finished(null), e.state.phase)
++    }
++
++    @Test
++    fun readsRunningOutWithFewerPlayerCardsWinsForPlayer() {
++        val e = layoutEngine(order = listOf(11), player = listOf(1), cpu = listOf(6, 7))
++        e.beginRead()
++        e.advanceBy(3000L)
++        e.next()
++        assertEquals(MatchPhase.Finished(Side.PLAYER), e.state.phase)
++    }
++
++    @Test
++    fun lastResultKeepsTakeInfoInFinishedPhase() {
++        val e = layoutEngine(order = listOf(1), player = listOf(1))
++        e.beginRead()
++        e.tapCard(Side.PLAYER, 1)
++        e.next()
++        val st = e.state
++        assertEquals(MatchPhase.Finished(Side.PLAYER), st.phase)
++        assertEquals(Side.PLAYER, st.lastResult!!.takenBy)
++        assertEquals(1, st.reading!!.poem.no)
++        assertEquals(1, st.readsDone)
++    }
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/CpuBehaviorTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/CpuBehaviorTest.kt
+new file mode 100644
+index 0000000..0c7fc6a
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/CpuBehaviorTest.kt
+@@ -0,0 +1,300 @@
++package io.github.abonsan.hyakunin.game
++
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertNotNull
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import kotlin.random.Random
++
++class CpuBehaviorTest {
++    @Test
++    fun profilesMatchTheSpecification() {
++        assertEquals(CpuProfile(1400L, 2600L, 0.10), CpuProfile.of(CpuLevel.BEGINNER))
++        assertEquals(CpuProfile(750L, 1500L, 0.05), CpuProfile.of(CpuLevel.INTERMEDIATE))
++        assertEquals(CpuProfile(350L, 800L, 0.02), CpuProfile.of(CpuLevel.ADVANCED))
++        assertEquals(CpuProfile(150L, 400L, 0.0), CpuProfile.of(CpuLevel.MASTER))
++    }
++
++    @Test
++    fun reactionTimeIsWithinTheLevelsRange() {
++        for (level in CpuLevel.entries) {
++            val profile = CpuProfile.of(level)
++            var takes = 0
++            var min = Long.MAX_VALUE
++            var max = Long.MIN_VALUE
++            for (seed in 0 until 300) {
++                val e = layoutEngine(order = listOf(1), profile = profile, random = Random(seed))
++                val s = e.beginRead()
++                val plan = s.cpuPlan
++                if (plan !is CpuPlan.Take) continue
++                takes++
++                // 決まり字（2文字）が表示された時刻 + 反応時間
++                val kimarijiAt = s.kanaAt[s.kimarijiLength - 1]
++                val reaction = plan.atMillis - kimarijiAt
++                assertTrue("$level reaction=$reaction", reaction in profile.reactionMinMillis..profile.reactionMaxMillis)
++                min = minOf(min, reaction)
++                max = maxOf(max, reaction)
++            }
++            assertTrue("$level takes=$takes", takes > 200)
++            // 範囲全体を使っている（定数ではない）
++            assertTrue("$level min=$min", min < profile.reactionMinMillis + (profile.reactionMaxMillis - profile.reactionMinMillis) / 4)
++            assertTrue("$level max=$max", max > profile.reactionMaxMillis - (profile.reactionMaxMillis - profile.reactionMinMillis) / 4)
++        }
++    }
++
++    @Test
++    fun cpuTakesAtKimarijiPlusReaction() {
++        val e = layoutEngine(order = listOf(6, 11), profile = steadyCpu(300L))
++        val s = e.beginRead()
++        // 決まり字は2文字（200ms）、反応 300ms なので 500ms で取る
++        assertEquals(CpuPlan.Take(s.startMillis + 500L), s.cpuPlan)
++        e.advanceToOffset(s, 499L)
++        assertEquals(MatchPhase.Reading, e.state.phase)
++        e.advanceToOffset(s, 500L)
++        val st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertEquals(Side.CPU, st.lastResult!!.takenBy)
++        assertEquals(5, st.lastResult!!.revealedAtTake)
++    }
++
++    @Test
++    fun cpuTakesAtLatestHalfSecondAfterLowerPhrase() {
++        // 決まり字が上の句の最後にあり、下の句が短いと、遅い CPU でも下の句の後 500ms で取る
++        val poems = listOf(testPoem(1, "あかい", "ひ"), testPoem(2, "あかう", "ふ"))
++        for (seed in 0 until 50) {
++            val e = layoutEngine(
++                order = listOf(1),
++                player = listOf(1),
++                cpu = listOf(2),
++                profile = CpuProfile(1400L, 2600L, 0.0),
++                random = Random(seed),
++                poems = poems,
++            )
++            val s = e.beginRead()
++            assertEquals(3, s.kimarijiLength)
++            // 上の句 3文字 = 300ms、下の句は 300ms の間 + 1文字 = 700ms
++            assertEquals(700L, s.shimoEnd - s.startMillis)
++            assertEquals(CpuPlan.Take(s.shimoEnd + 500L), s.cpuPlan)
++        }
++        val e = layoutEngine(
++            order = listOf(1),
++            player = listOf(1),
++            cpu = listOf(2),
++            profile = CpuProfile(1400L, 2600L, 0.0),
++            poems = poems,
++        )
++        val s = e.beginRead()
++        e.advanceToOffset(s, 1199L)
++        assertEquals(MatchPhase.Reading, e.state.phase)
++        e.advanceToOffset(s, 1200L)
++        assertEquals(Side.CPU, e.state.lastResult!!.takenBy)
++    }
++
++    @Test
++    fun masterNeverFaults() {
++        for (seed in 0 until 500) {
++            val e = layoutEngine(
++                order = listOf(1),
++                profile = CpuProfile.of(CpuLevel.MASTER),
++                random = Random(seed),
++            )
++            assertTrue(e.beginRead().cpuPlan is CpuPlan.Take)
++        }
++        // 空札でも何もしない
++        for (seed in 0 until 100) {
++            val e = layoutEngine(
++                order = listOf(11),
++                profile = CpuProfile.of(CpuLevel.MASTER),
++                random = Random(seed),
++            )
++            assertNull(e.beginRead().cpuPlan)
++        }
++    }
++
++    @Test
++    fun faultRateFollowsTheLevel() {
++        val trials = 4000
++        for (level in listOf(CpuLevel.BEGINNER, CpuLevel.INTERMEDIATE, CpuLevel.ADVANCED)) {
++            val profile = CpuProfile.of(level)
++            var faults = 0
++            for (seed in 0 until trials) {
++                val e = layoutEngine(order = listOf(1), profile = profile, random = Random(seed))
++                if (e.beginRead().cpuPlan is CpuPlan.Fault) faults++
++            }
++            val rate = faults.toDouble() / trials
++            assertTrue("$level rate=$rate", Math.abs(rate - profile.faultProbability) < 0.02)
++        }
++    }
++
++    @Test
++    fun faultTargetsTheCardWithTheLongestCommonPrefix() {
++        // 読まれる札 1（空札）の友札: 2 は5文字、3 は2文字、4 は共通なし
++        val poems = listOf(
++            testPoem(1, "あさぼらけ　ありあけの"),
++            testPoem(2, "あさぼらけ　うじのかわぎり"),
++            testPoem(3, "あさじうの　のべのしのはら"),
++            testPoem(4, "はるすぎて　なつきにけらし"),
++        )
++        val e = layoutEngine(
++            order = listOf(1),
++            player = listOf(3),
++            cpu = listOf(2, 4),
++            profile = CpuProfile(800L, 800L, 1.0),
++            poems = poems,
++        )
++        val s = e.beginRead()
++        assertTrue(s.isEmpty)
++        // 共通部分（5文字）を表示し終えた時刻 + 反応時間の半分
++        assertEquals(CpuPlan.Fault(s.startMillis + 500L + 400L, 2, Side.CPU), s.cpuPlan)
++
++        e.advanceToOffset(s, 899L)
++        assertEquals(0, e.state.cpuFaultCount)
++        e.advanceToOffset(s, 900L)
++        assertEquals(1, e.state.cpuFaultCount)
++        // 触れた後は取らない（空札なので元から取れないが、お手つきは1回だけ）
++        e.advanceToOffset(s, 10_000L)
++        assertEquals(1, e.state.cpuFaultCount)
++        assertEquals(0, e.state.cpuTakenCount)
++    }
++
++    @Test
++    fun faultTargetIsChosenAtRandomAmongEqualPrefixes() {
++        // 札 1 と 2〜10 はどれも先頭1文字だけ共通 → 友札の候補は9枚
++        val targets = (0 until 100).map { seed ->
++            val e = layoutEngine(order = listOf(11), player = listOf(2, 3, 4, 5, 6), cpu = listOf(7, 8, 9, 10, 1),
++                profile = FAULTY_CPU, random = Random(seed))
++            // 11 は「いか…」。友札は先頭が「い」の歌だが、場にはないので友札なし
++            (e.beginRead().cpuPlan as? CpuPlan.Fault)?.poemNo
++        }
++        assertTrue(targets.all { it == null })
++
++        val picked = (0 until 100).map { seed ->
++            val e = layoutEngine(order = listOf(1), player = listOf(2, 3, 4, 5, 6), cpu = listOf(7, 8, 9, 10, 11),
++                profile = FAULTY_CPU, random = Random(seed))
++            (e.beginRead().cpuPlan as CpuPlan.Fault).poemNo
++        }
++        assertTrue(picked.all { it in 2..10 })
++        assertTrue(picked.toSet().size > 3)
++    }
++
++    @Test
++    fun noFaultWithoutAFriendCard() {
++        val poems = listOf(
++            testPoem(1, "あきのたの"),
++            testPoem(2, "はるすぎて"),
++            testPoem(3, "ふゆのよの"),
++        )
++        // 場の札は 2 と 3 だけ。1 と先頭が同じ札がないので、必ずお手つきするはずの CPU も何もしない
++        val e = layoutEngine(
++            order = listOf(1),
++            player = listOf(2),
++            cpu = listOf(3),
++            profile = FAULTY_CPU,
++            poems = poems,
++        )
++        assertNull(e.beginRead().cpuPlan)
++
++        // 出札が場にあれば普通に取る
++        val e2 = layoutEngine(
++            order = listOf(2),
++            player = listOf(2),
++            cpu = listOf(3),
++            profile = FAULTY_CPU,
++            poems = poems,
++        )
++        assertTrue(e2.beginRead().cpuPlan is CpuPlan.Take)
++    }
++
++    @Test
++    fun cpuFaultOnSameSideIsSafeAndCpuDoesNotTakeAfterwards() {
++        // 出札 1 と同じ自陣の友札 2 に CPU が触れる（セーフ）。その読みでは取らない
++        val e = layoutEngine(order = listOf(1), profile = FAULTY_CPU)
++        val s = e.beginRead()
++        e.advanceToOffset(s, 10_000L)
++        val st = e.state
++        assertEquals(MatchPhase.Reading, st.phase)
++        assertEquals(0, st.cpuFaultCount)
++        assertEquals(0, st.cpuTakenCount)
++        assertTrue(s.cpuLocked)
++        assertNull(s.cpuPlan)
++        assertEquals(setOf(Side.CPU), s.safeMisses)
++    }
++
++    @Test
++    fun cpuFaultOnOtherSideCountsAsFault() {
++        // 出札 6 は敵陣。CPU は自陣（プレイヤー側）の友札に触れるのでお手つき
++        val e = layoutEngine(order = listOf(6), profile = FAULTY_CPU)
++        val s = e.beginRead()
++        e.advanceToOffset(s, 200L)
++        assertEquals(1, e.state.cpuFaultCount)
++        assertEquals(setOf(Side.CPU), s.faults)
++    }
++
++    @Test
++    fun playerWinsTheRaceByTakingEarlier() {
++        val e = layoutEngine(order = listOf(1, 11), profile = steadyCpu(300L))
++        val s = e.beginRead()
++        // CPU は 500ms で取る。その1ms前にプレイヤーが取る
++        e.advanceToOffset(s, 499L)
++        e.tapCard(Side.PLAYER, 1)
++        val st = e.state
++        assertEquals(Side.PLAYER, st.lastResult!!.takenBy)
++        assertEquals(4, st.lastResult!!.revealedAtTake)
++        assertNull(s.cpuPlan)
++
++        // CPU の予定時刻を過ぎても何も起きない
++        e.advanceToOffset(s, 5_000L)
++        assertEquals(1, e.state.playerTakenCount)
++        assertEquals(0, e.state.cpuTakenCount)
++        assertEquals(MatchPhase.Result, e.state.phase)
++    }
++
++    @Test
++    fun cpuWinsTheRaceByTakingEarlier() {
++        val e = layoutEngine(order = listOf(1, 11), profile = steadyCpu(300L))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 500L)
++        assertEquals(Side.CPU, e.state.lastResult!!.takenBy)
++        // プレイヤーが遅れて触れても、取ることもお手つきになることもない
++        e.tapCard(Side.PLAYER, 1)
++        e.tapCard(Side.CPU, 7)
++        val st = e.state
++        assertEquals(0, st.playerTakenCount)
++        assertEquals(0, st.playerFaultCount)
++        assertEquals(1, st.cpuTakenCount)
++    }
++
++    @Test
++    fun cpuFaultIsCancelledWhenPlayerTakesFirst() {
++        // 友札へ触れるのは 1100ms の予定。その前にプレイヤーが取る
++        val e = layoutEngine(order = listOf(1, 11), profile = CpuProfile(2000L, 2000L, 1.0))
++        val s = e.beginRead()
++        assertNotNull(s.cpuPlan as? CpuPlan.Fault)
++        e.advanceToOffset(s, 1000L)
++        e.tapCard(Side.PLAYER, 1)
++        e.advanceToOffset(s, 5_000L)
++        val st = e.state
++        assertEquals(0, st.cpuFaultCount)
++        assertEquals(setOf<Side>(), st.lastResult!!.faults)
++        assertEquals(setOf<Side>(), st.lastResult!!.safeMisses)
++    }
++
++    @Test
++    fun lowerLevelCpuIsSlowerOnAverage() {
++        fun averageTakeOffset(level: CpuLevel): Double {
++            var sum = 0L
++            var n = 0
++            for (seed in 0 until 200) {
++                val e = layoutEngine(order = listOf(1), profile = CpuProfile.of(level), random = Random(seed))
++                val s = e.beginRead()
++                val plan = s.cpuPlan as? CpuPlan.Take ?: continue
++                sum += plan.atMillis - s.startMillis
++                n++
++            }
++            return sum.toDouble() / n
++        }
++        val averages = CpuLevel.entries.map { averageTakeOffset(it) }
++        assertEquals(averages.sortedDescending(), averages)
++    }
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/KanaTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/KanaTest.kt
+new file mode 100644
+index 0000000..3d055fc
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/KanaTest.kt
+@@ -0,0 +1,67 @@
++package io.github.abonsan.hyakunin.game
++
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++class KanaTest {
++    @Test
++    fun kanaCountIgnoresSpaces() {
++        assertEquals(0, kanaCount(""))
++        assertEquals(12, kanaCount("あきのたの　かりおのいおの"))
++        assertEquals(12, kanaCount("あきのたの かりおのいおの"))
++        assertEquals(12, kanaCount("　あきのたの　　かりおのいおの　"))
++        assertEquals("あきのたのかりおのいおの", stripYomiSpaces("あきのたの　かりおのいおの"))
++    }
++
++    @Test
++    fun normalizeUnifiesSameSoundKana() {
++        assertEquals("おとめ", normalizeYomi("をとめ"))
++        assertEquals("いまこむ", normalizeYomi("ゐまこむ"))
++        assertEquals("えび", normalizeYomi("ゑび"))
++        assertEquals("じ", normalizeYomi("ぢ"))
++        assertEquals("ず", normalizeYomi("づ"))
++        // 変化しない仮名はそのまま
++        assertEquals("あきのたの", normalizeYomi("あきのたの"))
++    }
++
++    @Test
++    fun normalizeKeepsLengthExceptForSpaces() {
++        val yomi = "おうことの　をぐらやま"
++        assertEquals(kanaCount(yomi), normalizeYomi(yomi).length)
++    }
++
++    @Test
++    fun longVowelAfterORowIsTreatedAsO() {
++        // 「おう」と「おお」は同じ音
++        assertEquals(normalizeYomi("おおえやま"), "おおえやま")
++        assertEquals("おおこと", normalizeYomi("おうこと"))
++        // お段の仮名ごとに確認
++        for (c in "おこそとのほもよろごぞどぼぽょ") {
++            assertEquals("${c}お", normalizeYomi("${c}う"))
++        }
++        // 「を」もお段
++        assertEquals("おお", normalizeYomi("をう"))
++        // お段以外の後の「う」はそのまま
++        assertEquals("あう", normalizeYomi("あう"))
++        assertEquals("くう", normalizeYomi("くう"))
++        // 句の区切りをまたぐ「う」は長音にしない
++        assertEquals("のう", normalizeYomi("の　う"))
++    }
++
++    @Test
++    fun smallKana() {
++        for (c in "ゃゅょぁぃぅぇぉゎ") assertTrue(isSmallKana(c))
++        assertFalse(isSmallKana('や'))
++        assertFalse(isSmallKana('つ'))
++    }
++
++    @Test
++    fun commonPrefix() {
++        assertEquals(0, commonPrefixLength("あい", "うえ"))
++        assertEquals(2, commonPrefixLength("あいう", "あいえお"))
++        assertEquals(2, commonPrefixLength("あい", "あいう"))
++        assertEquals(0, commonPrefixLength("", "あ"))
++    }
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/KimarijiTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/KimarijiTest.kt
+new file mode 100644
+index 0000000..acaea4c
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/KimarijiTest.kt
+@@ -0,0 +1,171 @@
++package io.github.abonsan.hyakunin.game
++
++import io.github.abonsan.hyakunin.data.Poems
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertTrue
++import org.junit.Assume.assumeTrue
++import org.junit.Test
++
++class KimarijiTest {
++    private fun poem(no: Int, kami: String) = testPoem(no, kami)
++
++    @Test
++    fun uniqueFirstKanaIsOne() {
++        val a = poem(1, "あきのたの")
++        val b = poem(2, "はるすぎて")
++        assertEquals(1, kimarijiLength(a, listOf(a, b)))
++        assertEquals(1, kimarijiLength(b, listOf(a, b)))
++    }
++
++    @Test
++    fun sharedPrefixExtendsByOne() {
++        val a = poem(1, "あきのたの")
++        val b = poem(2, "あきかぜの")
++        // 共通は「あき」の2文字なので3文字目で決まる
++        assertEquals(3, kimarijiLength(a, listOf(a, b)))
++        assertEquals(3, kimarijiLength(b, listOf(a, b)))
++    }
++
++    @Test
++    fun targetIsIgnoredInUnread() {
++        val a = poem(1, "あきのたの")
++        assertEquals(1, kimarijiLength(a, listOf(a)))
++        assertEquals(1, kimarijiLength(a, emptyList()))
++    }
++
++    @Test
++    fun spacesAreIgnored() {
++        val a = poem(1, "あさ　ぼらけ　ありあけの")
++        val b = poem(2, "あさぼらけ　うじのかわぎり")
++        assertEquals(6, kimarijiLength(a, listOf(a, b)))
++    }
++
++    @Test
++    fun readCardsShortenKimariji() {
++        // 「あさぼらけ　あ…」「あさぼらけ　う…」「あさじうの…」
++        val a = poem(1, "あさぼらけ　ありあけの")
++        val b = poem(2, "あさぼらけ　うじのかわぎり")
++        val c = poem(3, "あさじうの　のべのしのはら")
++        val all = listOf(a, b, c)
++        assertEquals(6, kimarijiLength(a, all))
++        assertEquals(6, kimarijiLength(b, all))
++        assertEquals(3, kimarijiLength(c, all))
++
++        // b が読まれると、a は c とだけ区別すればよい（「あさぼ」）
++        assertEquals(3, kimarijiLength(a, listOf(a, c)))
++        // a が読まれると b も同様
++        assertEquals(3, kimarijiLength(b, listOf(b, c)))
++        // 両方読まれた後の c は「あ」だけで決まる
++        assertEquals(1, kimarijiLength(c, listOf(c)))
++        // c が読まれても a と b は互いに紛らわしい
++        assertEquals(6, kimarijiLength(a, listOf(a, b)))
++    }
++
++    @Test
++    fun smallKanaExtendsKimariji() {
++        // 共通は「か」だけなので「かし」で決まるが、直後の小書き仮名「ゃ」は一音として読むので3文字になる
++        val a = poem(1, "かしゃくの")
++        val b = poem(2, "かるくの")
++        assertEquals(3, kimarijiLength(a, listOf(a, b)))
++
++        // 先頭1文字で決まる場合も、直後の小書き仮名を含めて「ちょ」の2文字
++        val c = poem(3, "ちょかくの")
++        val d = poem(4, "はるすぎて")
++        assertEquals(2, kimarijiLength(c, listOf(c, d)))
++
++        // 共通部分の後ろに小書き仮名が続く場合
++        val e = poem(5, "きしゃのくの")
++        val f = poem(6, "きしろのくの")
++        assertEquals(3, kimarijiLength(e, listOf(e, f)))
++    }
++
++    @Test
++    fun woAndOAreTheSameSound() {
++        val a = poem(1, "をぐらやま")
++        val b = poem(2, "おぐらのみ")
++        // 「を」と「お」は同じ音なので、「おぐら」の3文字まで一致する
++        assertEquals(4, kimarijiLength(a, listOf(a, b)))
++        assertEquals(4, kimarijiLength(b, listOf(a, b)))
++        val c = poem(3, "おとこやま")
++        // 「おとこやま」とは「お」だけが共通
++        assertEquals(2, kimarijiLength(a, listOf(a, c)))
++    }
++
++    @Test
++    fun longVowelIsTheSameSound() {
++        // 44番「おうことの」は60番「おおえやま」・95番「おおけなく」と2文字目まで同じ音
++        val a = poem(44, "おうことの　たえてしなくは")
++        val b = poem(60, "おおえやま　いくののみちの")
++        val c = poem(95, "おおけなく　うきよのたみに")
++        val all = listOf(a, b, c)
++        assertEquals(3, kimarijiLength(a, all))
++        assertEquals(3, kimarijiLength(b, all))
++        assertEquals(3, kimarijiLength(c, all))
++        // 44番だけが相手でも、「おお」までは同じなので3文字
++        assertEquals(3, kimarijiLength(b, listOf(a, b)))
++    }
++
++    @Test
++    fun longVowelOnlyAfterORow() {
++        // 「あう」と「ああ」は別の音
++        val a = poem(1, "あうの")
++        val b = poem(2, "ああの")
++        assertEquals(2, kimarijiLength(a, listOf(a, b)))
++    }
++
++    @Test
++    fun cappedAtWholeUpperPhrase() {
++        // 同じ読みなら区別できないので、上の句全体の長さが上限
++        val a = poem(1, "あいうえお")
++        val b = poem(2, "あいうえお")
++        assertEquals(5, kimarijiLength(a, listOf(a, b)))
++        // 他の歌の読みが上の句全体の接頭辞になっている場合
++        val c = poem(3, "あいう")
++        val d = poem(4, "あいうえ")
++        assertEquals(3, kimarijiLength(c, listOf(c, d)))
++        assertEquals(4, kimarijiLength(d, listOf(c, d)))
++    }
++
++    @Test
++    fun emptyReadingHasNoKimariji() {
++        assertEquals(0, kimarijiLength(poem(1, ""), listOf(poem(2, "あ"))))
++    }
++
++    @Test
++    fun syntheticPoemsStartWithTwoKana() {
++        for (p in SYNTHETIC_POEMS) assertEquals(2, kimarijiLength(p, SYNTHETIC_POEMS))
++        // 同じ先頭仮名の10首のうち、自分以外が読まれていれば1文字で決まる
++        val p = SYNTHETIC_POEMS[0]
++        assertEquals(1, kimarijiLength(p, listOf(p) + SYNTHETIC_POEMS.drop(10)))
++    }
++
++    @Test
++    fun initialKimarijiDistributionOfTheHundredPoems() {
++        // 100首がそろっているときだけ確かめる（暫定データではスキップ）
++        val all = Poems.all
++        assumeTrue(all.size == 100)
++        val distribution = all.groupingBy { kimarijiLength(it, all) }.eachCount().toSortedMap()
++        // 一字7・二字42・三字37・四字6・五字2・六字6
++        assertEquals(mapOf(1 to 7, 2 to 42, 3 to 37, 4 to 6, 5 to 2, 6 to 6), distribution)
++        // 44番「おうことの」は60番・95番と2文字目まで同じ音なので3
++        assertEquals(3, kimarijiLength(all[43], all))
++    }
++
++    @Test
++    fun invariantsHoldForBundledPoems() {
++        // 同梱データ（暫定でも100首でも）に対して成り立つべき性質
++        val all = Poems.all
++        for (p in all) {
++            val t = normalizeYomi(p.kamiYomi)
++            val k = kimarijiLength(p, all)
++            assertTrue("poem ${p.no}: k=$k", k in 1..t.length)
++            val prefix = t.take(k)
++            for (o in all) {
++                if (o.no == p.no) continue
++                val other = normalizeYomi(o.kamiYomi)
++                // k 文字目までで、他のどの歌とも区別できる
++                assertTrue("poem ${p.no} vs ${o.no}", !other.startsWith(prefix) || other == t)
++            }
++        }
++    }
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/MatchEngineReadingTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/MatchEngineReadingTest.kt
+new file mode 100644
+index 0000000..6539491
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/MatchEngineReadingTest.kt
+@@ -0,0 +1,271 @@
++package io.github.abonsan.hyakunin.game
++
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++/** 読み上げの進行（待ち・仮名の表示・空札の終わり・取り手なし）。 */
++class MatchEngineReadingTest {
++    @Test
++    fun waitsThenStartsReading() {
++        val e = layoutEngine(order = listOf(1))
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++        assertNull(e.state.reading)
++        assertEquals(1, e.state.totalReads)
++        assertEquals(0, e.state.readsDone)
++
++        e.advanceTo(1499L)
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++        assertNull(e.state.reading)
++
++        e.advanceTo(1500L)
++        val st = e.state
++        assertEquals(MatchPhase.Reading, st.phase)
++        val reading = st.reading!!
++        assertEquals(1, reading.poem.no)
++        assertEquals(1, reading.readNumber)
++        assertEquals(1, reading.totalReads)
++        assertEquals(0, reading.revealedKana)
++        assertEquals(16, reading.kamiKanaCount)
++        assertEquals(26, reading.totalKanaCount)
++    }
++
++    @Test
++    fun kanaAreRevealedOneByOneWithGaps() {
++        val e = layoutEngine(order = listOf(1))
++        val s = e.beginRead()
++        val offsets = s.kanaAt.map { it - s.startMillis }
++        val expected = listOf(
++            // 上の句 1 句目（6文字）
++            100L, 200L, 300L, 400L, 500L, 600L,
++            // 句の区切りで 100ms の間 → 2 句目（5文字）
++            800L, 900L, 1000L, 1100L, 1200L,
++            // 3 句目（5文字）
++            1400L, 1500L, 1600L, 1700L, 1800L,
++            // 上の句と下の句の間は 300ms の間 → 下の句（5文字 + 区切り + 5文字）
++            2200L, 2300L, 2400L, 2500L, 2600L,
++            2800L, 2900L, 3000L, 3100L, 3200L,
++        )
++        assertEquals(expected, offsets)
++        assertEquals(1800L, s.kamiEnd - s.startMillis)
++        assertEquals(3200L, s.shimoEnd - s.startMillis)
++
++        fun revealedAt(offset: Long): Int {
++            e.advanceToOffset(s, offset)
++            return e.state.reading!!.revealedKana
++        }
++        assertEquals(0, revealedAt(99L))
++        assertEquals(1, revealedAt(100L))
++        assertEquals(6, revealedAt(600L))
++        assertEquals(6, revealedAt(799L))
++        assertEquals(7, revealedAt(800L))
++        assertEquals(16, revealedAt(1800L))
++        assertEquals(16, revealedAt(2199L))
++        assertEquals(17, revealedAt(2200L))
++        assertEquals(25, revealedAt(3100L))
++        assertEquals(26, revealedAt(3200L))
++    }
++
++    @Test
++    fun timelineScalesWithCharMillis() {
++        val e = layoutEngine(order = listOf(1), charMillis = 230L)
++        val s = e.beginRead()
++        assertEquals(230L, s.kanaAt[0] - s.startMillis)
++        // 7文字目: 6文字 + 区切り 1 つぶん
++        assertEquals(230L * 8, s.kanaAt[6] - s.startMillis)
++        // 17文字目: 16文字 + 区切り 2 つぶん + 上下の句の間 3 つぶん
++        assertEquals(230L * (17 + 2 + 3), s.kanaAt[16] - s.startMillis)
++    }
++
++    @Test
++    fun fieldCardStaysReadingUntilSomeoneTakesIt() {
++        // CPU が早々に友札へ触れて取れなくなる。プレイヤーが取るまで Reading のまま
++        val e = layoutEngine(order = listOf(1), profile = FAULTY_CPU)
++        val s = e.beginRead()
++        e.advanceToOffset(s, 100L)
++        assertTrue(s.cpuLocked)
++        e.advanceToOffset(s, 60_000L)
++        val st = e.state
++        assertEquals(MatchPhase.Reading, st.phase)
++        assertFalse(st.playerLockedOut)
++        assertEquals(26, st.reading!!.revealedKana)
++
++        e.tapCard(Side.PLAYER, 1)
++        val after = e.state
++        assertEquals(MatchPhase.Result, after.phase)
++        assertEquals(Side.PLAYER, after.lastResult!!.takenBy)
++        assertEquals(26, after.lastResult!!.revealedAtTake)
++    }
++
++    @Test
++    fun emptyCardEndsAfterUpperPhrasePlusTail() {
++        val e = layoutEngine(order = listOf(11, 12))
++        val s = e.beginRead()
++        assertTrue(s.isEmpty)
++        e.advanceToOffset(s, 1800L + 1199L)
++        assertEquals(MatchPhase.Reading, e.state.phase)
++        // 空札は上の句までしか表示しない
++        assertEquals(16, e.state.reading!!.revealedKana)
++        e.advanceToOffset(s, 1800L + 1200L)
++
++        val st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertEquals(1, st.readsDone)
++        // 上の句までを表示し終えた状態で止まる
++        assertEquals(16, st.reading!!.revealedKana)
++        val r = st.lastResult!!
++        assertTrue(r.isEmptyCard)
++        assertNull(r.takenBy)
++        assertNull(r.takenFrom)
++        assertNull(r.revealedAtTake)
++        assertEquals(2, r.kimarijiLength)
++        assertTrue(r.faults.isEmpty())
++        assertEquals("空札でした", r.message)
++        // 場の札は変わらない
++        assertEquals(listOf(1, 2, 3, 4, 5), st.playerNos)
++        assertEquals(listOf(6, 7, 8, 9, 10), st.cpuNos)
++    }
++
++    @Test
++    fun emptyCardWithoutFaultAdvancesAutomatically() {
++        val e = layoutEngine(order = listOf(11, 12))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 3000L)
++        assertEquals(MatchPhase.Result, e.state.phase)
++
++        e.advanceBy(1199L)
++        assertEquals(MatchPhase.Result, e.state.phase)
++        e.advanceBy(1L)
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++
++        e.advanceBy(1499L)
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++        e.advanceBy(1L)
++        assertEquals(MatchPhase.Reading, e.state.phase)
++        assertEquals(12, e.state.reading!!.poem.no)
++        assertEquals(2, e.state.reading!!.readNumber)
++    }
++
++    @Test
++    fun emptyCardIgnoresCpuWithoutFaults() {
++        val e = layoutEngine(order = listOf(11), profile = steadyCpu(0L))
++        val s = e.beginRead()
++        assertNull(s.cpuPlan)
++        e.advanceToOffset(s, 3000L)
++        assertEquals(0, e.state.cpuTakenCount)
++        assertEquals(0, e.state.cpuFaultCount)
++    }
++
++    @Test
++    fun bothLockedOutRemovesCardAfterUpperAndLowerPhrase() {
++        // プレイヤーは別の陣の札に触れてお手つき、CPU は同じ陣の友札に触れてセーフ
++        val e = layoutEngine(order = listOf(1), profile = FAULTY_CPU)
++        val s = e.beginRead()
++        e.advanceToOffset(s, 500L)
++        e.tapCard(Side.CPU, 6)
++        assertTrue(e.state.playerLockedOut)
++
++        // 下の句を表示し終えた（3200）1500ms 後
++        e.advanceToOffset(s, 3200L + 1499L)
++        assertEquals(MatchPhase.Reading, e.state.phase)
++        e.advanceToOffset(s, 3200L + 1500L)
++
++        val st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertEquals(26, st.reading!!.revealedKana)
++        val r = st.lastResult!!
++        assertNull(r.takenBy)
++        assertNull(r.takenFrom)
++        assertNull(r.revealedAtTake)
++        assertFalse(r.isEmptyCard)
++        assertEquals(setOf(Side.PLAYER), r.faults)
++        assertEquals(setOf(Side.CPU), r.safeMisses)
++        // 出札は場から取り除かれ、お手つきの罰として CPU から1枚送られる
++        assertEquals(listOf(2, 3, 4, 5, 6), st.playerNos)
++        assertEquals(listOf(7, 8, 9, 10), st.cpuNos)
++        assertEquals(
++            listOf(Transfer(Side.CPU, Side.PLAYER, 6, Transfer.Reason.FAULT_PENALTY)),
++            r.transfers,
++        )
++        assertEquals(0, st.playerTakenCount)
++        assertEquals(0, st.cpuTakenCount)
++        assertEquals(
++            "誰も取れませんでした。お手つき！相手から1枚送られます。相手は同じ陣の別の札に触れました",
++            r.message,
++        )
++    }
++
++    @Test
++    fun resultKeepsReadingAndFreezesRevealedKana() {
++        val e = layoutEngine(order = listOf(1, 2))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 450L)
++        e.tapCard(Side.PLAYER, 1)
++
++        val st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertEquals(4, st.reading!!.revealedKana)
++        assertEquals(4, st.lastResult!!.revealedAtTake)
++        e.advanceBy(10_000L)
++        assertEquals(4, e.state.reading!!.revealedKana)
++        assertEquals(1, e.state.reading!!.poem.no)
++
++        // 次の読みの前にも直前の読みを保持する
++        e.next()
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++        assertEquals(1, e.state.reading!!.poem.no)
++        e.beginRead()
++        assertEquals(2, e.state.reading!!.poem.no)
++        assertEquals(0, e.state.reading!!.revealedKana)
++    }
++
++    @Test
++    fun kimarijiLengthReflectsCardsReadSoFar() {
++        // 合成の100首: 先頭の仮名が同じ歌が10首ずつあるので、最初の決まり字は2
++        val e = layoutEngine(order = listOf(1, 11))
++        assertEquals(2, e.beginRead().kimarijiLength)
++        e.tapCard(Side.PLAYER, 1)
++        assertEquals(2, e.state.lastResult!!.kimarijiLength)
++
++        // 「あき」で始まる2首が紛らわしい。1 が読まれると、残った 2 は「あ」だけで決まる
++        val poems = listOf(testPoem(1, "あきのたの"), testPoem(2, "あきかぜの"), testPoem(3, "はるすぎて"))
++        val e2 = layoutEngine(order = listOf(1, 2, 3), player = listOf(1, 2), cpu = listOf(3), poems = poems)
++        assertEquals(3, e2.beginRead().kimarijiLength)
++        e2.tapCard(Side.PLAYER, 1)
++        assertEquals(3, e2.state.lastResult!!.kimarijiLength)
++        e2.next()
++        assertEquals(1, e2.beginRead().kimarijiLength)
++        e2.tapCard(Side.PLAYER, 2)
++        assertEquals(1, e2.state.lastResult!!.kimarijiLength)
++    }
++
++    @Test
++    fun tapsOutsideReadingAreIgnored() {
++        val e = layoutEngine(order = listOf(1))
++        e.tapCard(Side.PLAYER, 1)
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++        assertEquals(0, e.state.playerTakenCount)
++        assertEquals(0, e.state.playerFaultCount)
++
++        val s = e.beginRead()
++        // 場にない札・存在しない陣の組み合わせは無視する
++        e.tapCard(Side.PLAYER, 99)
++        e.tapCard(Side.CPU, 1)
++        assertEquals(MatchPhase.Reading, e.state.phase)
++        assertFalse(e.state.playerLockedOut)
++        assertEquals(0, e.state.playerFaultCount)
++        assertEquals(1, s.poem.no)
++    }
++
++    @Test
++    fun nextIsIgnoredWhileReadingAndWaiting() {
++        val e = layoutEngine(order = listOf(1, 2))
++        e.next()
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++        e.beginRead()
++        e.next()
++        assertEquals(MatchPhase.Reading, e.state.phase)
++    }
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/MatchEngineSetupTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/MatchEngineSetupTest.kt
+new file mode 100644
+index 0000000..99575e4
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/MatchEngineSetupTest.kt
+@@ -0,0 +1,108 @@
++package io.github.abonsan.hyakunin.game
++
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertNotEquals
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import kotlin.random.Random
++
++/** 配札と読み順の準備。 */
++class MatchEngineSetupTest {
++    private fun create(empty: Int, seed: Int, mode: RuleMode = RuleMode.COMPETITIVE) =
++        MatchEngine.create(
++            config = GameConfig(ruleMode = mode, emptyCardCount = empty),
++            random = Random(seed),
++            poems = SYNTHETIC_POEMS,
++        )
++
++    @Test
++    fun dealsFiveCardsPerSideAndEmptyCards() {
++        for (empty in listOf(0, 1, 10, 45, 90)) {
++            val e = create(empty, seed = empty)
++            val st = e.state
++            assertEquals(GameConfig.CARDS_PER_SIDE, st.playerCards.size)
++            assertEquals(GameConfig.CARDS_PER_SIDE, st.cpuCards.size)
++            assertEquals(10 + empty, st.totalReads)
++            assertEquals(10 + empty, e.readOrder.size)
++
++            // 読み札は場の10枚 + 空札で、重複しない
++            assertEquals(e.readOrder.size, e.readOrder.toSet().size)
++            val field = (st.playerNos + st.cpuNos).toSet()
++            assertEquals(10, field.size)
++            assertTrue(e.readOrder.containsAll(field))
++            assertEquals(empty, e.readOrder.count { it !in field })
++            assertTrue(e.readOrder.all { it in 1..100 })
++            // 取り札には下の句の仮名が入る
++            assertTrue(st.playerCards.all { it.shimoKana == "しも${it.poemNo}" })
++            assertTrue(st.playerCards.none { it.isNew })
++            assertEquals(MatchPhase.Waiting, st.phase)
++        }
++    }
++
++    @Test
++    fun layoutIsDeterministicForTheSameSeed() {
++        val a = create(10, seed = 42)
++        val b = create(10, seed = 42)
++        assertEquals(a.state.playerNos, b.state.playerNos)
++        assertEquals(a.state.cpuNos, b.state.cpuNos)
++        assertEquals(a.readOrder, b.readOrder)
++
++        val c = create(10, seed = 43)
++        assertTrue(a.readOrder != c.readOrder || a.state.playerNos != c.state.playerNos)
++    }
++
++    @Test
++    fun readOrderIsShuffled() {
++        val e = create(10, seed = 1)
++        val st = e.state
++        val fieldFirst = st.playerNos + st.cpuNos
++        // 場の札が先頭に固まっていない（空札が混ざっている）
++        assertNotEquals(fieldFirst + e.readOrder.filter { it !in fieldFirst }, e.readOrder)
++    }
++
++    @Test
++    fun clampsWhenThereAreTooFewPoems() {
++        // 暫定データなど、100首に満たないときは置ける範囲に枚数を減らす
++        val three = SYNTHETIC_POEMS.take(3)
++        val e = MatchEngine.create(GameConfig(emptyCardCount = 10), Random(0), three)
++        assertEquals(1, e.state.playerCards.size)
++        assertEquals(1, e.state.cpuCards.size)
++        assertEquals(3, e.state.totalReads)
++
++        val none = MatchEngine.create(GameConfig(emptyCardCount = 0), Random(0), emptyList())
++        assertEquals(0, none.state.totalReads)
++    }
++
++    @Test
++    fun worksWithBundledPoems() {
++        val e = MatchEngine.create(GameConfig(), Random(0))
++        assertTrue(e.state.totalReads >= 0)
++    }
++
++    @Test
++    fun timingFollowsReadingSpeed() {
++        for (speed in ReadingSpeed.entries) {
++            val e = MatchEngine.create(
++                GameConfig(readingSpeed = speed, emptyCardCount = 0),
++                Random(0),
++                SYNTHETIC_POEMS,
++            )
++            e.advanceBy(1500L)
++            val s = e.session!!
++            assertEquals(speed.charMillis, s.kanaAt[0] - s.startMillis)
++        }
++    }
++
++    @Test
++    fun readTimingDefaults() {
++        val t = ReadTiming.of(ReadingSpeed.NORMAL)
++        assertEquals(230L, t.charMillis)
++        assertEquals(1500L, t.waitMillis)
++        assertEquals(1200L, t.emptyTailMillis)
++        assertEquals(1500L, t.noTakerMillis)
++        assertEquals(1200L, t.resultAutoMillis)
++        assertEquals(500L, t.cpuLateLimitMillis)
++        assertEquals(230L, t.phraseGapMillis)
++        assertEquals(690L, t.kamiShimoGapMillis)
++    }
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/MatchEngineSimulationTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/MatchEngineSimulationTest.kt
+new file mode 100644
+index 0000000..d70abfa
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/MatchEngineSimulationTest.kt
+@@ -0,0 +1,127 @@
++package io.github.abonsan.hyakunin.game
++
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import kotlin.random.Random
++
++/** ランダムに操作する試合を最後まで進め、どの経路でも破綻しないことを確かめる。 */
++class MatchEngineSimulationTest {
++    private fun checkInvariants(e: MatchEngine, config: GameConfig, emptyNos: Set<Int>) {
++        val st = e.state
++        val nos = st.playerNos + st.cpuNos
++        assertEquals("duplicate cards", nos.size, nos.toSet().size)
++        assertTrue(nos.size <= 2 * GameConfig.CARDS_PER_SIDE)
++        assertTrue(st.pendingPlayerSends in 0..st.playerCards.size)
++        assertTrue(st.readsDone <= st.totalReads)
++        assertTrue(st.playerTakenCount + st.cpuTakenCount <= st.readsDone)
++        if (config.ruleMode == RuleMode.SIMPLE) {
++            // 簡易ルールでは札は移動しない
++            assertTrue(st.playerCards.size <= GameConfig.CARDS_PER_SIDE)
++            assertTrue(st.cpuCards.size <= GameConfig.CARDS_PER_SIDE)
++        }
++        if (st.phase is MatchPhase.Result || st.phase is MatchPhase.Waiting) {
++            // 場の札は、読み終えた札のうち場にあったものの数だけ減っている
++            val emptyReads = e.readOrder.take(st.readsDone).count { it in emptyNos }
++            val fieldReads = st.readsDone - emptyReads
++            assertEquals(2 * GameConfig.CARDS_PER_SIDE - fieldReads, nos.size)
++        }
++        if (st.phase !is MatchPhase.Reading) assertTrue(!st.playerLockedOut)
++        st.reading?.let {
++            assertTrue(it.revealedKana in 0..it.totalKanaCount)
++            assertTrue(it.kamiKanaCount <= it.totalKanaCount)
++        }
++    }
++
++    private fun checkWinner(e: MatchEngine, config: GameConfig) {
++        val st = e.state
++        val winner = (st.phase as MatchPhase.Finished).winner
++        when (config.ruleMode) {
++            RuleMode.COMPETITIVE -> {
++                val p = st.playerCards.size
++                val c = st.cpuCards.size
++                when (winner) {
++                    Side.PLAYER -> assertTrue("p=$p c=$c", p == 0 || p < c)
++                    Side.CPU -> assertTrue("p=$p c=$c", c == 0 || c < p)
++                    null -> assertEquals("p=$p c=$c", p, c)
++                }
++            }
++            RuleMode.SIMPLE -> when (winner) {
++                Side.PLAYER -> assertTrue(st.playerTakenCount > st.cpuTakenCount)
++                Side.CPU -> assertTrue(st.cpuTakenCount > st.playerTakenCount)
++                null -> assertEquals(st.playerTakenCount, st.cpuTakenCount)
++            }
++        }
++    }
++
++    private fun play(config: GameConfig, seed: Int) {
++        val e = MatchEngine.create(config, Random(seed), SYNTHETIC_POEMS)
++        val field = (e.state.playerNos + e.state.cpuNos).toSet()
++        val emptyNos = e.readOrder.filter { it !in field }.toSet()
++        val player = Random(seed * 7919 + 13)
++        var t = 0L
++        var steps = 0
++        while (e.state.phase !is MatchPhase.Finished) {
++            check(++steps < 50_000) { "game does not finish: seed=$seed config=$config" }
++            t += player.nextLong(20L, 500L)
++            e.advanceTo(t)
++
++            val st = e.state
++            when (st.phase) {
++                MatchPhase.Reading -> when (player.nextInt(10)) {
++                    0, 1, 2 -> st.reading?.let { r ->
++                        // 出札を取りに行く（空札なら場にないので無視される）
++                        val side = if (r.poem.no in st.playerNos) Side.PLAYER else Side.CPU
++                        e.tapCard(side, r.poem.no)
++                    }
++                    3 -> {
++                        val any = st.playerCards.map { Side.PLAYER to it.poemNo } +
++                            st.cpuCards.map { Side.CPU to it.poemNo }
++                        if (any.isNotEmpty()) {
++                            val (side, no) = any[player.nextInt(any.size)]
++                            e.tapCard(side, no)
++                        }
++                    }
++                    else -> Unit
++                }
++                MatchPhase.Result -> {
++                    if (st.pendingPlayerSends > 0) {
++                        e.tapCard(Side.PLAYER, st.playerCards[player.nextInt(st.playerCards.size)].poemNo)
++                    } else if (player.nextInt(3) == 0) {
++                        e.next()
++                    }
++                }
++                else -> e.tapCard(Side.PLAYER, 1)
++            }
++            checkInvariants(e, config, emptyNos)
++        }
++        checkWinner(e, config)
++    }
++
++    @Test
++    fun randomGamesAlwaysFinishWithConsistentState() {
++        for (mode in RuleMode.entries) {
++            for (level in CpuLevel.entries) {
++                for (seed in 0 until 12) {
++                    val rnd = Random(seed)
++                    val config = GameConfig(
++                        ruleMode = mode,
++                        emptyCardCount = rnd.nextInt(0, GameConfig.MAX_EMPTY_CARDS + 1),
++                        cpuLevel = level,
++                        readingSpeed = ReadingSpeed.entries[seed % 3],
++                    )
++                    play(config, seed)
++                }
++            }
++        }
++    }
++
++    @Test
++    fun gamesWithoutEmptyCardsEnd() {
++        for (mode in RuleMode.entries) {
++            for (seed in 100 until 130) {
++                play(GameConfig(ruleMode = mode, emptyCardCount = 0, cpuLevel = CpuLevel.MASTER), seed)
++            }
++        }
++    }
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/MatchViewModelTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/MatchViewModelTest.kt
+new file mode 100644
+index 0000000..7939690
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/MatchViewModelTest.kt
+@@ -0,0 +1,417 @@
++package io.github.abonsan.hyakunin.game
++
++import androidx.lifecycle.viewModelScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.ExperimentalCoroutinesApi
++import kotlinx.coroutines.cancel
++import kotlinx.coroutines.test.StandardTestDispatcher
++import kotlinx.coroutines.test.TestCoroutineScheduler
++import kotlinx.coroutines.test.resetMain
++import kotlinx.coroutines.test.setMain
++import org.junit.After
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertTrue
++import org.junit.Before
++import org.junit.Test
++import kotlin.random.Random
++
++@OptIn(ExperimentalCoroutinesApi::class)
++class MatchViewModelTest {
++    private lateinit var scheduler: TestCoroutineScheduler
++    private val viewModels = mutableListOf<MatchViewModel>()
++
++    @Before
++    fun setUp() {
++        scheduler = TestCoroutineScheduler()
++        Dispatchers.setMain(StandardTestDispatcher(scheduler))
++    }
++
++    @After
++    fun tearDown() {
++        viewModels.forEach { it.viewModelScope.cancel() }
++        Dispatchers.resetMain()
++    }
++
++    private class Harness(val vm: MatchViewModel, val engines: List<MatchEngine>) {
++        val engine: MatchEngine get() = engines.last()
++        val state: MatchUiState get() = vm.uiState.value
++    }
++
++    /** 仮想時間で動く ViewModel。[factory] が作った MatchEngine を [Harness.engines] に残す。 */
++    private fun harness(
++        clock: () -> Long = { scheduler.currentTime },
++        factory: () -> MatchEngine,
++    ): Harness {
++        val engines = mutableListOf<MatchEngine>()
++        val vm = MatchViewModel(
++            engineFactory = { factory().also { engines += it } },
++            clock = clock,
++            tickMillis = 20L,
++        )
++        viewModels += vm
++        return Harness(vm, engines)
++    }
++
++    private fun advance(millis: Long) {
++        scheduler.advanceTimeBy(millis)
++        scheduler.runCurrent()
++    }
++
++    private fun layout(
++        order: List<Int>,
++        mode: RuleMode = RuleMode.COMPETITIVE,
++        player: List<Int> = listOf(1, 2, 3, 4, 5),
++        cpu: List<Int> = listOf(6, 7, 8, 9, 10),
++        profile: CpuProfile = SLOW_CPU,
++    ) = { layoutEngine(order = order, mode = mode, player = player, cpu = cpu, profile = profile) }
++
++    @Test
++    fun startsInWaitingWithTheDealtCards() {
++        val h = harness(factory = layout(order = listOf(1, 6)))
++        val st = h.state
++        assertEquals(MatchPhase.Waiting, st.phase)
++        assertNull(st.reading)
++        assertNull(st.lastResult)
++        assertEquals(listOf(1, 2, 3, 4, 5), st.playerNos)
++        assertEquals(listOf(6, 7, 8, 9, 10), st.cpuNos)
++        assertEquals(2, st.totalReads)
++        assertEquals(0, st.readsDone)
++        assertFalse(st.isPaused)
++        assertFalse(st.playerLockedOut)
++        assertEquals(0, st.pendingPlayerSends)
++        assertEquals(0, st.playerTakenCount + st.cpuTakenCount + st.playerFaultCount + st.cpuFaultCount)
++    }
++
++    @Test
++    fun readingProgressesWithTime() {
++        val h = harness(factory = layout(order = listOf(1, 6)))
++        advance(1480L)
++        assertEquals(MatchPhase.Waiting, h.state.phase)
++        advance(20L)
++        assertEquals(MatchPhase.Reading, h.state.phase)
++        assertEquals(0, h.state.reading!!.revealedKana)
++        assertEquals(1, h.state.reading!!.poem.no)
++
++        // 1文字 100ms
++        advance(300L)
++        assertEquals(3, h.state.reading!!.revealedKana)
++        advance(300L)
++        assertEquals(6, h.state.reading!!.revealedKana)
++        // 句の区切りで 100ms の間 → 7文字目は 800ms
++        advance(100L)
++        assertEquals(6, h.state.reading!!.revealedKana)
++        advance(100L)
++        assertEquals(7, h.state.reading!!.revealedKana)
++        assertEquals(16, h.state.reading!!.kamiKanaCount)
++        assertEquals(26, h.state.reading!!.totalKanaCount)
++    }
++
++    @Test
++    fun pausingStopsTimeAndIgnoresTaps() {
++        val h = harness(factory = layout(order = listOf(1, 6)))
++        advance(1500L + 400L)
++        assertEquals(4, h.state.reading!!.revealedKana)
++        val engineTime = h.engine.nowMillis
++
++        h.vm.setPaused(true)
++        assertTrue(h.state.isPaused)
++        advance(60_000L)
++        assertEquals(4, h.state.reading!!.revealedKana)
++        assertEquals(MatchPhase.Reading, h.state.phase)
++        assertEquals(engineTime, h.engine.nowMillis)
++
++        // 一時停止中のタップ・次へは無視する
++        h.vm.onCardTap(Side.PLAYER, 1)
++        h.vm.onCardTap(Side.CPU, 6)
++        h.vm.onNext()
++        assertEquals(MatchPhase.Reading, h.state.phase)
++        assertEquals(0, h.state.playerTakenCount)
++        assertEquals(0, h.state.playerFaultCount)
++        assertFalse(h.state.playerLockedOut)
++
++        h.vm.setPaused(true)
++        h.vm.setPaused(false)
++        assertFalse(h.state.isPaused)
++        assertEquals(4, h.state.reading!!.revealedKana)
++        advance(1000L)
++        // 再開後は一時停止していた間を除いて進む
++        assertEquals(engineTime + 1000L, h.engine.nowMillis)
++        // 読み始めから 1400ms（句の区切り 2 つぶんの間を含む）で 12 文字目
++        assertEquals(12, h.state.reading!!.revealedKana)
++    }
++
++    @Test
++    fun pauseDuringWaitingDelaysTheStart() {
++        val h = harness(factory = layout(order = listOf(1)))
++        advance(1000L)
++        h.vm.setPaused(true)
++        advance(30_000L)
++        assertEquals(MatchPhase.Waiting, h.state.phase)
++        h.vm.setPaused(false)
++        advance(480L)
++        assertEquals(MatchPhase.Waiting, h.state.phase)
++        advance(20L)
++        assertEquals(MatchPhase.Reading, h.state.phase)
++    }
++
++    @Test
++    fun cpuTakesTheCardWhenPlayerDoesNothing() {
++        val h = harness(factory = layout(order = listOf(6, 11), profile = steadyCpu(300L)))
++        advance(1500L)
++        assertEquals(MatchPhase.Reading, h.state.phase)
++        // 決まり字 200ms + 反応 300ms
++        advance(480L)
++        assertEquals(MatchPhase.Reading, h.state.phase)
++        advance(20L)
++
++        val st = h.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertEquals(Side.CPU, st.lastResult!!.takenBy)
++        assertEquals(5, st.lastResult!!.revealedAtTake)
++        assertEquals(5, st.reading!!.revealedKana)
++        assertEquals(1, st.cpuTakenCount)
++        assertEquals(1, st.readsDone)
++        assertEquals(listOf(7, 8, 9, 10), st.cpuNos)
++    }
++
++    @Test
++    fun playerTakesTheCardBeforeTheCpu() {
++        val h = harness(factory = layout(order = listOf(1, 11), profile = steadyCpu(300L)))
++        advance(1500L + 400L)
++        h.vm.onCardTap(Side.PLAYER, 1)
++
++        val st = h.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertEquals(Side.PLAYER, st.lastResult!!.takenBy)
++        assertEquals(4, st.lastResult!!.revealedAtTake)
++        assertEquals(1, st.playerTakenCount)
++        assertEquals(listOf(2, 3, 4, 5), st.playerNos)
++
++        // Result 中は文字も進まず、CPU も動かない
++        advance(30_000L)
++        assertEquals(MatchPhase.Result, h.state.phase)
++        assertEquals(4, h.state.reading!!.revealedKana)
++        assertEquals(0, h.state.cpuTakenCount)
++    }
++
++    @Test
++    fun wrongTouchLocksOutThePlayer() {
++        val h = harness(factory = layout(order = listOf(1, 11)))
++        advance(1500L + 300L)
++        h.vm.onCardTap(Side.CPU, 6)
++        assertTrue(h.state.playerLockedOut)
++        assertEquals(1, h.state.playerFaultCount)
++        h.vm.onCardTap(Side.PLAYER, 1)
++        assertEquals(MatchPhase.Reading, h.state.phase)
++
++        // CPU が自陣の札を取り、お手つきの罰とあわせて2枚送られる
++        advance(5_000L)
++        val st = h.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertEquals(Side.CPU, st.lastResult!!.takenBy)
++        assertFalse(st.playerLockedOut)
++        assertEquals(6, st.playerCards.size)
++        assertEquals(2, st.lastResult!!.transfers.size)
++    }
++
++    @Test
++    fun nextMovesOnAndWaitsForSendChoices() {
++        val h = harness(factory = layout(order = listOf(6, 1)))
++        advance(1500L + 200L)
++        h.vm.onCardTap(Side.CPU, 6)
++        assertEquals(1, h.state.pendingPlayerSends)
++
++        // 送る札を選ぶまで次へは進めない
++        h.vm.onNext()
++        assertEquals(MatchPhase.Result, h.state.phase)
++        h.vm.onCardTap(Side.CPU, 7)
++        assertEquals(1, h.state.pendingPlayerSends)
++        h.vm.onCardTap(Side.PLAYER, 3)
++        assertEquals(0, h.state.pendingPlayerSends)
++        assertEquals(listOf(1, 2, 4, 5), h.state.playerNos)
++        assertTrue(h.state.cpuCards.last().isNew)
++
++        h.vm.onNext()
++        assertEquals(MatchPhase.Waiting, h.state.phase)
++        // 直前の読みを保持している
++        assertEquals(6, h.state.reading!!.poem.no)
++        advance(1500L)
++        assertEquals(MatchPhase.Reading, h.state.phase)
++        assertEquals(1, h.state.reading!!.poem.no)
++        assertEquals(2, h.state.reading!!.readNumber)
++        assertFalse(h.state.cpuCards.last().isNew)
++    }
++
++    @Test
++    fun emptyCardAdvancesByItself() {
++        val h = harness(factory = layout(order = listOf(11, 12)))
++        advance(1500L)
++        assertEquals(MatchPhase.Reading, h.state.phase)
++        // 上の句 1800ms + 1200ms
++        advance(3000L)
++        assertEquals(MatchPhase.Result, h.state.phase)
++        assertTrue(h.state.lastResult!!.isEmptyCard)
++        assertEquals("空札でした", h.state.lastResult!!.message)
++        advance(1200L)
++        assertEquals(MatchPhase.Waiting, h.state.phase)
++        advance(1500L)
++        assertEquals(MatchPhase.Reading, h.state.phase)
++        assertEquals(12, h.state.reading!!.poem.no)
++    }
++
++    @Test
++    fun finishingTheGameAndRestarting() {
++        val h = harness(factory = layout(order = listOf(1, 11), player = listOf(1)))
++        advance(1500L + 100L)
++        h.vm.onCardTap(Side.PLAYER, 1)
++        assertEquals(MatchPhase.Result, h.state.phase)
++        h.vm.onNext()
++        assertEquals(MatchPhase.Finished(Side.PLAYER), h.state.phase)
++        assertEquals(1, h.state.playerTakenCount)
++        advance(30_000L)
++        assertEquals(MatchPhase.Finished(Side.PLAYER), h.state.phase)
++
++        h.vm.onRestart()
++        assertEquals(2, h.engines.size)
++        val st = h.state
++        assertEquals(MatchPhase.Waiting, st.phase)
++        assertEquals(listOf(1), st.playerNos)
++        assertEquals(listOf(6, 7, 8, 9, 10), st.cpuNos)
++        assertNull(st.reading)
++        assertNull(st.lastResult)
++        assertEquals(0, st.playerTakenCount)
++        assertEquals(0, st.readsDone)
++
++        // もう一度、最初から始まる
++        advance(1480L)
++        assertEquals(MatchPhase.Waiting, h.state.phase)
++        advance(20L)
++        assertEquals(MatchPhase.Reading, h.state.phase)
++        assertEquals(1, h.state.reading!!.poem.no)
++        assertEquals(0, h.state.reading!!.revealedKana)
++    }
++
++    @Test
++    fun restartInTheMiddleOfAReading() {
++        val h = harness(factory = layout(order = listOf(1, 6)))
++        advance(1500L + 700L)
++        h.vm.onCardTap(Side.CPU, 6)
++        assertEquals(1, h.state.playerFaultCount)
++
++        h.vm.onRestart()
++        val st = h.state
++        assertEquals(MatchPhase.Waiting, st.phase)
++        assertEquals(0, st.playerFaultCount)
++        assertFalse(st.playerLockedOut)
++        assertNull(st.reading)
++        // 古い試合のイベントは新しい試合に影響しない
++        advance(1500L)
++        assertEquals(MatchPhase.Reading, h.state.phase)
++        assertEquals(0, h.state.reading!!.revealedKana)
++    }
++
++    @Test
++    fun restartKeepsThePausedState() {
++        val h = harness(factory = layout(order = listOf(1, 6)))
++        h.vm.setPaused(true)
++        h.vm.onRestart()
++        assertTrue(h.state.isPaused)
++        advance(10_000L)
++        assertEquals(MatchPhase.Waiting, h.state.phase)
++        h.vm.setPaused(false)
++        advance(1500L)
++        assertEquals(MatchPhase.Reading, h.state.phase)
++    }
++
++    @Test
++    fun usesRealElapsedTimeWhenTicksAreLate() {
++        var now = 0L
++        val h = harness(clock = { now }, factory = layout(order = listOf(1)))
++        // 刻み 20ms より遅れて呼ばれたときは、実際に経った時間だけ進む
++        now = 35L
++        advance(20L)
++        assertEquals(35L, h.engine.nowMillis)
++        // 刻みより短くても 1 刻み（20ms）は進む
++        now += 5L
++        advance(20L)
++        assertEquals(55L, h.engine.nowMillis)
++        // 長く止まった後も、一度に進むのは 100ms まで
++        now += 5_000L
++        advance(20L)
++        assertEquals(155L, h.engine.nowMillis)
++    }
++
++    @Test
++    fun publicConstructorDealsFromTheGivenPoems() {
++        // 初級の CPU は反応が 1400ms 以上かかるので、最初の数文字の間は読みが続く
++        val config = GameConfig(emptyCardCount = 10, cpuLevel = CpuLevel.BEGINNER, readingSpeed = ReadingSpeed.FAST)
++        val vm = MatchViewModel(
++            config = config,
++            random = Random(7),
++            poems = SYNTHETIC_POEMS,
++            clock = { scheduler.currentTime },
++        )
++        viewModels += vm
++        val st = vm.uiState.value
++        assertEquals(config, st.config)
++        assertEquals(5, st.playerCards.size)
++        assertEquals(5, st.cpuCards.size)
++        assertEquals(20, st.totalReads)
++        assertEquals(MatchPhase.Waiting, st.phase)
++
++        advance(1500L)
++        val reading = vm.uiState.value.reading!!
++        assertEquals(MatchPhase.Reading, vm.uiState.value.phase)
++        assertEquals(1, reading.readNumber)
++        // 速度は GameConfig.readingSpeed に従う（1文字 160ms）
++        advance(160L * 3)
++        assertEquals(3, vm.uiState.value.reading!!.revealedKana)
++    }
++
++    @Test
++    fun defaultConstructorStartsWithBundledPoems() {
++        val vm = MatchViewModel(GameConfig(emptyCardCount = 0), clock = { scheduler.currentTime })
++        viewModels += vm
++        assertEquals(MatchPhase.Waiting, vm.uiState.value.phase)
++        advance(1500L)
++        assertTrue(vm.uiState.value.phase is MatchPhase.Reading || vm.uiState.value.phase is MatchPhase.Finished)
++    }
++
++    @Test
++    fun aWholeGameCanBePlayedThrough() {
++        val config = GameConfig(
++            ruleMode = RuleMode.COMPETITIVE,
++            emptyCardCount = 5,
++            cpuLevel = CpuLevel.MASTER,
++            readingSpeed = ReadingSpeed.FAST,
++        )
++        val vm = MatchViewModel(
++            config = config,
++            random = Random(3),
++            poems = SYNTHETIC_POEMS,
++            clock = { scheduler.currentTime },
++        )
++        viewModels += vm
++        var guard = 0
++        while (vm.uiState.value.phase !is MatchPhase.Finished) {
++            check(++guard < 5_000)
++            advance(250L)
++            val st = vm.uiState.value
++            when (st.phase) {
++                MatchPhase.Result -> {
++                    if (st.pendingPlayerSends > 0) {
++                        vm.onCardTap(Side.PLAYER, st.playerCards.first().poemNo)
++                    } else {
++                        vm.onNext()
++                    }
++                }
++                else -> Unit
++            }
++        }
++        val finished = vm.uiState.value.phase as MatchPhase.Finished
++        // 名人は一度も取り逃さず、プレイヤーは何もしないので CPU が勝つ
++        assertEquals(Side.CPU, finished.winner)
++    }
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/SimpleRulesTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/SimpleRulesTest.kt
+new file mode 100644
+index 0000000..4974284
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/SimpleRulesTest.kt
+@@ -0,0 +1,229 @@
++package io.github.abonsan.hyakunin.game
++
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++/** 簡易ルール: 取った枚数で勝敗を決める。札の移動はない。 */
++class SimpleRulesTest {
++    private val cpuTakeOffset = 3200L + 500L
++
++    private fun simpleEngine(
++        order: List<Int>,
++        player: List<Int> = listOf(1, 2, 3, 4, 5),
++        cpu: List<Int> = listOf(6, 7, 8, 9, 10),
++        profile: CpuProfile = SLOW_CPU,
++    ) = layoutEngine(order = order, mode = RuleMode.SIMPLE, player = player, cpu = cpu, profile = profile)
++
++    @Test
++    fun takingEnemyCardMovesNoCards() {
++        val e = simpleEngine(order = listOf(6, 11))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 300L)
++        e.tapCard(Side.CPU, 6)
++
++        val st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertEquals(listOf(1, 2, 3, 4, 5), st.playerNos)
++        assertEquals(listOf(7, 8, 9, 10), st.cpuNos)
++        assertEquals(0, st.pendingPlayerSends)
++        assertEquals(1, st.playerTakenCount)
++        val r = st.lastResult!!
++        assertEquals(Side.PLAYER, r.takenBy)
++        assertEquals(Side.CPU, r.takenFrom)
++        assertTrue(r.transfers.isEmpty())
++        assertEquals("敵陣の札を取りました", r.message)
++    }
++
++    @Test
++    fun cpuTakingPlayerCardMovesNoCards() {
++        val e = simpleEngine(order = listOf(1, 11))
++        val s = e.beginRead()
++        e.advanceToOffset(s, cpuTakeOffset)
++
++        val st = e.state
++        assertEquals(listOf(2, 3, 4, 5), st.playerNos)
++        assertEquals(listOf(6, 7, 8, 9, 10), st.cpuNos)
++        assertEquals(1, st.cpuTakenCount)
++        assertTrue(st.lastResult!!.transfers.isEmpty())
++        assertEquals("相手が自陣の札を取りました", st.lastResult!!.message)
++    }
++
++    @Test
++    fun touchingWrongCardOnlyLocksOutAndCountsFault() {
++        val e = simpleEngine(order = listOf(1, 11))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 500L)
++        // 同じ陣の札でもお手つきとして数える（簡易ルールにセーフはない）
++        e.tapCard(Side.PLAYER, 2)
++        assertTrue(e.state.playerLockedOut)
++        assertEquals(1, e.state.playerFaultCount)
++
++        e.tapCard(Side.PLAYER, 1)
++        e.tapCard(Side.CPU, 6)
++        assertEquals(MatchPhase.Reading, e.state.phase)
++        assertEquals(1, e.state.playerFaultCount)
++
++        e.advanceToOffset(s, cpuTakeOffset)
++        val st = e.state
++        val r = st.lastResult!!
++        assertEquals(Side.CPU, r.takenBy)
++        assertEquals(setOf(Side.PLAYER), r.faults)
++        assertTrue(r.safeMisses.isEmpty())
++        assertTrue(r.transfers.isEmpty())
++        assertEquals(listOf(2, 3, 4, 5), st.playerNos)
++        assertEquals(listOf(6, 7, 8, 9, 10), st.cpuNos)
++        assertEquals("相手が自陣の札を取りました。お手つき", r.message)
++    }
++
++    @Test
++    fun touchingCardOnEmptyReadingCountsFaultWithoutPenalty() {
++        val e = simpleEngine(order = listOf(11, 12))
++        val s = e.beginRead()
++        e.tapCard(Side.CPU, 8)
++        e.advanceToOffset(s, 3000L)
++
++        val st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        assertEquals(1, st.playerFaultCount)
++        assertEquals(setOf(Side.PLAYER), st.lastResult!!.faults)
++        assertTrue(st.lastResult!!.transfers.isEmpty())
++        assertEquals(5, st.playerCards.size)
++        assertEquals(5, st.cpuCards.size)
++        assertEquals("空札でした。お手つき", st.lastResult!!.message)
++        // お手つきがあった空札は自動では進まない
++        e.advanceBy(30_000L)
++        assertEquals(MatchPhase.Result, e.state.phase)
++        e.next()
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++    }
++
++    @Test
++    fun cpuFaultOnEmptyReadingNeedsNoSend() {
++        val e = simpleEngine(order = listOf(10), cpu = listOf(6, 7, 8, 9, 11), profile = FAULTY_CPU)
++        val s = e.beginRead()
++        e.advanceToOffset(s, 3000L)
++        val st = e.state
++        assertEquals(setOf(Side.CPU), st.lastResult!!.faults)
++        assertEquals(0, st.pendingPlayerSends)
++        assertEquals(1, st.cpuFaultCount)
++        assertEquals("空札でした。相手のお手つき", st.lastResult!!.message)
++    }
++
++    @Test
++    fun bothLockedOutRemovesTheCardWithoutAScore() {
++        val e = simpleEngine(order = listOf(1, 11), profile = FAULTY_CPU)
++        val s = e.beginRead()
++        e.advanceToOffset(s, 500L)
++        assertEquals(1, e.state.cpuFaultCount)
++        e.tapCard(Side.CPU, 6)
++        e.advanceToOffset(s, 3200L + 1500L)
++
++        val st = e.state
++        assertEquals(MatchPhase.Result, st.phase)
++        val r = st.lastResult!!
++        assertNull(r.takenBy)
++        assertEquals(setOf(Side.PLAYER, Side.CPU), r.faults)
++        assertTrue(r.transfers.isEmpty())
++        assertEquals(listOf(2, 3, 4, 5), st.playerNos)
++        assertEquals(listOf(6, 7, 8, 9, 10), st.cpuNos)
++        assertEquals(0, st.playerTakenCount)
++        assertEquals(0, st.cpuTakenCount)
++    }
++
++    @Test
++    fun emptyReadingWithoutFaultAdvancesAutomatically() {
++        val e = simpleEngine(order = listOf(11, 12))
++        val s = e.beginRead()
++        e.advanceToOffset(s, 3000L)
++        assertEquals(MatchPhase.Result, e.state.phase)
++        e.advanceBy(1200L)
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++    }
++
++    @Test
++    fun gameEndsWhenAllFieldCardsAreRead_PlayerWins() {
++        val e = simpleEngine(order = listOf(1, 6, 11), player = listOf(1), cpu = listOf(6))
++        e.beginRead()
++        e.tapCard(Side.PLAYER, 1)
++        // 自陣の札が0枚になっても、簡易ルールは場の札がすべて読まれるまで続く
++        assertEquals(MatchPhase.Result, e.state.phase)
++        e.next()
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++
++        e.beginRead()
++        e.tapCard(Side.CPU, 6)
++        assertEquals(MatchPhase.Result, e.state.phase)
++        assertEquals(2, e.state.playerTakenCount)
++        e.next()
++        // 空札 11 は読まれずに終了
++        assertEquals(MatchPhase.Finished(Side.PLAYER), e.state.phase)
++        assertEquals(2, e.state.readsDone)
++    }
++
++    @Test
++    fun gameEndsWhenAllFieldCardsAreRead_CpuWins() {
++        val e = simpleEngine(order = listOf(1, 6, 11), player = listOf(1), cpu = listOf(6))
++        e.beginRead()
++        e.advanceBy(cpuTakeOffset)
++        assertEquals(1, e.state.cpuTakenCount)
++        e.next()
++        e.beginRead()
++        e.advanceBy(cpuTakeOffset)
++        assertEquals(2, e.state.cpuTakenCount)
++        e.next()
++        assertEquals(MatchPhase.Finished(Side.CPU), e.state.phase)
++    }
++
++    @Test
++    fun gameEndsInDrawWhenTakenCountsAreEqual() {
++        val e = simpleEngine(order = listOf(1, 6), player = listOf(1), cpu = listOf(6))
++        e.beginRead()
++        e.tapCard(Side.PLAYER, 1)
++        e.next()
++        e.beginRead()
++        e.advanceBy(cpuTakeOffset)
++        assertEquals(MatchPhase.Result, e.state.phase)
++        assertEquals(1, e.state.playerTakenCount)
++        assertEquals(1, e.state.cpuTakenCount)
++        e.next()
++        assertEquals(MatchPhase.Finished(null), e.state.phase)
++    }
++
++    @Test
++    fun cardNobodyTookStillCountsAsRead() {
++        // 誰も取れなかった札も読まれた札として場から取り除かれ、残りの札がすべて読まれれば終了する
++        val e = simpleEngine(order = listOf(1, 6), player = listOf(1), cpu = listOf(6), profile = FAULTY_CPU)
++        e.beginRead()
++        e.advanceBy(500L)
++        // CPU は友札の 6 に触れてお手つき。プレイヤーも別の陣の 6 に触れてお手つき
++        assertEquals(1, e.state.cpuFaultCount)
++        e.tapCard(Side.CPU, 6)
++        e.advanceBy(60_000L)
++        assertEquals(MatchPhase.Result, e.state.phase)
++        assertNull(e.state.lastResult!!.takenBy)
++        assertTrue(e.state.playerCards.isEmpty())
++        e.next()
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++
++        // 次の 6 はプレイヤーが取る。場の札がなくなったので 1対0 でプレイヤーの勝ち
++        e.beginRead()
++        e.tapCard(Side.CPU, 6)
++        assertEquals(1, e.state.playerTakenCount)
++        e.next()
++        assertEquals(MatchPhase.Finished(Side.PLAYER), e.state.phase)
++    }
++
++    @Test
++    fun lockedOutPlayerCannotTakeAndCpuTakesInstead() {
++        val e = simpleEngine(order = listOf(6, 11))
++        val s = e.beginRead()
++        e.tapCard(Side.PLAYER, 3)
++        e.tapCard(Side.CPU, 6)
++        assertNull(e.state.lastResult)
++        e.advanceToOffset(s, cpuTakeOffset)
++        assertEquals(Side.CPU, e.state.lastResult!!.takenBy)
++        assertEquals(0, e.state.playerTakenCount)
++    }
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/TestFixtures.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/TestFixtures.kt
+new file mode 100644
+index 0000000..d9870a8
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/TestFixtures.kt
+@@ -0,0 +1,83 @@
++package io.github.abonsan.hyakunin.game
++
++import io.github.abonsan.hyakunin.data.Poem
++import kotlin.random.Random
++
++/** テスト用の歌。読みだけを指定し、表記・作者は仮の値にする。 */
++internal fun testPoem(
++    no: Int,
++    kamiYomi: String,
++    shimoYomi: String = "しものくの　ひかりかな",
++): Poem = Poem(
++    no = no,
++    kami = kamiYomi,
++    shimo = shimoYomi,
++    kamiYomi = kamiYomi,
++    shimoYomi = shimoYomi,
++    shimoKana = "しも$no",
++    author = "作者$no",
++    authorYomi = "さくしゃ$no",
++)
++
++private val FIRST_KANA = "あいさたなはまやらわ".toList()
++private val SECOND_KANA = "かきくけこさしすせそ".toList()
++
++/**
++ * 読みが重複しない合成の100首。歌 n の上の句は「(n-1)/10 番目の仮名 + (n-1)%10 番目の仮名」で始まる。
++ * 先頭1文字は10首で共通、先頭2文字は100首すべて異なるので、最初の決まり字はすべて2。
++ * 上の句は16文字（6+5+5）、下の句は10文字（5+5）。
++ */
++internal val SYNTHETIC_POEMS: List<Poem> = (1..100).map { n ->
++    val i = n - 1
++    testPoem(n, "${FIRST_KANA[i / 10]}${SECOND_KANA[i % 10]}ののあさ　ひのくれに　つきのかげ")
++}
++
++/** 常に 0 を返す乱数。最小値・最初の候補・確率の判定が必ず成立する側を選ぶ。 */
++internal object ZeroRandom : Random() {
++    override fun nextBits(bitCount: Int): Int = 0
++}
++
++/** 試合中ずっと取りに来ない（遅くとも下の句の後 500ms に取る）CPU。 */
++internal val SLOW_CPU = CpuProfile(1_000_000L, 1_000_000L, 0.0)
++
++/** 反応時間 0、必ずお手つきする CPU（友札があれば）。 */
++internal val FAULTY_CPU = CpuProfile(0L, 0L, 1.0)
++
++/** 反応時間 [reaction] ms、お手つきしない CPU。 */
++internal fun steadyCpu(reaction: Long) = CpuProfile(reaction, reaction, 0.0)
++
++/** 配置と読み順を指定したエンジン。1文字の表示間隔は既定で 100ms。 */
++internal fun layoutEngine(
++    order: List<Int>,
++    mode: RuleMode = RuleMode.COMPETITIVE,
++    player: List<Int> = listOf(1, 2, 3, 4, 5),
++    cpu: List<Int> = listOf(6, 7, 8, 9, 10),
++    profile: CpuProfile = SLOW_CPU,
++    random: Random = ZeroRandom,
++    charMillis: Long = 100L,
++    poems: List<Poem> = SYNTHETIC_POEMS,
++): MatchEngine = MatchEngine.withLayout(
++    config = GameConfig(ruleMode = mode, emptyCardCount = 0),
++    random = random,
++    poems = poems,
++    playerNos = player,
++    cpuNos = cpu,
++    readOrder = order,
++    timing = ReadTiming(charMillis),
++    profile = profile,
++)
++
++/** Waiting を終えて次の読みを始める（直前の Waiting 開始から 1500ms 経っている必要がある）。 */
++internal fun MatchEngine.beginRead(): ReadSession {
++    advanceBy(1500L)
++    check(snapshot().phase == MatchPhase.Reading) { "phase=${snapshot().phase}" }
++    return session!!
++}
++
++/** 現在の読みの経過時間 [offset] ms の時点まで進める。 */
++internal fun MatchEngine.advanceToOffset(s: ReadSession, offset: Long) = advanceTo(s.startMillis + offset)
++
++internal val MatchEngine.state: MatchUiState get() = snapshot()
++
++internal val MatchUiState.playerNos: List<Int> get() = playerCards.map { it.poemNo }
++internal val MatchUiState.cpuNos: List<Int> get() = cpuCards.map { it.poemNo }

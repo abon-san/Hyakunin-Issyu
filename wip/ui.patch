@@ -1,0 +1,3113 @@
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index a75b576..24cc1ea 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -3,12 +3,15 @@
+ 
+     <application
+         android:allowBackup="true"
++        android:icon="@mipmap/ic_launcher"
+         android:label="@string/app_name"
++        android:roundIcon="@mipmap/ic_launcher_round"
+         android:supportsRtl="true"
+-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
++        android:theme="@style/Theme.Hyakunin">
+         <activity
+             android:name=".MainActivity"
+-            android:exported="true">
++            android:exported="true"
++            android:screenOrientation="portrait">
+             <intent-filter>
+                 <action android:name="android.intent.action.MAIN" />
+                 <category android:name="android.intent.category.LAUNCHER" />
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/MainActivity.kt b/app/src/main/java/io/github/abonsan/hyakunin/MainActivity.kt
+index 31b7e6a..085dd0b 100644
+--- a/app/src/main/java/io/github/abonsan/hyakunin/MainActivity.kt
++++ b/app/src/main/java/io/github/abonsan/hyakunin/MainActivity.kt
+@@ -1,33 +1,31 @@
+ package io.github.abonsan.hyakunin
+ 
++import android.graphics.Color
+ import android.os.Bundle
+ import androidx.activity.ComponentActivity
++import androidx.activity.SystemBarStyle
+ import androidx.activity.compose.setContent
+ import androidx.activity.enableEdgeToEdge
+-import androidx.compose.foundation.layout.Box
+-import androidx.compose.foundation.layout.fillMaxSize
+-import androidx.compose.foundation.layout.padding
+-import androidx.compose.material3.MaterialTheme
+-import androidx.compose.material3.Scaffold
+-import androidx.compose.material3.Text
+-import androidx.compose.ui.Alignment
+-import androidx.compose.ui.Modifier
++import io.github.abonsan.hyakunin.ui.HyakuninApp
++import io.github.abonsan.hyakunin.ui.home.GameConfigStore
++import io.github.abonsan.hyakunin.ui.theme.HyakuninTheme
+ 
+ class MainActivity : ComponentActivity() {
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+-        enableEdgeToEdge()
++        // 和紙の明るい地に合わせ、端末のダークテーマでもシステムバーのアイコンは濃い色にする
++        val barStyle = SystemBarStyle.light(Color.TRANSPARENT, DARK_SCRIM)
++        enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
++        val configStore = GameConfigStore(applicationContext)
+         setContent {
+-            MaterialTheme {
+-                Scaffold { innerPadding ->
+-                    Box(
+-                        modifier = Modifier.fillMaxSize().padding(innerPadding),
+-                        contentAlignment = Alignment.Center,
+-                    ) {
+-                        Text("百人一首", style = MaterialTheme.typography.headlineLarge)
+-                    }
+-                }
++            HyakuninTheme {
++                HyakuninApp(configStore)
+             }
+         }
+     }
++
++    private companion object {
++        /** 濃い色のアイコンを出せない古い端末で、システムバーの下に敷く色。 */
++        val DARK_SCRIM = Color.argb(0x80, 0x1B, 0x1B, 0x1B)
++    }
+ }
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/HyakuninApp.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/HyakuninApp.kt
+new file mode 100644
+index 0000000..0397bd8
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/HyakuninApp.kt
+@@ -0,0 +1,86 @@
++package io.github.abonsan.hyakunin.ui
++
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.CompositionLocalProvider
++import androidx.compose.runtime.DisposableEffect
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableIntStateOf
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberUpdatedState
++import androidx.compose.runtime.saveable.rememberSaveable
++import androidx.compose.runtime.setValue
++import androidx.lifecycle.ViewModel
++import androidx.lifecycle.ViewModelStore
++import androidx.lifecycle.ViewModelStoreOwner
++import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
++import androidx.lifecycle.viewmodel.compose.viewModel
++import io.github.abonsan.hyakunin.ui.home.GameConfigStore
++import io.github.abonsan.hyakunin.ui.home.HomeScreen
++import io.github.abonsan.hyakunin.ui.match.MatchRoute
++
++/** ホームと対戦画面を切り替えるアプリ全体。 */
++@Composable
++fun HyakuninApp(configStore: GameConfigStore) {
++    var config by remember { mutableStateOf(configStore.load()) }
++    var inMatch by rememberSaveable { mutableStateOf(false) }
++    var matchId by rememberSaveable { mutableIntStateOf(0) }
++
++    if (inMatch) {
++        MatchScope(matchId = matchId, isActive = { inMatch }) {
++            MatchRoute(config = config, onExit = { inMatch = false })
++        }
++    } else {
++        HomeScreen(
++            config = config,
++            onConfigChange = {
++                config = it
++                configStore.save(it)
++            },
++            onStart = {
++                matchId++
++                inMatch = true
++            },
++        )
++    }
++}
++
++/**
++ * 対戦ごとに新しい ViewModelStore を [content] に渡す。
++ * 画面の回転などの構成変更では同じ対戦を続け、対戦を抜けたら（[isActive] が false）破棄する。
++ */
++@Composable
++private fun MatchScope(matchId: Int, isActive: () -> Boolean, content: @Composable () -> Unit) {
++    val holder = viewModel { MatchStoreHolder() }
++    val owner = remember(holder, matchId) { holder.ownerFor(matchId) }
++    val currentIsActive by rememberUpdatedState(isActive)
++    DisposableEffect(owner) {
++        onDispose { if (!currentIsActive()) holder.release(matchId) }
++    }
++    CompositionLocalProvider(LocalViewModelStoreOwner provides owner, content = content)
++}
++
++/** 対戦用の ViewModelStore を Activity の ViewModel として持つ。 */
++internal class MatchStoreHolder : ViewModel() {
++    private val store = ViewModelStore()
++    private var matchId: Int? = null
++
++    fun ownerFor(id: Int): ViewModelStoreOwner {
++        if (matchId != id) {
++            store.clear()
++            matchId = id
++        }
++        return object : ViewModelStoreOwner {
++            override val viewModelStore: ViewModelStore get() = store
++        }
++    }
++
++    fun release(id: Int) {
++        if (matchId == id) {
++            store.clear()
++            matchId = null
++        }
++    }
++
++    override fun onCleared() = store.clear()
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/card/Torifuda.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/card/Torifuda.kt
+new file mode 100644
+index 0000000..430f6da
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/card/Torifuda.kt
+@@ -0,0 +1,196 @@
++package io.github.abonsan.hyakunin.ui.card
++
++import androidx.compose.animation.core.animateFloatAsState
++import androidx.compose.foundation.background
++import androidx.compose.foundation.border
++import androidx.compose.foundation.gestures.awaitEachGesture
++import androidx.compose.foundation.gestures.awaitFirstDown
++import androidx.compose.foundation.gestures.waitForUpOrCancellation
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.aspectRatio
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberUpdatedState
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.CacheDrawScope
++import androidx.compose.ui.draw.drawWithCache
++import androidx.compose.ui.draw.shadow
++import androidx.compose.ui.geometry.Offset
++import androidx.compose.ui.graphics.Brush
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.drawscope.DrawScope
++import androidx.compose.ui.graphics.drawscope.rotate
++import androidx.compose.ui.graphics.graphicsLayer
++import androidx.compose.ui.input.pointer.pointerInput
++import androidx.compose.ui.semantics.Role
++import androidx.compose.ui.semantics.contentDescription
++import androidx.compose.ui.semantics.onClick
++import androidx.compose.ui.semantics.role
++import androidx.compose.ui.semantics.semantics
++import androidx.compose.ui.text.TextLayoutResult
++import androidx.compose.ui.text.TextMeasurer
++import androidx.compose.ui.text.TextStyle
++import androidx.compose.ui.text.drawText
++import androidx.compose.ui.text.rememberTextMeasurer
++import androidx.compose.ui.unit.Dp
++import androidx.compose.ui.unit.dp
++import io.github.abonsan.hyakunin.ui.theme.CardEdge
++import io.github.abonsan.hyakunin.ui.theme.CardFace
++import io.github.abonsan.hyakunin.ui.theme.Kin
++import io.github.abonsan.hyakunin.ui.theme.ShipporiMincho
++import io.github.abonsan.hyakunin.ui.theme.Shu
++import io.github.abonsan.hyakunin.ui.theme.Sumi
++
++/** 取り札の幅:高さ（52:73）。 */
++const val TORIFUDA_ASPECT_RATIO = 52f / 73f
++
++/** 幅 [width] の取り札の高さ。 */
++fun torifudaHeight(width: Dp): Dp = width / TORIFUDA_ASPECT_RATIO
++
++/**
++ * 取り札。下の句（[shimoKana]）を3列の縦書きで、右の列から書く。
++ * 大きさは [modifier] で与えた幅から決まり、高さは縦横比で決まる。
++ *
++ * @param upsideDown 札を180度回した向き（相手から見た向き）で書く。
++ * @param isNew 送り札で移ってきた札。金の縁で目立たせる。
++ * @param selectable 送る札として選べる。朱の縁で目立たせる。
++ * @param dimmed 取れない状態として少し暗くする。
++ * @param onTap 触れたときの処理。指が触れた瞬間に呼ぶ（離すのを待たない）。null なら触れられない。
++ */
++@Composable
++fun Torifuda(
++    shimoKana: String,
++    modifier: Modifier = Modifier,
++    upsideDown: Boolean = false,
++    isNew: Boolean = false,
++    selectable: Boolean = false,
++    dimmed: Boolean = false,
++    onTap: (() -> Unit)? = null,
++) {
++    val columns = remember(shimoKana) { torifudaColumns(shimoKana) }
++    val measurer = rememberTextMeasurer(cacheSize = 24)
++    var pressed by remember { mutableStateOf(false) }
++    val scale by animateFloatAsState(if (pressed) 0.94f else 1f, label = "torifudaPress")
++    val currentOnTap by rememberUpdatedState(onTap)
++    val tappable = onTap != null
++
++    val edgeColor = when {
++        selectable -> Shu
++        isNew -> Kin
++        else -> CardEdge
++    }
++    val edgeWidth = if (selectable || isNew) 2.5.dp else 1.dp
++    val glowColor = when {
++        selectable -> Shu
++        isNew -> Kin
++        else -> Color.Black
++    }
++    val elevation = if (selectable || isNew) 7.dp else 2.dp
++
++    Box(
++        modifier
++            .aspectRatio(TORIFUDA_ASPECT_RATIO)
++            .graphicsLayer {
++                scaleX = scale
++                scaleY = scale
++            }
++            .shadow(elevation, CardShape, ambientColor = glowColor, spotColor = glowColor)
++            .background(CardFaceBrush, CardShape)
++            .border(edgeWidth, edgeColor, CardShape)
++            .semantics {
++                contentDescription = shimoKana
++                if (tappable) {
++                    role = Role.Button
++                    onClick {
++                        currentOnTap?.invoke()
++                        true
++                    }
++                }
++            }
++            .then(
++                if (tappable) {
++                    Modifier.pointerInput(Unit) {
++                        awaitEachGesture {
++                            awaitFirstDown()
++                            pressed = true
++                            try {
++                                currentOnTap?.invoke()
++                                waitForUpOrCancellation()
++                            } finally {
++                                pressed = false
++                            }
++                        }
++                    }
++                } else {
++                    Modifier
++                },
++            )
++            .drawWithCache {
++                val glyphs = placeGlyphs(columns, measurer)
++                onDrawWithContent {
++                    drawContent()
++                    if (upsideDown) {
++                        rotate(180f) { drawGlyphs(glyphs) }
++                    } else {
++                        drawGlyphs(glyphs)
++                    }
++                    if (dimmed) drawRect(DimColor)
++                }
++            },
++    )
++}
++
++/** 取り札の文字を3列に分ける。空白を除き、1列に ceil(n/3) 文字ずつ入れる。最初の要素が右端の列。 */
++internal fun torifudaColumns(shimoKana: String): List<String> {
++    val text = shimoKana.filterNot { it.isWhitespace() }
++    if (text.isEmpty()) return emptyList()
++    return text.chunked((text.length + 2) / 3)
++}
++
++private val CardShape = RoundedCornerShape(3.dp)
++private val CardFaceBrush = Brush.verticalGradient(listOf(CardFace, Color(0xFFF5EEDC)))
++private val DimColor = Sumi.copy(alpha = 0.34f)
++
++// しっぽり明朝の em ボックス（上 0.88em・下 0.12em）の中心は、ベースラインの 0.38em 上にある
++private const val EM_CENTER_ABOVE_BASELINE = 0.38f
++
++private class PlacedGlyph(val layout: TextLayoutResult, val topLeft: Offset)
++
++private fun CacheDrawScope.placeGlyphs(columns: List<String>, measurer: TextMeasurer): List<PlacedGlyph> {
++    if (columns.isEmpty()) return emptyList()
++    val rows = columns.maxOf { it.length }
++    val padX = size.width * 0.12f
++    val padY = size.height * 0.08f
++    val columnWidth = (size.width - padX * 2) / 3
++    val cellHeight = (size.height - padY * 2) / rows
++    val fontPx = minOf(columnWidth * 0.88f, cellHeight * 0.98f)
++    val style = TextStyle(
++        color = Sumi,
++        fontFamily = ShipporiMincho,
++        fontSize = fontPx.toSp(),
++        // 小書きの仮名や長音符を縦書き用の字形にする
++        fontFeatureSettings = "vert",
++    )
++    return columns.flatMapIndexed { column, text ->
++        val centerX = size.width - padX - columnWidth * (column + 0.5f)
++        text.mapIndexed { row, char ->
++            val layout = measurer.measure(char.toString(), style, density = this)
++            val centerY = padY + cellHeight * (row + 0.5f)
++            PlacedGlyph(
++                layout = layout,
++                topLeft = Offset(
++                    x = centerX - layout.size.width / 2f,
++                    y = centerY - layout.firstBaseline + EM_CENTER_ABOVE_BASELINE * fontPx,
++                ),
++            )
++        }
++    }
++}
++
++private fun DrawScope.drawGlyphs(glyphs: List<PlacedGlyph>) {
++    glyphs.forEach { drawText(it.layout, topLeft = it.topLeft) }
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/components/Patterns.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/components/Patterns.kt
+new file mode 100644
+index 0000000..6108333
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/components/Patterns.kt
+@@ -0,0 +1,86 @@
++package io.github.abonsan.hyakunin.ui.components
++
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.drawBehind
++import androidx.compose.ui.geometry.Offset
++import androidx.compose.ui.graphics.Brush
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.drawscope.DrawScope
++import androidx.compose.ui.graphics.drawscope.Stroke
++import androidx.compose.ui.unit.Dp
++import androidx.compose.ui.unit.dp
++import io.github.abonsan.hyakunin.ui.theme.Kincha
++import io.github.abonsan.hyakunin.ui.theme.Tatami
++import io.github.abonsan.hyakunin.ui.theme.TatamiHeri
++import io.github.abonsan.hyakunin.ui.theme.TatamiLine
++
++/**
++ * 畳の地を描く。細い畳目の線と、[heriTop] / [heriBottom] に畳縁を付ける。
++ */
++fun Modifier.tatami(
++    heriTop: Boolean = false,
++    heriBottom: Boolean = false,
++    heriWidth: Dp = 5.dp,
++): Modifier = drawBehind {
++    drawRect(Tatami)
++    // 畳目: 2本ずつ濃淡を変えて、い草の織り目に見せる
++    val pitch = 2.5.dp.toPx()
++    val stroke = 0.6.dp.toPx()
++    var y = pitch / 2
++    var i = 0
++    while (y < size.height) {
++        val alpha = if (i % 2 == 0) 0.55f else 0.28f
++        drawLine(TatamiLine.copy(alpha = alpha), Offset(0f, y), Offset(size.width, y), stroke)
++        y += pitch
++        i++
++    }
++    // 光の当たり方のむらを少しだけ付ける
++    drawRect(
++        Brush.horizontalGradient(
++            0f to Color.White.copy(alpha = 0.10f),
++            0.5f to Color.Transparent,
++            1f to Color.Black.copy(alpha = 0.06f),
++        ),
++    )
++    val heri = heriWidth.toPx()
++    if (heriTop) drawHeri(top = 0f, height = heri)
++    if (heriBottom) drawHeri(top = size.height - heri, height = heri)
++}
++
++private fun DrawScope.drawHeri(top: Float, height: Float) {
++    drawRect(TatamiHeri, topLeft = Offset(0f, top), size = size.copy(height = height))
++    // 縁の中ほどに金茶の細い線
++    val lineY = top + height / 2
++    drawLine(Kincha.copy(alpha = 0.7f), Offset(0f, lineY), Offset(size.width, lineY), 0.6.dp.toPx())
++}
++
++/**
++ * 青海波（せいがいは）の文様を描く。[radius] は一つの波の半径。
++ * 下の段が上の段に重なるので、波ごとに [background] で塗ってから輪を描く。
++ */
++fun DrawScope.drawSeigaiha(
++    color: Color,
++    background: Color,
++    radius: Float,
++    strokeWidth: Float,
++    rings: Int = 4,
++) {
++    val dx = radius * 2f
++    val dy = radius / 2f
++    var row = 0
++    var y = 0f
++    while (y < size.height + radius) {
++        var x = if (row % 2 == 0) 0f else -radius
++        while (x < size.width + radius) {
++            val center = Offset(x, y)
++            drawCircle(background, radius, center)
++            for (ring in 0 until rings) {
++                val r = radius * (1f - ring / rings.toFloat()) - strokeWidth / 2
++                if (r > 0f) drawCircle(color, r, center, style = Stroke(strokeWidth))
++            }
++            x += dx
++        }
++        y += dy
++        row++
++    }
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/components/WafuComponents.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/components/WafuComponents.kt
+new file mode 100644
+index 0000000..03b9024
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/components/WafuComponents.kt
+@@ -0,0 +1,281 @@
++package io.github.abonsan.hyakunin.ui.components
++
++import androidx.annotation.DrawableRes
++import androidx.compose.foundation.BorderStroke
++import androidx.compose.foundation.Canvas
++import androidx.compose.foundation.background
++import androidx.compose.foundation.border
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.PaddingValues
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.fillMaxHeight
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.heightIn
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.selection.selectable
++import androidx.compose.foundation.selection.selectableGroup
++import androidx.compose.foundation.shape.CircleShape
++import androidx.compose.material3.Button
++import androidx.compose.material3.ButtonDefaults
++import androidx.compose.material3.Icon
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.OutlinedButton
++import androidx.compose.material3.Surface
++import androidx.compose.material3.Text
++import androidx.compose.material3.VerticalDivider
++import androidx.compose.material3.minimumInteractiveComponentSize
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.clip
++import androidx.compose.ui.geometry.Offset
++import androidx.compose.ui.graphics.Brush
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.Path
++import androidx.compose.ui.res.painterResource
++import androidx.compose.ui.semantics.Role
++import androidx.compose.ui.text.TextStyle
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.em
++import androidx.compose.ui.window.Dialog
++import androidx.compose.ui.window.DialogProperties
++import io.github.abonsan.hyakunin.ui.theme.Gofun
++import io.github.abonsan.hyakunin.ui.theme.Kincha
++import io.github.abonsan.hyakunin.ui.theme.Kon
++import io.github.abonsan.hyakunin.ui.theme.Shu
++import io.github.abonsan.hyakunin.ui.theme.Sumi
++import io.github.abonsan.hyakunin.ui.theme.Usuzumi
++import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
++import io.github.abonsan.hyakunin.ui.theme.WashiDeep
++import io.github.abonsan.hyakunin.ui.theme.WashiLight
++
++/** 朱の主ボタン。 */
++@Composable
++fun PrimaryButton(
++    text: String,
++    onClick: () -> Unit,
++    modifier: Modifier = Modifier,
++    enabled: Boolean = true,
++) {
++    Button(
++        onClick = onClick,
++        modifier = modifier.heightIn(min = 52.dp),
++        enabled = enabled,
++        shape = MaterialTheme.shapes.medium,
++        colors = ButtonDefaults.buttonColors(
++            containerColor = Shu,
++            contentColor = Gofun,
++            disabledContainerColor = WashiDeep,
++            disabledContentColor = UsuzumiText,
++        ),
++        contentPadding = PaddingValues(horizontal = 28.dp, vertical = 12.dp),
++    ) {
++        Text(text, style = MaterialTheme.typography.titleMedium, letterSpacing = 0.12.em)
++    }
++}
++
++/** 金茶の枠の控えめなボタン。 */
++@Composable
++fun SecondaryButton(
++    text: String,
++    onClick: () -> Unit,
++    modifier: Modifier = Modifier,
++) {
++    OutlinedButton(
++        onClick = onClick,
++        modifier = modifier.heightIn(min = 52.dp),
++        shape = MaterialTheme.shapes.medium,
++        colors = ButtonDefaults.outlinedButtonColors(contentColor = Sumi),
++        border = BorderStroke(1.dp, Kincha),
++        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
++    ) {
++        Text(text, style = MaterialTheme.typography.titleMedium, letterSpacing = 0.12.em)
++    }
++}
++
++/** 朱の短い縦線を添えた見出し。[trailing] は右端に置く。 */
++@Composable
++fun SectionLabel(
++    text: String,
++    modifier: Modifier = Modifier,
++    trailing: @Composable (() -> Unit)? = null,
++) {
++    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
++        Box(
++            Modifier
++                .size(width = 3.dp, height = 16.dp)
++                .background(Shu),
++        )
++        Spacer(Modifier.width(8.dp))
++        Text(text, style = MaterialTheme.typography.titleSmall, color = Sumi)
++        Spacer(Modifier.weight(1f))
++        trailing?.invoke()
++    }
++}
++
++/** 横に並べた選択肢から1つを選ぶ。選択中は紺地に胡粉の文字。 */
++@Composable
++fun <T> ChoiceRow(
++    options: List<T>,
++    selected: T,
++    label: (T) -> String,
++    onSelect: (T) -> Unit,
++    modifier: Modifier = Modifier,
++) {
++    val shape = MaterialTheme.shapes.medium
++    Row(
++        modifier
++            .fillMaxWidth()
++            .height(46.dp)
++            .clip(shape)
++            .border(1.dp, Kincha, shape)
++            .selectableGroup(),
++    ) {
++        options.forEachIndexed { index, option ->
++            if (index > 0) VerticalDivider(color = Kincha.copy(alpha = 0.6f))
++            val isSelected = option == selected
++            Box(
++                Modifier
++                    .weight(1f)
++                    .fillMaxHeight()
++                    .background(if (isSelected) Kon else Color.Transparent)
++                    .selectable(
++                        selected = isSelected,
++                        role = Role.RadioButton,
++                        onClick = { onSelect(option) },
++                    ),
++                contentAlignment = Alignment.Center,
++            ) {
++                Text(
++                    text = label(option),
++                    style = MaterialTheme.typography.bodyLarge,
++                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
++                    color = if (isSelected) Gofun else Sumi,
++                )
++            }
++        }
++    }
++}
++
++/** 丸い枠のアイコンボタン（増減ボタンなど）。 */
++@Composable
++fun RoundIconButton(
++    @DrawableRes icon: Int,
++    contentDescription: String,
++    onClick: () -> Unit,
++    modifier: Modifier = Modifier,
++    enabled: Boolean = true,
++) {
++    Box(
++        modifier
++            .minimumInteractiveComponentSize()
++            .size(40.dp)
++            .clip(CircleShape)
++            .border(1.dp, if (enabled) Kincha else WashiDeep, CircleShape)
++            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
++        contentAlignment = Alignment.Center,
++    ) {
++        Icon(
++            painter = painterResource(icon),
++            contentDescription = contentDescription,
++            tint = if (enabled) Sumi else Usuzumi.copy(alpha = 0.5f),
++            modifier = Modifier.size(20.dp),
++        )
++    }
++}
++
++/** 左右に金茶の飾り罫を付けた小見出し（例:「第 3 首 ／ 全 20 首」）。 */
++@Composable
++fun OrnamentTitle(
++    text: String,
++    modifier: Modifier = Modifier,
++    style: TextStyle = MaterialTheme.typography.labelLarge,
++    color: Color = UsuzumiText,
++) {
++    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
++        OrnamentLine(Modifier.weight(1f), towardEnd = true)
++        Text(
++            text = text,
++            modifier = Modifier.padding(horizontal = 12.dp),
++            style = style,
++            color = color,
++        )
++        OrnamentLine(Modifier.weight(1f), towardEnd = false)
++    }
++}
++
++/** 文字に近い側に菱形を置き、遠い側へ薄くなる罫線。 */
++@Composable
++private fun OrnamentLine(modifier: Modifier, towardEnd: Boolean) {
++    Canvas(modifier.height(8.dp)) {
++        val y = size.height / 2
++        val diamond = 3.dp.toPx()
++        val innerX = if (towardEnd) size.width - diamond else diamond
++        val outerX = if (towardEnd) 0f else size.width
++        drawLine(
++            brush = Brush.horizontalGradient(
++                listOf(Kincha.copy(alpha = 0f), Kincha),
++                startX = outerX,
++                endX = innerX,
++            ),
++            start = Offset(outerX, y),
++            end = Offset(innerX, y),
++            strokeWidth = 1.dp.toPx(),
++        )
++        val path = Path().apply {
++            moveTo(innerX, y - diamond)
++            lineTo(innerX + diamond, y)
++            lineTo(innerX, y + diamond)
++            lineTo(innerX - diamond, y)
++            close()
++        }
++        drawPath(path, Kincha)
++    }
++}
++
++/** 和紙の面と金茶の枠のダイアログ。 */
++@Composable
++fun WafuDialog(
++    title: String,
++    message: String,
++    confirmLabel: String,
++    onConfirm: () -> Unit,
++    dismissLabel: String,
++    onDismiss: () -> Unit,
++    onDismissRequest: () -> Unit,
++) {
++    Dialog(
++        onDismissRequest = onDismissRequest,
++        properties = DialogProperties(dismissOnClickOutside = false),
++    ) {
++        Surface(
++            shape = MaterialTheme.shapes.large,
++            color = WashiLight,
++            contentColor = Sumi,
++            border = BorderStroke(1.dp, Kincha),
++            shadowElevation = 8.dp,
++        ) {
++            Column(Modifier.padding(horizontal = 24.dp, vertical = 22.dp)) {
++                Text(title, style = MaterialTheme.typography.titleLarge)
++                Spacer(Modifier.height(12.dp))
++                Text(message, style = MaterialTheme.typography.bodyMedium, color = UsuzumiText)
++                Spacer(Modifier.height(22.dp))
++                Row(
++                    Modifier.fillMaxWidth(),
++                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
++                ) {
++                    SecondaryButton(dismissLabel, onDismiss)
++                    PrimaryButton(confirmLabel, onConfirm)
++                }
++            }
++        }
++    }
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/home/GameConfigStore.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/home/GameConfigStore.kt
+new file mode 100644
+index 0000000..fb720af
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/home/GameConfigStore.kt
+@@ -0,0 +1,48 @@
++package io.github.abonsan.hyakunin.ui.home
++
++import android.content.Context
++import android.content.SharedPreferences
++import androidx.core.content.edit
++import io.github.abonsan.hyakunin.game.GameConfig
++
++/** 対戦設定を SharedPreferences に保存・復元する。読めない値は既定値に戻す。 */
++class GameConfigStore(private val prefs: SharedPreferences) {
++
++    constructor(context: Context) : this(
++        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
++    )
++
++    fun load(): GameConfig {
++        val default = GameConfig()
++        return GameConfig(
++            ruleMode = enumOrDefault(prefs.getString(KEY_RULE_MODE, null), default.ruleMode),
++            emptyCardCount = prefs.getInt(KEY_EMPTY_CARDS, default.emptyCardCount)
++                .coerceIn(0, GameConfig.MAX_EMPTY_CARDS),
++            cpuLevel = enumOrDefault(prefs.getString(KEY_CPU_LEVEL, null), default.cpuLevel),
++            readingSpeed = enumOrDefault(prefs.getString(KEY_READING_SPEED, null), default.readingSpeed),
++            flipOpponentCards = prefs.getBoolean(KEY_FLIP_OPPONENT, default.flipOpponentCards),
++        )
++    }
++
++    fun save(config: GameConfig) {
++        prefs.edit {
++            putString(KEY_RULE_MODE, config.ruleMode.name)
++            putInt(KEY_EMPTY_CARDS, config.emptyCardCount)
++            putString(KEY_CPU_LEVEL, config.cpuLevel.name)
++            putString(KEY_READING_SPEED, config.readingSpeed.name)
++            putBoolean(KEY_FLIP_OPPONENT, config.flipOpponentCards)
++        }
++    }
++
++    private inline fun <reified T : Enum<T>> enumOrDefault(name: String?, default: T): T =
++        enumValues<T>().firstOrNull { it.name == name } ?: default
++
++    private companion object {
++        const val PREFS_NAME = "game_config"
++        const val KEY_RULE_MODE = "rule_mode"
++        const val KEY_EMPTY_CARDS = "empty_card_count"
++        const val KEY_CPU_LEVEL = "cpu_level"
++        const val KEY_READING_SPEED = "reading_speed"
++        const val KEY_FLIP_OPPONENT = "flip_opponent_cards"
++    }
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/home/HomeScreen.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/home/HomeScreen.kt
+new file mode 100644
+index 0000000..293e6d0
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/home/HomeScreen.kt
+@@ -0,0 +1,347 @@
++package io.github.abonsan.hyakunin.ui.home
++
++import androidx.compose.foundation.BorderStroke
++import androidx.compose.foundation.background
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.WindowInsets
++import androidx.compose.foundation.layout.WindowInsetsSides
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.offset
++import androidx.compose.foundation.layout.only
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.safeDrawing
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.layout.statusBarsPadding
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.layout.windowInsetsPadding
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.selection.toggleable
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.HorizontalDivider
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Slider
++import androidx.compose.material3.SliderDefaults
++import androidx.compose.material3.Surface
++import androidx.compose.material3.Switch
++import androidx.compose.material3.SwitchDefaults
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.drawBehind
++import androidx.compose.ui.draw.rotate
++import androidx.compose.ui.graphics.Brush
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.semantics.Role
++import androidx.compose.ui.semantics.contentDescription
++import androidx.compose.ui.semantics.semantics
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.em
++import androidx.compose.ui.unit.sp
++import io.github.abonsan.hyakunin.R
++import io.github.abonsan.hyakunin.data.Poems
++import io.github.abonsan.hyakunin.game.CpuLevel
++import io.github.abonsan.hyakunin.game.GameConfig
++import io.github.abonsan.hyakunin.game.ReadingSpeed
++import io.github.abonsan.hyakunin.game.RuleMode
++import io.github.abonsan.hyakunin.ui.card.Torifuda
++import io.github.abonsan.hyakunin.ui.components.ChoiceRow
++import io.github.abonsan.hyakunin.ui.components.OrnamentTitle
++import io.github.abonsan.hyakunin.ui.components.PrimaryButton
++import io.github.abonsan.hyakunin.ui.components.RoundIconButton
++import io.github.abonsan.hyakunin.ui.components.SectionLabel
++import io.github.abonsan.hyakunin.ui.components.drawSeigaiha
++import io.github.abonsan.hyakunin.ui.theme.Gofun
++import io.github.abonsan.hyakunin.ui.theme.Kincha
++import io.github.abonsan.hyakunin.ui.theme.Kon
++import io.github.abonsan.hyakunin.ui.theme.Shu
++import io.github.abonsan.hyakunin.ui.theme.Sumi
++import io.github.abonsan.hyakunin.ui.theme.Usuzumi
++import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
++import io.github.abonsan.hyakunin.ui.theme.Washi
++import io.github.abonsan.hyakunin.ui.theme.WashiDeep
++import io.github.abonsan.hyakunin.ui.theme.WashiLight
++import kotlin.math.abs
++import kotlin.math.roundToInt
++
++/**
++ * ホーム画面（対戦設定）。設定の保存は呼び出し側が [onConfigChange] で行う。
++ */
++@Composable
++fun HomeScreen(
++    config: GameConfig,
++    onConfigChange: (GameConfig) -> Unit,
++    onStart: () -> Unit,
++    modifier: Modifier = Modifier,
++) {
++    Column(
++        modifier
++            .fillMaxSize()
++            .background(Washi)
++            .windowInsetsPadding(
++                WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom),
++            ),
++    ) {
++        Column(
++            Modifier
++                .weight(1f)
++                .verticalScroll(rememberScrollState()),
++        ) {
++            HomeHeader(Modifier.fillMaxWidth())
++            SettingsPanel(
++                config = config,
++                onConfigChange = onConfigChange,
++                modifier = Modifier.padding(horizontal = 20.dp),
++            )
++            Spacer(Modifier.height(12.dp))
++        }
++        PrimaryButton(
++            text = "対戦開始",
++            onClick = onStart,
++            modifier = Modifier
++                .fillMaxWidth()
++                .padding(horizontal = 20.dp, vertical = 12.dp)
++                .height(56.dp),
++        )
++    }
++}
++
++@Composable
++private fun HomeHeader(modifier: Modifier = Modifier) {
++    Column(
++        modifier
++            .drawBehind {
++                drawSeigaiha(
++                    color = Kincha.copy(alpha = 0.22f),
++                    background = Washi,
++                    radius = 22.dp.toPx(),
++                    strokeWidth = 1.dp.toPx(),
++                )
++                // 下へ向かって地の色に溶かす
++                drawRect(
++                    Brush.verticalGradient(
++                        0f to Washi.copy(alpha = 0.35f),
++                        0.75f to Washi,
++                    ),
++                )
++            }
++            .statusBarsPadding()
++            .padding(top = 20.dp, bottom = 18.dp),
++        horizontalAlignment = Alignment.CenterHorizontally,
++    ) {
++        FannedCards()
++        Spacer(Modifier.height(16.dp))
++        Text(
++            text = "百人一首",
++            // 字間の分だけ左に余白を足して中央に見せる
++            modifier = Modifier.padding(start = 10.dp),
++            style = MaterialTheme.typography.displaySmall,
++            fontWeight = FontWeight.Bold,
++            fontSize = 40.sp,
++            letterSpacing = 0.25.em,
++            color = Sumi,
++        )
++        Spacer(Modifier.height(6.dp))
++        OrnamentTitle(
++            text = "かるた取り　コンピュータと対戦",
++            modifier = Modifier.padding(horizontal = 36.dp),
++            style = MaterialTheme.typography.bodyMedium,
++        )
++    }
++}
++
++/** 扇のように重ねた3枚の取り札。 */
++@Composable
++private fun FannedCards(modifier: Modifier = Modifier) {
++    val cards = Poems.all.take(3)
++    Box(modifier.size(width = 190.dp, height = 96.dp), contentAlignment = Alignment.Center) {
++        cards.forEachIndexed { index, poem ->
++            val position = index - (cards.size - 1) / 2f
++            Torifuda(
++                shimoKana = poem.shimoKana,
++                modifier = Modifier
++                    .offset(x = (position * 44).dp, y = (abs(position) * 6).dp)
++                    .rotate(position * 11f)
++                    .width(60.dp),
++            )
++        }
++    }
++}
++
++@Composable
++private fun SettingsPanel(
++    config: GameConfig,
++    onConfigChange: (GameConfig) -> Unit,
++    modifier: Modifier = Modifier,
++) {
++    Surface(
++        modifier = modifier.fillMaxWidth(),
++        shape = MaterialTheme.shapes.large,
++        color = WashiLight,
++        border = BorderStroke(1.dp, Kincha.copy(alpha = 0.55f)),
++    ) {
++        Column(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) {
++            SettingBlock {
++                SectionLabel("ルール")
++                Spacer(Modifier.height(10.dp))
++                ChoiceRow(
++                    options = RuleMode.entries,
++                    selected = config.ruleMode,
++                    label = { it.label },
++                    onSelect = { onConfigChange(config.copy(ruleMode = it)) },
++                )
++                Spacer(Modifier.height(8.dp))
++                Text(
++                    text = config.ruleMode.description,
++                    style = MaterialTheme.typography.bodySmall,
++                    color = UsuzumiText,
++                    minLines = 3,
++                )
++            }
++            PanelDivider()
++            EmptyCardSetting(
++                count = config.emptyCardCount,
++                onCountChange = { count ->
++                    val value = count.coerceIn(0, GameConfig.MAX_EMPTY_CARDS)
++                    if (value != config.emptyCardCount) onConfigChange(config.copy(emptyCardCount = value))
++                },
++            )
++            PanelDivider()
++            SettingBlock {
++                SectionLabel("CPUの強さ")
++                Spacer(Modifier.height(10.dp))
++                ChoiceRow(
++                    options = CpuLevel.entries,
++                    selected = config.cpuLevel,
++                    label = { it.label },
++                    onSelect = { onConfigChange(config.copy(cpuLevel = it)) },
++                )
++            }
++            PanelDivider()
++            SettingBlock {
++                SectionLabel("読み上げ速度")
++                Spacer(Modifier.height(10.dp))
++                ChoiceRow(
++                    options = ReadingSpeed.entries,
++                    selected = config.readingSpeed,
++                    label = { it.label },
++                    onSelect = { onConfigChange(config.copy(readingSpeed = it)) },
++                )
++            }
++            PanelDivider()
++            FlipSetting(
++                checked = config.flipOpponentCards,
++                onCheckedChange = { onConfigChange(config.copy(flipOpponentCards = it)) },
++            )
++        }
++    }
++}
++
++@Composable
++private fun SettingBlock(content: @Composable () -> Unit) {
++    Column(Modifier.padding(vertical = 14.dp)) { content() }
++}
++
++@Composable
++private fun PanelDivider() {
++    HorizontalDivider(thickness = 1.dp, color = Kincha.copy(alpha = 0.3f))
++}
++
++@Composable
++private fun EmptyCardSetting(count: Int, onCountChange: (Int) -> Unit) {
++    SettingBlock {
++        SectionLabel("空札の枚数") {
++            Row {
++                Text(
++                    text = "$count",
++                    modifier = Modifier.alignByBaseline(),
++                    style = MaterialTheme.typography.headlineSmall,
++                    fontWeight = FontWeight.Bold,
++                    color = Sumi,
++                )
++                Text(
++                    text = " 枚",
++                    modifier = Modifier.alignByBaseline(),
++                    style = MaterialTheme.typography.bodyMedium,
++                    color = Sumi,
++                )
++            }
++        }
++        Row(verticalAlignment = Alignment.CenterVertically) {
++            RoundIconButton(
++                icon = R.drawable.ic_minus,
++                contentDescription = "空札を1枚減らす",
++                onClick = { onCountChange(count - 1) },
++                enabled = count > 0,
++            )
++            Slider(
++                value = count.toFloat(),
++                onValueChange = { onCountChange(it.roundToInt()) },
++                modifier = Modifier
++                    .weight(1f)
++                    .padding(horizontal = 4.dp)
++                    .semantics { contentDescription = "空札の枚数" },
++                valueRange = 0f..GameConfig.MAX_EMPTY_CARDS.toFloat(),
++                colors = SliderDefaults.colors(
++                    thumbColor = Shu,
++                    activeTrackColor = Shu,
++                    inactiveTrackColor = WashiDeep,
++                    activeTickColor = Color.Transparent,
++                    inactiveTickColor = Color.Transparent,
++                ),
++            )
++            RoundIconButton(
++                icon = R.drawable.ic_plus,
++                contentDescription = "空札を1枚増やす",
++                onClick = { onCountChange(count + 1) },
++                enabled = count < GameConfig.MAX_EMPTY_CARDS,
++            )
++        }
++        val fieldCards = GameConfig.CARDS_PER_SIDE * 2
++        Text(
++            text = "読まれる札は全 ${fieldCards + count} 首（場の札 $fieldCards 枚と空札 $count 枚）",
++            style = MaterialTheme.typography.bodySmall,
++            color = UsuzumiText,
++        )
++    }
++}
++
++@Composable
++private fun FlipSetting(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
++    Row(
++        Modifier
++            .fillMaxWidth()
++            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
++            .padding(vertical = 14.dp),
++        verticalAlignment = Alignment.CenterVertically,
++    ) {
++        Column(Modifier.weight(1f)) {
++            Text("敵陣の札を逆さに表示", style = MaterialTheme.typography.titleSmall, color = Sumi)
++            Spacer(Modifier.height(2.dp))
++            Text(
++                text = "相手から見た向きで敵陣の札を並べます",
++                style = MaterialTheme.typography.bodySmall,
++                color = UsuzumiText,
++            )
++        }
++        Spacer(Modifier.width(12.dp))
++        Switch(
++            checked = checked,
++            onCheckedChange = null,
++            colors = SwitchDefaults.colors(
++                checkedThumbColor = Gofun,
++                checkedTrackColor = Kon,
++                checkedBorderColor = Kon,
++                uncheckedThumbColor = Usuzumi,
++                uncheckedTrackColor = WashiDeep,
++                uncheckedBorderColor = Usuzumi,
++            ),
++        )
++    }
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/match/FieldArea.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/FieldArea.kt
+new file mode 100644
+index 0000000..e8381d0
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/FieldArea.kt
+@@ -0,0 +1,77 @@
++package io.github.abonsan.hyakunin.ui.match
++
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.WindowInsets
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.heightIn
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.layout.windowInsetsPadding
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.key
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.semantics.paneTitle
++import androidx.compose.ui.semantics.semantics
++import androidx.compose.ui.unit.Dp
++import androidx.compose.ui.unit.dp
++import io.github.abonsan.hyakunin.game.FieldCard
++import io.github.abonsan.hyakunin.game.GameConfig
++import io.github.abonsan.hyakunin.game.Side
++import io.github.abonsan.hyakunin.ui.card.Torifuda
++import io.github.abonsan.hyakunin.ui.card.torifudaHeight
++import io.github.abonsan.hyakunin.ui.components.tatami
++
++private val CardGap = 6.dp
++
++/**
++ * 畳の上に並べた一つの陣。1段に最大5枚で折り返す。
++ * 敵陣は自陣と向かい合うよう、1段目を中央寄り（下側）に置く。
++ *
++ * @param contentInsets 札がシステムバーに重ならないよう内側に空ける余白。畳はその下まで敷く。
++ */
++@Composable
++internal fun FieldArea(
++    cards: List<FieldCard>,
++    side: Side,
++    cardWidth: Dp,
++    upsideDown: Boolean,
++    dimmed: Boolean,
++    selectable: Boolean,
++    onCardTap: ((FieldCard) -> Unit)?,
++    modifier: Modifier = Modifier,
++    contentInsets: WindowInsets = WindowInsets(0),
++) {
++    val rows = cards.chunked(GameConfig.CARDS_PER_SIDE).let { if (side == Side.CPU) it.asReversed() else it }
++    Column(
++        modifier
++            .fillMaxWidth()
++            .tatami(heriTop = true, heriBottom = true)
++            .windowInsetsPadding(contentInsets)
++            .padding(vertical = 12.dp)
++            .heightIn(min = torifudaHeight(cardWidth))
++            .semantics { paneTitle = if (side == Side.CPU) "敵陣" else "自陣" },
++        verticalArrangement = Arrangement.spacedBy(CardGap, Alignment.CenterVertically),
++        horizontalAlignment = Alignment.CenterHorizontally,
++    ) {
++        rows.forEach { row ->
++            Row(horizontalArrangement = Arrangement.spacedBy(CardGap)) {
++                row.forEach { card ->
++                    key(card.poemNo) {
++                        Torifuda(
++                            shimoKana = card.shimoKana,
++                            modifier = Modifier.width(cardWidth),
++                            upsideDown = upsideDown,
++                            isNew = card.isNew,
++                            selectable = selectable,
++                            dimmed = dimmed,
++                            onTap = onCardTap?.let { tap -> { tap(card) } },
++                        )
++                    }
++                }
++            }
++        }
++    }
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/match/FinishedOverlay.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/FinishedOverlay.kt
+new file mode 100644
+index 0000000..4a1f017
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/FinishedOverlay.kt
+@@ -0,0 +1,204 @@
++package io.github.abonsan.hyakunin.ui.match
++
++import androidx.compose.foundation.BorderStroke
++import androidx.compose.foundation.background
++import androidx.compose.foundation.border
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.WindowInsets
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.safeDrawing
++import androidx.compose.foundation.layout.widthIn
++import androidx.compose.foundation.layout.windowInsetsPadding
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.HorizontalDivider
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Surface
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.rotate
++import androidx.compose.ui.semantics.LiveRegionMode
++import androidx.compose.ui.semantics.liveRegion
++import androidx.compose.ui.semantics.semantics
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.text.style.TextAlign
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.em
++import androidx.compose.ui.unit.sp
++import io.github.abonsan.hyakunin.game.MatchUiState
++import io.github.abonsan.hyakunin.game.RuleMode
++import io.github.abonsan.hyakunin.game.Side
++import io.github.abonsan.hyakunin.ui.components.PrimaryButton
++import io.github.abonsan.hyakunin.ui.components.SecondaryButton
++import io.github.abonsan.hyakunin.ui.theme.Kincha
++import io.github.abonsan.hyakunin.ui.theme.Kon
++import io.github.abonsan.hyakunin.ui.theme.Shu
++import io.github.abonsan.hyakunin.ui.theme.Sumi
++import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
++import io.github.abonsan.hyakunin.ui.theme.WashiLight
++
++/** 試合終了の表示。盤面の上に重ねる。[winner] が null なら引き分け。 */
++@Composable
++internal fun FinishedOverlay(
++    state: MatchUiState,
++    winner: Side?,
++    onRestart: () -> Unit,
++    onExit: () -> Unit,
++) {
++    Box(
++        Modifier
++            .fillMaxSize()
++            .background(Sumi.copy(alpha = 0.5f))
++            .windowInsetsPadding(WindowInsets.safeDrawing),
++        contentAlignment = Alignment.Center,
++    ) {
++        Surface(
++            modifier = Modifier
++                .padding(20.dp)
++                .widthIn(max = 420.dp),
++            shape = MaterialTheme.shapes.large,
++            color = WashiLight,
++            border = BorderStroke(1.dp, Kincha),
++            shadowElevation = 12.dp,
++        ) {
++            Column(
++                Modifier
++                    .verticalScroll(rememberScrollState())
++                    .padding(horizontal = 24.dp, vertical = 22.dp),
++                horizontalAlignment = Alignment.CenterHorizontally,
++            ) {
++                Text(
++                    text = "対戦終了",
++                    style = MaterialTheme.typography.labelLarge,
++                    color = UsuzumiText,
++                    letterSpacing = 0.3.em,
++                )
++                Spacer(Modifier.height(14.dp))
++                OutcomeStamp(winner)
++                Spacer(Modifier.height(16.dp))
++                Text(
++                    text = when (winner) {
++                        Side.PLAYER -> "あなたの勝ちです"
++                        Side.CPU -> "あなたの負けです"
++                        null -> "引き分けです"
++                    },
++                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
++                    style = MaterialTheme.typography.titleMedium,
++                    color = Sumi,
++                )
++                Spacer(Modifier.height(2.dp))
++                Text(
++                    text = finishReason(state, winner),
++                    style = MaterialTheme.typography.bodySmall,
++                    color = UsuzumiText,
++                    textAlign = TextAlign.Center,
++                )
++                Spacer(Modifier.height(18.dp))
++                StatsTable(state)
++                Spacer(Modifier.height(22.dp))
++                Row(
++                    Modifier.fillMaxWidth(),
++                    horizontalArrangement = Arrangement.spacedBy(12.dp),
++                ) {
++                    SecondaryButton("ホームへ", onExit, Modifier.weight(1f))
++                    PrimaryButton("もう一度", onRestart, Modifier.weight(1f))
++                }
++            }
++        }
++    }
++}
++
++/** 朱肉の印のような勝敗の文字。 */
++@Composable
++private fun OutcomeStamp(winner: Side?) {
++    val (label, color) = when (winner) {
++        Side.PLAYER -> "勝ち" to Shu
++        Side.CPU -> "負け" to Kon
++        null -> "引き分け" to Sumi
++    }
++    Box(
++        Modifier
++            .rotate(-5f)
++            .border(3.dp, color, MaterialTheme.shapes.medium)
++            .padding(3.dp)
++            .border(1.dp, color, MaterialTheme.shapes.small)
++            .padding(horizontal = 22.dp, vertical = 4.dp),
++    ) {
++        Text(
++            text = label,
++            fontSize = 46.sp,
++            fontWeight = FontWeight.Bold,
++            letterSpacing = 0.12.em,
++            color = color,
++            style = MaterialTheme.typography.displaySmall,
++        )
++    }
++}
++
++internal fun finishReason(state: MatchUiState, winner: Side?): String {
++    if (state.config.ruleMode == RuleMode.SIMPLE) {
++        return "取った札　あなた ${state.playerTakenCount} 枚 ・ 相手 ${state.cpuTakenCount} 枚"
++    }
++    return when {
++        winner == Side.PLAYER && state.playerCards.isEmpty() -> "自陣の札が先になくなりました"
++        winner == Side.CPU && state.cpuCards.isEmpty() -> "相手の陣の札が先になくなりました"
++        else -> "すべての札を読み終えました"
++    }
++}
++
++@Composable
++private fun StatsTable(state: MatchUiState) {
++    val competitive = state.config.ruleMode == RuleMode.COMPETITIVE
++    Column(Modifier.fillMaxWidth()) {
++        StatsRow("", "あなた", "相手", header = true)
++        HorizontalDivider(color = Kincha.copy(alpha = 0.5f))
++        StatsRow("取った札", "${state.playerTakenCount} 枚", "${state.cpuTakenCount} 枚")
++        HorizontalDivider(color = Kincha.copy(alpha = 0.25f))
++        StatsRow("お手つき", "${state.playerFaultCount} 回", "${state.cpuFaultCount} 回")
++        if (competitive) {
++            HorizontalDivider(color = Kincha.copy(alpha = 0.25f))
++            StatsRow("残りの札", "${state.playerCards.size} 枚", "${state.cpuCards.size} 枚")
++        }
++    }
++}
++
++@Composable
++private fun StatsRow(label: String, player: String, cpu: String, header: Boolean = false) {
++    val valueStyle = if (header) MaterialTheme.typography.labelLarge else MaterialTheme.typography.bodyLarge
++    Row(
++        Modifier
++            .fillMaxWidth()
++            .padding(vertical = 7.dp),
++        verticalAlignment = Alignment.CenterVertically,
++    ) {
++        Text(
++            text = label,
++            modifier = Modifier.weight(1.1f),
++            style = MaterialTheme.typography.bodyMedium,
++            color = UsuzumiText,
++        )
++        Text(
++            text = player,
++            modifier = Modifier.weight(1f),
++            style = valueStyle,
++            color = if (header) Kon else Sumi,
++            textAlign = TextAlign.Center,
++        )
++        Text(
++            text = cpu,
++            modifier = Modifier.weight(1f),
++            style = valueStyle,
++            color = Sumi,
++            textAlign = TextAlign.Center,
++        )
++    }
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/match/MatchRoute.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/MatchRoute.kt
+new file mode 100644
+index 0000000..4b419be
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/MatchRoute.kt
+@@ -0,0 +1,77 @@
++package io.github.abonsan.hyakunin.ui.match
++
++import androidx.activity.compose.BackHandler
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.saveable.rememberSaveable
++import androidx.compose.runtime.setValue
++import androidx.lifecycle.Lifecycle
++import androidx.lifecycle.compose.LifecycleEventEffect
++import androidx.lifecycle.compose.collectAsStateWithLifecycle
++import androidx.lifecycle.viewmodel.compose.viewModel
++import io.github.abonsan.hyakunin.game.GameConfig
++import io.github.abonsan.hyakunin.game.MatchActions
++import io.github.abonsan.hyakunin.game.MatchPhase
++import io.github.abonsan.hyakunin.game.MatchViewModel
++import io.github.abonsan.hyakunin.ui.components.WafuDialog
++
++/**
++ * 対戦画面の入口。ViewModel は呼び出し側が対戦ごとに用意した ViewModelStore に作る。
++ * アプリが裏に回ると一時停止し、戻ると再開する（自分で一時停止していた場合は止めたまま）。
++ */
++@Composable
++fun MatchRoute(config: GameConfig, onExit: () -> Unit) {
++    val viewModel = viewModel { MatchViewModel(config) }
++    val state by viewModel.uiState.collectAsStateWithLifecycle()
++    // 一時停止ボタンや確認ダイアログで止めているか（アプリが前に戻っても勝手に再開しない）
++    var pausedByUser by rememberSaveable { mutableStateOf(false) }
++    var confirmingExit by rememberSaveable { mutableStateOf(false) }
++
++    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.setPaused(true) }
++    LifecycleEventEffect(Lifecycle.Event.ON_START) {
++        if (!pausedByUser && !confirmingExit) viewModel.setPaused(false)
++    }
++
++    val actions = remember(viewModel) {
++        object : MatchActions by viewModel {
++            override fun setPaused(paused: Boolean) {
++                pausedByUser = paused
++                viewModel.setPaused(paused)
++            }
++        }
++    }
++
++    BackHandler {
++        if (state.phase is MatchPhase.Finished) {
++            onExit()
++        } else {
++            confirmingExit = true
++            viewModel.setPaused(true)
++        }
++    }
++
++    MatchScreen(
++        state = state,
++        actions = actions,
++        onExit = onExit,
++        pauseDialogVisible = state.isPaused && !confirmingExit,
++    )
++
++    if (confirmingExit) {
++        val keepPlaying = {
++            confirmingExit = false
++            if (!pausedByUser) viewModel.setPaused(false)
++        }
++        WafuDialog(
++            title = "対戦をやめますか？",
++            message = "ここまでの成績は残りません。",
++            confirmLabel = "やめる",
++            onConfirm = onExit,
++            dismissLabel = "続ける",
++            onDismiss = keepPlaying,
++            onDismissRequest = keepPlaying,
++        )
++    }
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/match/MatchScreen.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/MatchScreen.kt
+new file mode 100644
+index 0000000..609b5c8
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/MatchScreen.kt
+@@ -0,0 +1,338 @@
++package io.github.abonsan.hyakunin.ui.match
++
++import androidx.compose.animation.Crossfade
++import androidx.compose.animation.core.tween
++import androidx.compose.foundation.background
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.BoxWithConstraints
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.WindowInsets
++import androidx.compose.foundation.layout.WindowInsetsSides
++import androidx.compose.foundation.layout.fillMaxHeight
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.only
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.safeDrawing
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.layout.windowInsetsPadding
++import androidx.compose.foundation.shape.CircleShape
++import androidx.compose.material3.Icon
++import androidx.compose.material3.IconButton
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.res.painterResource
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.unit.Dp
++import androidx.compose.ui.unit.dp
++import io.github.abonsan.hyakunin.R
++import io.github.abonsan.hyakunin.game.FieldCard
++import io.github.abonsan.hyakunin.game.GameConfig
++import io.github.abonsan.hyakunin.game.MatchActions
++import io.github.abonsan.hyakunin.game.MatchPhase
++import io.github.abonsan.hyakunin.game.MatchUiState
++import io.github.abonsan.hyakunin.game.RuleMode
++import io.github.abonsan.hyakunin.game.Side
++import io.github.abonsan.hyakunin.ui.card.TORIFUDA_ASPECT_RATIO
++import io.github.abonsan.hyakunin.ui.components.WafuDialog
++import io.github.abonsan.hyakunin.ui.theme.Kincha
++import io.github.abonsan.hyakunin.ui.theme.Kon
++import io.github.abonsan.hyakunin.ui.theme.ShuDeep
++import io.github.abonsan.hyakunin.ui.theme.Sumi
++import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
++import io.github.abonsan.hyakunin.ui.theme.Washi
++import io.github.abonsan.hyakunin.ui.theme.WashiDeep
++
++/**
++ * 対戦画面。上に敵陣、中央に読み上げ（または結果）、下に自陣を置く。
++ * 表示は [state] だけから決め、操作は [actions] に渡す。
++ *
++ * @param pauseDialogVisible 一時停止のダイアログを出すか。別のダイアログを出している間は false にする。
++ */
++@Composable
++fun MatchScreen(
++    state: MatchUiState,
++    actions: MatchActions,
++    onExit: () -> Unit,
++    modifier: Modifier = Modifier,
++    pauseDialogVisible: Boolean = state.isPaused,
++) {
++    // この読みで自分が触れた札の陣（お手つきか、同じ陣の別の札かを見分ける）
++    var touch by remember { mutableStateOf<CardTouch?>(null) }
++    val phase = state.phase
++    val readNumber = state.reading?.readNumber
++    val touchedSide = touch?.takeIf { it.readNumber == readNumber }?.side
++
++    val canTake = phase == MatchPhase.Reading && !state.playerLockedOut && !state.isPaused
++    val choosingSend = phase == MatchPhase.Result && state.pendingPlayerSends > 0 && !state.isPaused
++    val lockedOut = phase == MatchPhase.Reading && state.playerLockedOut
++
++    fun take(side: Side, card: FieldCard) {
++        touch = CardTouch(readNumber ?: 0, side)
++        actions.onCardTap(side, card.poemNo)
++    }
++
++    BoxWithConstraints(modifier.fillMaxSize().background(Washi)) {
++        val cardWidth = fieldCardWidth(maxWidth, maxHeight)
++        Column(Modifier.fillMaxSize()) {
++            MatchTopBar(
++                state = state,
++                onPause = { actions.setPaused(true) },
++                modifier = Modifier.windowInsetsPadding(
++                    WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
++                ),
++            )
++            FieldArea(
++                cards = state.cpuCards,
++                side = Side.CPU,
++                cardWidth = cardWidth,
++                upsideDown = state.config.flipOpponentCards,
++                dimmed = lockedOut,
++                selectable = false,
++                onCardTap = if (canTake) { card -> take(Side.CPU, card) } else null,
++            )
++            CenterArea(
++                state = state,
++                notice = lockoutNotice(state, touchedSide),
++                onNext = actions::onNext,
++                modifier = Modifier
++                    .weight(1f)
++                    .fillMaxWidth()
++                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
++            )
++            FieldArea(
++                cards = state.playerCards,
++                side = Side.PLAYER,
++                cardWidth = cardWidth,
++                upsideDown = false,
++                dimmed = lockedOut,
++                selectable = choosingSend,
++                onCardTap = when {
++                    canTake -> { card -> take(Side.PLAYER, card) }
++                    choosingSend -> { card -> actions.onCardTap(Side.PLAYER, card.poemNo) }
++                    else -> null
++                },
++                contentInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
++            )
++        }
++        if (phase is MatchPhase.Finished) {
++            FinishedOverlay(
++                state = state,
++                winner = phase.winner,
++                onRestart = actions::onRestart,
++                onExit = onExit,
++            )
++        }
++    }
++
++    if (pauseDialogVisible && phase !is MatchPhase.Finished) {
++        WafuDialog(
++            title = "一時停止中",
++            message = "対戦を止めています。再開すると続きから読みます。",
++            confirmLabel = "再開",
++            onConfirm = { actions.setPaused(false) },
++            dismissLabel = "やめる",
++            onDismiss = onExit,
++            onDismissRequest = { actions.setPaused(false) },
++        )
++    }
++}
++
++private data class CardTouch(val readNumber: Int, val side: Side)
++
++private val CardGap = 6.dp
++private val FieldPaddingHorizontal = 12.dp
++private val FieldPaddingVertical = 12.dp
++private val MaxCardWidth = 84.dp
++
++/** 1段に5枚と間隔が収まる札の幅。縦にも余裕が残るよう上限を設ける。 */
++internal fun fieldCardWidth(maxWidth: Dp, maxHeight: Dp): Dp {
++    val perRow = GameConfig.CARDS_PER_SIDE
++    val byWidth = (maxWidth - FieldPaddingHorizontal * 2 - CardGap * (perRow - 1)) / perRow
++    val byHeight = maxHeight * 0.12f * TORIFUDA_ASPECT_RATIO
++    return minOf(byWidth, byHeight, MaxCardWidth)
++}
++
++@Composable
++private fun CenterArea(
++    state: MatchUiState,
++    notice: LockoutNotice?,
++    onNext: () -> Unit,
++    modifier: Modifier = Modifier,
++) {
++    val content = when (state.phase) {
++        MatchPhase.Waiting -> CenterContent.Waiting
++        MatchPhase.Reading -> if (state.reading != null) CenterContent.Reading else CenterContent.Waiting
++        MatchPhase.Result, is MatchPhase.Finished ->
++            if (state.lastResult != null) CenterContent.Result else CenterContent.Waiting
++    }
++    Crossfade(targetState = content, modifier = modifier, animationSpec = tween(220), label = "center") {
++        val reading = state.reading
++        val result = state.lastResult
++        when {
++            it == CenterContent.Reading && reading != null -> ReadingPanel(reading, notice)
++            it == CenterContent.Result && result != null -> ResultPanel(
++                result = result,
++                reading = reading,
++                ruleMode = state.config.ruleMode,
++                pendingSends = if (state.phase == MatchPhase.Result) state.pendingPlayerSends else 0,
++                onNext = if (state.phase == MatchPhase.Result) onNext else null,
++            )
++            else -> WaitingPanel(
++                nextNumber = (state.readsDone + 1).coerceAtMost(state.totalReads),
++                totalReads = state.totalReads,
++                isFirst = state.readsDone == 0,
++            )
++        }
++    }
++}
++
++private enum class CenterContent { Waiting, Reading, Result }
++
++@Composable
++private fun MatchTopBar(
++    state: MatchUiState,
++    onPause: () -> Unit,
++    modifier: Modifier = Modifier,
++) {
++    val competitive = state.config.ruleMode == RuleMode.COMPETITIVE
++    val readCount = if (state.phase == MatchPhase.Reading) {
++        maxOf(state.readsDone, state.reading?.readNumber ?: 0)
++    } else {
++        state.readsDone
++    }
++    Column(modifier.fillMaxWidth()) {
++        Row(
++            Modifier
++                .fillMaxWidth()
++                .height(58.dp)
++                .padding(start = 4.dp, end = 14.dp),
++            verticalAlignment = Alignment.CenterVertically,
++        ) {
++            IconButton(onClick = onPause, enabled = state.phase !is MatchPhase.Finished) {
++                Icon(
++                    painter = painterResource(R.drawable.ic_pause),
++                    contentDescription = "一時停止",
++                    tint = Sumi,
++                )
++            }
++            ScoreBlock(
++                name = "相手（${state.config.cpuLevel.label}）",
++                mark = ShuDeep,
++                caption = if (competitive) "残り" else "取り札",
++                value = if (competitive) state.cpuCards.size else state.cpuTakenCount,
++                faults = state.cpuFaultCount,
++                modifier = Modifier.weight(1f),
++            )
++            ScoreBlock(
++                name = "あなた",
++                mark = Kon,
++                caption = if (competitive) "残り" else "取り札",
++                value = if (competitive) state.playerCards.size else state.playerTakenCount,
++                faults = state.playerFaultCount,
++                modifier = Modifier.weight(1f),
++            )
++            Column(horizontalAlignment = Alignment.End) {
++                Text("読み", style = MaterialTheme.typography.labelMedium, color = UsuzumiText)
++                Row {
++                    Text(
++                        text = "$readCount",
++                        modifier = Modifier.alignByBaseline(),
++                        style = MaterialTheme.typography.titleMedium,
++                        color = Sumi,
++                    )
++                    Text(
++                        text = " / ${state.totalReads}",
++                        modifier = Modifier.alignByBaseline(),
++                        style = MaterialTheme.typography.labelMedium,
++                        color = UsuzumiText,
++                    )
++                }
++            }
++        }
++        ReadProgressLine(
++            progress = if (state.totalReads > 0) state.readsDone / state.totalReads.toFloat() else 0f,
++        )
++    }
++}
++
++@Composable
++private fun ScoreBlock(
++    name: String,
++    mark: Color,
++    caption: String,
++    value: Int,
++    faults: Int,
++    modifier: Modifier = Modifier,
++) {
++    Column(modifier.padding(start = 6.dp)) {
++        Row(verticalAlignment = Alignment.CenterVertically) {
++            Box(
++                Modifier
++                    .size(7.dp)
++                    .background(mark, CircleShape),
++            )
++            Spacer(Modifier.width(5.dp))
++            Text(name, style = MaterialTheme.typography.labelMedium, color = UsuzumiText, maxLines = 1)
++        }
++        Row {
++            Text(
++                text = caption,
++                modifier = Modifier.alignByBaseline(),
++                style = MaterialTheme.typography.labelMedium,
++                color = UsuzumiText,
++            )
++            Text(
++                text = " $value",
++                modifier = Modifier.alignByBaseline(),
++                style = MaterialTheme.typography.titleLarge,
++                color = Sumi,
++            )
++            Text(
++                text = " 枚",
++                modifier = Modifier.alignByBaseline(),
++                style = MaterialTheme.typography.labelMedium,
++                color = Sumi,
++            )
++            Spacer(Modifier.width(8.dp))
++            Text(
++                text = "お手つき $faults",
++                modifier = Modifier.alignByBaseline(),
++                style = MaterialTheme.typography.labelMedium,
++                fontWeight = if (faults > 0) FontWeight.Bold else null,
++                color = if (faults > 0) ShuDeep else UsuzumiText,
++                maxLines = 1,
++            )
++        }
++    }
++}
++
++/** 読み終えた札の割合を示す細い線。 */
++@Composable
++private fun ReadProgressLine(progress: Float) {
++    Box(
++        Modifier
++            .fillMaxWidth()
++            .height(2.dp)
++            .background(WashiDeep),
++    ) {
++        Box(
++            Modifier
++                .fillMaxWidth(progress.coerceIn(0f, 1f))
++                .fillMaxHeight()
++                .background(Kincha),
++        )
++    }
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/match/ReadingPanel.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/ReadingPanel.kt
+new file mode 100644
+index 0000000..dc4cbda
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/ReadingPanel.kt
+@@ -0,0 +1,218 @@
++package io.github.abonsan.hyakunin.ui.match
++
++import androidx.compose.foundation.BorderStroke
++import androidx.compose.foundation.border
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.width
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Surface
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.rotate
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.semantics.LiveRegionMode
++import androidx.compose.ui.semantics.clearAndSetSemantics
++import androidx.compose.ui.semantics.contentDescription
++import androidx.compose.ui.semantics.liveRegion
++import androidx.compose.ui.semantics.semantics
++import androidx.compose.ui.text.SpanStyle
++import androidx.compose.ui.text.TextStyle
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.em
++import androidx.compose.ui.unit.sp
++import io.github.abonsan.hyakunin.game.MatchPhase
++import io.github.abonsan.hyakunin.game.MatchUiState
++import io.github.abonsan.hyakunin.game.ReadingState
++import io.github.abonsan.hyakunin.game.RuleMode
++import io.github.abonsan.hyakunin.game.Side
++import io.github.abonsan.hyakunin.ui.components.OrnamentTitle
++import io.github.abonsan.hyakunin.ui.theme.ShipporiMincho
++import io.github.abonsan.hyakunin.ui.theme.Shu
++import io.github.abonsan.hyakunin.ui.theme.ShuDeep
++import io.github.abonsan.hyakunin.ui.theme.ShuPale
++import io.github.abonsan.hyakunin.ui.theme.Sumi
++import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
++
++/** 読み上げの文字。大きめの明朝体。 */
++private val ReadingVerseStyle = TextStyle(
++    fontFamily = ShipporiMincho,
++    fontSize = 28.sp,
++    lineHeight = 40.sp,
++    letterSpacing = 0.04.em,
++    color = Sumi,
++)
++
++private val Revealed = SpanStyle(color = Sumi)
++private val Hidden = SpanStyle(color = Color.Transparent)
++
++internal fun readCounterText(readNumber: Int, totalReads: Int) = "第 $readNumber 首 ／ 全 $totalReads 首"
++
++/** 次の札を読むまでの表示。 */
++@Composable
++internal fun WaitingPanel(
++    nextNumber: Int,
++    totalReads: Int,
++    isFirst: Boolean,
++    modifier: Modifier = Modifier,
++) {
++    Column(
++        modifier.fillMaxSize(),
++        verticalArrangement = Arrangement.Center,
++        horizontalAlignment = Alignment.CenterHorizontally,
++    ) {
++        OrnamentTitle(
++            text = readCounterText(nextNumber, totalReads),
++            modifier = Modifier.padding(horizontal = 48.dp),
++        )
++        Spacer(Modifier.height(18.dp))
++        Text(
++            text = if (isFirst) "まもなく読み始めます" else "次の札を読みます",
++            style = MaterialTheme.typography.headlineSmall,
++            color = UsuzumiText,
++            letterSpacing = 0.1.em,
++        )
++    }
++}
++
++/**
++ * 読み上げ中の表示。読みを [ReadingState.revealedKana] 文字まで見せる。
++ * まだ読んでいない文字は透明で描き、文字が増えても配置が動かないようにする。
++ */
++@Composable
++internal fun ReadingPanel(
++    reading: ReadingState,
++    notice: LockoutNotice?,
++    modifier: Modifier = Modifier,
++) {
++    val verse = rememberVerse(reading.poem)
++    val revealed = reading.revealedKana
++    Box(modifier.fillMaxSize()) {
++        Column(
++            Modifier
++                .align(Alignment.Center)
++                .padding(horizontal = 16.dp),
++            horizontalAlignment = Alignment.CenterHorizontally,
++        ) {
++            OrnamentTitle(
++                text = readCounterText(reading.readNumber, reading.totalReads),
++                modifier = Modifier.padding(horizontal = 32.dp),
++            )
++            Spacer(Modifier.height(16.dp))
++            VerseText(
++                verse = verse,
++                style = ReadingVerseStyle,
++                spanFor = { if (it < revealed) Revealed else Hidden },
++                // 読み上げ済みの部分だけを読み上げ機能に渡す
++                modifier = Modifier.clearAndSetSemantics {
++                    contentDescription = revealedText(reading)
++                },
++            )
++        }
++        if (notice != null) {
++            LockoutBanner(
++                notice = notice,
++                modifier = Modifier
++                    .align(Alignment.BottomCenter)
++                    .padding(bottom = 14.dp, start = 16.dp, end = 16.dp),
++            )
++        }
++    }
++}
++
++private fun revealedText(reading: ReadingState): String =
++    (reading.poem.kamiYomi + reading.poem.shimoYomi)
++        .filterNot { it.isWhitespace() }
++        .take(reading.revealedKana)
++
++/** お手つきなどで札を取れなくなったときの知らせ。 */
++internal data class LockoutNotice(
++    /** 「お手つき」の印。お手つきでなければ null。 */
++    val stamp: String?,
++    val message: String,
++    val detail: String? = null,
++)
++
++/**
++ * 自分が札を取れなくなっている理由を表示用にまとめる。
++ * [touchedSide] はこの読みで自分が触れた札の陣（分からなければ null）。
++ */
++internal fun lockoutNotice(state: MatchUiState, touchedSide: Side?): LockoutNotice? {
++    if (state.phase != MatchPhase.Reading || !state.playerLockedOut) return null
++    val readNo = state.reading?.poem?.no
++    val readSide = when {
++        state.playerCards.any { it.poemNo == readNo } -> Side.PLAYER
++        state.cpuCards.any { it.poemNo == readNo } -> Side.CPU
++        else -> null
++    }
++    val isFault = when {
++        // 簡易ルールでは違う札に触れるとお手つきとして数える
++        state.config.ruleMode == RuleMode.SIMPLE -> true
++        // 空札のときに札に触れた
++        readSide == null -> true
++        touchedSide == null -> null
++        else -> touchedSide != readSide
++    }
++    return when (isFault) {
++        true -> LockoutNotice(stamp = "お手つき", message = "この札はもう取れません")
++        false -> LockoutNotice(
++            stamp = null,
++            message = "この札はもう取れません",
++            detail = "同じ陣の札なのでお手つきにはなりません",
++        )
++        null -> LockoutNotice(stamp = null, message = "この札はもう取れません")
++    }
++}
++
++@Composable
++private fun LockoutBanner(notice: LockoutNotice, modifier: Modifier = Modifier) {
++    Surface(
++        modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
++        shape = MaterialTheme.shapes.medium,
++        color = ShuPale,
++        border = BorderStroke(1.dp, Shu.copy(alpha = 0.6f)),
++    ) {
++        Row(
++            Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
++            verticalAlignment = Alignment.CenterVertically,
++        ) {
++            if (notice.stamp != null) {
++                // 朱の印のような「お手つき」
++                Text(
++                    text = notice.stamp,
++                    modifier = Modifier
++                        .rotate(-6f)
++                        .border(2.dp, Shu, MaterialTheme.shapes.small)
++                        .padding(horizontal = 8.dp, vertical = 2.dp),
++                    style = MaterialTheme.typography.titleMedium,
++                    color = Shu,
++                )
++                Spacer(Modifier.width(14.dp))
++            }
++            Column {
++                Text(
++                    text = notice.message,
++                    style = MaterialTheme.typography.titleSmall,
++                    fontWeight = FontWeight.Bold,
++                    color = ShuDeep,
++                )
++                if (notice.detail != null) {
++                    Text(
++                        text = notice.detail,
++                        style = MaterialTheme.typography.bodySmall,
++                        color = Sumi,
++                    )
++                }
++            }
++        }
++    }
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/match/ResultPanel.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/ResultPanel.kt
+new file mode 100644
+index 0000000..45c2152
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/ResultPanel.kt
+@@ -0,0 +1,326 @@
++package io.github.abonsan.hyakunin.ui.match
++
++import androidx.compose.foundation.BorderStroke
++import androidx.compose.foundation.background
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.FlowRow
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.HorizontalDivider
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Surface
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.semantics.LiveRegionMode
++import androidx.compose.ui.semantics.liveRegion
++import androidx.compose.ui.semantics.semantics
++import androidx.compose.ui.text.TextStyle
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.text.style.TextAlign
++import androidx.compose.ui.text.style.TextDecoration
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.em
++import androidx.compose.ui.unit.sp
++import io.github.abonsan.hyakunin.data.Poem
++import io.github.abonsan.hyakunin.game.ReadResult
++import io.github.abonsan.hyakunin.game.ReadingState
++import io.github.abonsan.hyakunin.game.RuleMode
++import io.github.abonsan.hyakunin.game.Side
++import io.github.abonsan.hyakunin.game.Transfer
++import io.github.abonsan.hyakunin.ui.components.PrimaryButton
++import io.github.abonsan.hyakunin.ui.theme.Gofun
++import io.github.abonsan.hyakunin.ui.theme.KimarijiGreen
++import io.github.abonsan.hyakunin.ui.theme.Kincha
++import io.github.abonsan.hyakunin.ui.theme.Kon
++import io.github.abonsan.hyakunin.ui.theme.OverReadRed
++import io.github.abonsan.hyakunin.ui.theme.ShipporiMincho
++import io.github.abonsan.hyakunin.ui.theme.Shu
++import io.github.abonsan.hyakunin.ui.theme.ShuDeep
++import io.github.abonsan.hyakunin.ui.theme.ShuPale
++import io.github.abonsan.hyakunin.ui.theme.Sumi
++import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
++import io.github.abonsan.hyakunin.ui.theme.WashiLight
++
++/** 結果表示の読み。読み上げ中より一回り小さくする。 */
++private val ResultVerseStyle = TextStyle(
++    fontFamily = ShipporiMincho,
++    fontSize = 23.sp,
++    lineHeight = 32.sp,
++    letterSpacing = 0.04.em,
++    color = Sumi,
++)
++
++/**
++ * 1回の読みの結果。読みを全文表示し、決まり字を緑、取った時点で決まり字を超えて読まれていた部分を赤で示す。
++ *
++ * @param pendingSends 自陣から送る札をあと何枚選ぶか。0 より大きい間は「次へ」の代わりに案内を出す。
++ * @param onNext 「次へ」。null なら出さない（試合終了後など）。
++ */
++@Composable
++internal fun ResultPanel(
++    result: ReadResult,
++    reading: ReadingState?,
++    ruleMode: RuleMode,
++    pendingSends: Int,
++    onNext: (() -> Unit)?,
++    modifier: Modifier = Modifier,
++) {
++    Surface(
++        modifier = modifier
++            .fillMaxSize()
++            .padding(horizontal = 10.dp, vertical = 8.dp),
++        shape = MaterialTheme.shapes.large,
++        color = WashiLight,
++        border = BorderStroke(1.dp, Kincha.copy(alpha = 0.6f)),
++        shadowElevation = 3.dp,
++    ) {
++        Column {
++            Column(
++                Modifier
++                    .weight(1f)
++                    .verticalScroll(rememberScrollState())
++                    .padding(horizontal = 16.dp, vertical = 12.dp),
++            ) {
++                ResultHeader(result, reading?.takeIf { it.poem.no == result.poem.no })
++                Spacer(Modifier.height(6.dp))
++                Text(
++                    text = result.message,
++                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
++                    style = MaterialTheme.typography.titleMedium,
++                    color = Sumi,
++                )
++                Spacer(Modifier.height(12.dp))
++                VerseText(
++                    verse = rememberVerse(result.poem),
++                    style = ResultVerseStyle,
++                    spanFor = { kanaTone(it, result.kimarijiLength, result.revealedAtTake).spanStyle() },
++                    modifier = Modifier.fillMaxWidth(),
++                    gap = 6.dp,
++                )
++                Spacer(Modifier.height(10.dp))
++                KimarijiLegend(result, Modifier.fillMaxWidth())
++                Spacer(Modifier.height(12.dp))
++                HorizontalDivider(color = Kincha.copy(alpha = 0.35f))
++                Spacer(Modifier.height(10.dp))
++                PoemInfo(result.poem)
++                val notes = resultNotes(result, ruleMode)
++                if (notes.isNotEmpty()) {
++                    Spacer(Modifier.height(10.dp))
++                    notes.forEach { NoteLine(it) }
++                }
++            }
++            ResultFooter(pendingSends, onNext)
++        }
++    }
++}
++
++@Composable
++private fun ResultHeader(result: ReadResult, reading: ReadingState?) {
++    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
++        val (label, color) = when {
++            result.isEmptyCard -> "空札" to UsuzumiText
++            result.takenBy == Side.PLAYER -> "あなたの取り" to Kon
++            result.takenBy == Side.CPU -> "相手の取り" to ShuDeep
++            else -> "取られず" to UsuzumiText
++        }
++        Text(
++            text = label,
++            modifier = Modifier
++                .background(color, MaterialTheme.shapes.small)
++                .padding(horizontal = 8.dp, vertical = 2.dp),
++            style = MaterialTheme.typography.labelLarge,
++            color = Gofun,
++        )
++        Spacer(Modifier.weight(1f))
++        if (reading != null) {
++            Text(
++                text = readCounterText(reading.readNumber, reading.totalReads),
++                style = MaterialTheme.typography.labelMedium,
++                color = UsuzumiText,
++            )
++        }
++    }
++}
++
++/** 凡例と、決まり字・取った位置のまとめ。 */
++@Composable
++private fun KimarijiLegend(result: ReadResult, modifier: Modifier = Modifier) {
++    val taken = result.revealedAtTake
++    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
++        FlowRow(
++            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
++            verticalArrangement = Arrangement.spacedBy(4.dp),
++        ) {
++            LegendItem(
++                color = KimarijiGreen,
++                text = "決まり字「${kimarijiOf(result.poem, result.kimarijiLength)}」",
++                underline = true,
++            )
++            if (taken != null && taken > result.kimarijiLength) {
++                LegendItem(color = OverReadRed, text = "決まり字を超えて読まれた部分")
++            }
++        }
++        Spacer(Modifier.height(4.dp))
++        val summary = when {
++            taken == null -> "決まり字は ${result.kimarijiLength} 字"
++            taken < result.kimarijiLength -> "決まり字が出る前に取りました（${taken} 字目）"
++            else -> "決まり字は ${result.kimarijiLength} 字・${taken} 字目で取りました"
++        }
++        Text(
++            text = summary,
++            style = MaterialTheme.typography.bodySmall,
++            fontWeight = if (taken != null && taken < result.kimarijiLength) FontWeight.Bold else null,
++            color = if (taken != null && taken < result.kimarijiLength) Kon else UsuzumiText,
++            textAlign = TextAlign.Center,
++        )
++    }
++}
++
++@Composable
++private fun LegendItem(color: Color, text: String, underline: Boolean = false) {
++    Row(verticalAlignment = Alignment.CenterVertically) {
++        Box(
++            Modifier
++                .size(10.dp)
++                .background(color, MaterialTheme.shapes.extraSmall),
++        )
++        Spacer(Modifier.width(5.dp))
++        Text(
++            text = text,
++            style = MaterialTheme.typography.bodySmall,
++            fontWeight = FontWeight.Bold,
++            color = color,
++            textDecoration = if (underline) TextDecoration.Underline else null,
++        )
++    }
++}
++
++/** 歌番号・作者・漢字表記の歌。 */
++@Composable
++private fun PoemInfo(poem: Poem) {
++    Column(Modifier.fillMaxWidth()) {
++        Row(verticalAlignment = Alignment.CenterVertically) {
++            Text(
++                text = "${poem.no}番",
++                style = MaterialTheme.typography.labelLarge,
++                color = Kon,
++            )
++            Spacer(Modifier.width(10.dp))
++            Text(
++                text = poem.author,
++                style = MaterialTheme.typography.bodyMedium,
++                color = UsuzumiText,
++            )
++        }
++        Spacer(Modifier.height(4.dp))
++        Text(text = poem.kami, style = MaterialTheme.typography.bodyLarge, color = Sumi)
++        Text(
++            text = poem.shimo,
++            modifier = Modifier.padding(start = 28.dp),
++            style = MaterialTheme.typography.bodyLarge,
++            color = Sumi,
++        )
++    }
++}
++
++/** 結果に添える注記（お手つき・送り札など）。 */
++internal data class ResultNote(val label: String, val text: String, val isFault: Boolean = false)
++
++internal fun resultNotes(result: ReadResult, ruleMode: RuleMode): List<ResultNote> = buildList {
++    if (result.faults.isNotEmpty()) {
++        val who = Side.entries.filter { it in result.faults }.joinToString("・") { it.displayName }
++        val offset = ruleMode == RuleMode.COMPETITIVE && result.faults.size == Side.entries.size
++        add(ResultNote("お手つき", if (offset) "$who（罰の送り札は相殺）" else who, isFault = true))
++    }
++    Side.entries.filter { it in result.safeMisses }.forEach {
++        add(ResultNote("空振り", "${it.displayName}は同じ陣の別の札に触れました（お手つきなし）"))
++    }
++    result.transfers
++        .groupBy { Triple(it.reason, it.from, it.to) }
++        .forEach { (key, transfers) ->
++            val (reason, from, to) = key
++            val label = when (reason) {
++                Transfer.Reason.SEND_AFTER_TAKE -> "送り札"
++                Transfer.Reason.FAULT_PENALTY -> "罰の送り札"
++            }
++            add(ResultNote(label, "${from.displayName} → ${to.displayName}（${transfers.size}枚）"))
++        }
++}
++
++internal val Side.displayName: String
++    get() = when (this) {
++        Side.PLAYER -> "あなた"
++        Side.CPU -> "相手"
++    }
++
++@Composable
++private fun NoteLine(note: ResultNote) {
++    Row(Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
++        Text(
++            text = note.label,
++            modifier = Modifier
++                .background(if (note.isFault) ShuPale else WashiDeepLabel, MaterialTheme.shapes.extraSmall)
++                .padding(horizontal = 6.dp, vertical = 1.dp),
++            style = MaterialTheme.typography.labelMedium,
++            fontWeight = FontWeight.Bold,
++            color = if (note.isFault) ShuDeep else Sumi,
++        )
++        Spacer(Modifier.width(8.dp))
++        Text(text = note.text, style = MaterialTheme.typography.bodyMedium, color = Sumi)
++    }
++}
++
++private val WashiDeepLabel = Color(0xFFEDE3CB)
++
++@Composable
++private fun ResultFooter(pendingSends: Int, onNext: (() -> Unit)?) {
++    when {
++        pendingSends > 0 -> Surface(
++            modifier = Modifier
++                .fillMaxWidth()
++                .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
++                .semantics { liveRegion = LiveRegionMode.Polite },
++            shape = MaterialTheme.shapes.medium,
++            color = ShuPale,
++            border = BorderStroke(1.5.dp, Shu),
++        ) {
++            Column(
++                Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
++                horizontalAlignment = Alignment.CenterHorizontally,
++            ) {
++                Text(
++                    text = "送る札を自陣から選んでください（あと $pendingSends 枚）",
++                    style = MaterialTheme.typography.titleSmall,
++                    color = ShuDeep,
++                    textAlign = TextAlign.Center,
++                )
++                Text(
++                    text = "▼ 下の自陣の札に触れると相手へ送ります",
++                    style = MaterialTheme.typography.bodySmall,
++                    color = Sumi,
++                    textAlign = TextAlign.Center,
++                )
++            }
++        }
++        onNext != null -> PrimaryButton(
++            text = "次へ",
++            onClick = onNext,
++            modifier = Modifier
++                .fillMaxWidth()
++                .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
++        )
++    }
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/match/Verse.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/Verse.kt
+new file mode 100644
+index 0000000..da926b0
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/match/Verse.kt
+@@ -0,0 +1,119 @@
++package io.github.abonsan.hyakunin.ui.match
++
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.height
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.remember
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.text.SpanStyle
++import androidx.compose.ui.text.TextStyle
++import androidx.compose.ui.text.buildAnnotatedString
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.text.style.TextAlign
++import androidx.compose.ui.text.style.TextDecoration
++import androidx.compose.ui.text.withStyle
++import androidx.compose.ui.unit.Dp
++import androidx.compose.ui.unit.dp
++import io.github.abonsan.hyakunin.data.Poem
++import io.github.abonsan.hyakunin.ui.theme.KimarijiGreen
++import io.github.abonsan.hyakunin.ui.theme.OverReadRed
++import io.github.abonsan.hyakunin.ui.theme.Sumi
++import io.github.abonsan.hyakunin.ui.theme.Usuzumi
++
++/** 読みの1句。[firstKana] は句の先頭の仮名の通し番号（空白を除き、上の句の先頭を0として数える）。 */
++internal data class VerseLine(val text: String, val firstKana: Int)
++
++/** 句ごとに分けた読み。 */
++internal data class Verse(val kami: List<VerseLine>, val shimo: List<VerseLine>)
++
++/** 上の句・下の句の読みを句ごとに分け、仮名の通し番号を付ける。 */
++internal fun verseOf(poem: Poem): Verse {
++    var next = 0
++    fun lines(yomi: String): List<VerseLine> =
++        yomi.split(' ', '　')
++            .filter { it.isNotEmpty() }
++            .map { phrase -> VerseLine(phrase, next).also { next += phrase.length } }
++    val kami = lines(poem.kamiYomi)
++    val shimo = lines(poem.shimoYomi)
++    return Verse(kami, shimo)
++}
++
++/** 上の句の読みの先頭から [length] 文字（決まり字）。 */
++internal fun kimarijiOf(poem: Poem, length: Int): String =
++    (poem.kamiYomi + poem.shimoYomi).filterNot { it.isWhitespace() }.take(length)
++
++/** 結果表示での仮名の区分。 */
++internal enum class KanaTone {
++    /** 決まり字（緑）。 */
++    Kimariji,
++
++    /** 取った時点で決まり字を超えて読まれていた部分（赤）。 */
++    OverRead,
++
++    /** 取った時点でまだ読まれていなかった部分（薄墨）。 */
++    Unread,
++
++    /** 取られなかった札の決まり字以外（墨）。 */
++    Plain,
++}
++
++/** 通し番号 [index] の仮名の区分。 */
++internal fun kanaTone(index: Int, kimarijiLength: Int, revealedAtTake: Int?): KanaTone = when {
++    index < kimarijiLength -> KanaTone.Kimariji
++    revealedAtTake == null -> KanaTone.Plain
++    index < revealedAtTake -> KanaTone.OverRead
++    else -> KanaTone.Unread
++}
++
++internal fun KanaTone.spanStyle(): SpanStyle = when (this) {
++    // 色だけに頼らないよう、決まり字には下線も付ける
++    KanaTone.Kimariji -> SpanStyle(
++        color = KimarijiGreen,
++        fontWeight = FontWeight.Bold,
++        textDecoration = TextDecoration.Underline,
++    )
++    KanaTone.OverRead -> SpanStyle(color = OverReadRed, fontWeight = FontWeight.Bold)
++    KanaTone.Unread -> SpanStyle(color = Usuzumi)
++    KanaTone.Plain -> SpanStyle(color = Sumi)
++}
++
++/**
++ * 読みを1句1行で中央にそろえて書く。仮名ごとの見た目は [spanFor]（引数は仮名の通し番号）で決める。
++ * 上の句と下の句の間は [gap] だけ空ける。
++ */
++@Composable
++internal fun VerseText(
++    verse: Verse,
++    style: TextStyle,
++    spanFor: (Int) -> SpanStyle,
++    modifier: Modifier = Modifier,
++    gap: Dp = 10.dp,
++) {
++    Column(
++        modifier,
++        horizontalAlignment = Alignment.CenterHorizontally,
++        verticalArrangement = Arrangement.Center,
++    ) {
++        verse.kami.forEach { VerseLineText(it, style, spanFor) }
++        Spacer(Modifier.height(gap))
++        verse.shimo.forEach { VerseLineText(it, style, spanFor) }
++    }
++}
++
++@Composable
++private fun VerseLineText(line: VerseLine, style: TextStyle, spanFor: (Int) -> SpanStyle) {
++    val text = buildAnnotatedString {
++        line.text.forEachIndexed { i, char ->
++            withStyle(spanFor(line.firstKana + i)) { append(char) }
++        }
++    }
++    Text(text = text, style = style, textAlign = TextAlign.Center)
++}
++
++/** 句ごとの読みを覚えておく。 */
++@Composable
++internal fun rememberVerse(poem: Poem): Verse = remember(poem) { verseOf(poem) }
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Color.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Color.kt
+new file mode 100644
+index 0000000..42b4123
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Color.kt
+@@ -0,0 +1,68 @@
++package io.github.abonsan.hyakunin.ui.theme
++
++import androidx.compose.ui.graphics.Color
++
++// 和の配色。文字に使う色は生成り（Washi）の上で 4.5:1 以上のコントラストを確保する。
++
++/** 和紙の生成り。画面の背景。 */
++val Washi = Color(0xFFF4ECD8)
++
++/** 明るい生成り。パネルやダイアログの面。 */
++val WashiLight = Color(0xFFFAF5E8)
++
++/** 濃い生成り。区切りや控えめな面。 */
++val WashiDeep = Color(0xFFE9DEC3)
++
++/** 胡粉。朱や紺の上に置く文字。 */
++val Gofun = Color(0xFFFFFBF2)
++
++/** 取り札の札面。 */
++val CardFace = Color(0xFFFCF8EE)
++
++/** 墨。本文の文字。 */
++val Sumi = Color(0xFF2B2621)
++
++/** 薄墨。装飾や、読み終えたあとの控えめな文字。 */
++val Usuzumi = Color(0xFF8A8178)
++
++/** 文字用の薄墨。補足の文字に使う（生成りの上で約 5:1）。 */
++val UsuzumiText = Color(0xFF6B6259)
++
++/** 朱。主ボタンとアクセント。 */
++val Shu = Color(0xFFC8452D)
++
++/** 淡い朱。案内の帯など。 */
++val ShuPale = Color(0xFFF6DED4)
++
++/** 濃い朱。淡い面の上に置く朱の文字（淡い朱の上で約 5.4:1）。 */
++val ShuDeep = Color(0xFFA3321D)
++
++/** 金茶。枠や区切り線。 */
++val Kincha = Color(0xFFB08D3C)
++
++/** 金。新しく来た札の縁。 */
++val Kin = Color(0xFFD4A32F)
++
++/** 紺。選択中の項目や自陣の印。 */
++val Kon = Color(0xFF1F3A5F)
++
++/** 淡い紺。 */
++val KonPale = Color(0xFFDDE3EB)
++
++/** 畳。陣の地。 */
++val Tatami = Color(0xFFC9C08A)
++
++/** 畳目の線。 */
++val TatamiLine = Color(0xFFA99E62)
++
++/** 畳縁。 */
++val TatamiHeri = Color(0xFF233650)
++
++/** 取り札の縁（裏紙の緑）。 */
++val CardEdge = Color(0xFF35573F)
++
++/** 決まり字の緑（生成りの上で約 5.3:1）。 */
++val KimarijiGreen = Color(0xFF2A6E2E)
++
++/** 決まり字を超えて読まれた部分の赤（生成りの上で約 4.9:1）。 */
++val OverReadRed = Color(0xFFC3272B)
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Theme.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Theme.kt
+new file mode 100644
+index 0000000..3300fba
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Theme.kt
+@@ -0,0 +1,67 @@
++package io.github.abonsan.hyakunin.ui.theme
++
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Shapes
++import androidx.compose.material3.lightColorScheme
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.unit.dp
++
++// 和紙の明るい配色だけを使う（ダイナミックカラーやダークテーマには切り替えない）。
++private val WafuColorScheme = lightColorScheme(
++    primary = Shu,
++    onPrimary = Gofun,
++    primaryContainer = ShuPale,
++    onPrimaryContainer = Color(0xFF5A1C10),
++    secondary = Kon,
++    onSecondary = Gofun,
++    secondaryContainer = KonPale,
++    onSecondaryContainer = Kon,
++    tertiary = Kincha,
++    onTertiary = Sumi,
++    tertiaryContainer = Color(0xFFF0E2BD),
++    onTertiaryContainer = Color(0xFF3B2E0D),
++    background = Washi,
++    onBackground = Sumi,
++    surface = Washi,
++    onSurface = Sumi,
++    surfaceVariant = WashiDeep,
++    onSurfaceVariant = UsuzumiText,
++    surfaceTint = Color.Transparent,
++    surfaceBright = WashiLight,
++    surfaceDim = WashiDeep,
++    surfaceContainerLowest = Gofun,
++    surfaceContainerLow = WashiLight,
++    surfaceContainer = WashiLight,
++    surfaceContainerHigh = WashiLight,
++    surfaceContainerHighest = WashiDeep,
++    inverseSurface = Sumi,
++    inverseOnSurface = Washi,
++    inversePrimary = Color(0xFFFFB4A1),
++    outline = Kincha,
++    outlineVariant = Color(0xFFD9CBA3),
++    error = OverReadRed,
++    onError = Gofun,
++    errorContainer = ShuPale,
++    onErrorContainer = Color(0xFF5A1C10),
++    scrim = Color.Black,
++)
++
++private val WafuShapes = Shapes(
++    extraSmall = RoundedCornerShape(2.dp),
++    small = RoundedCornerShape(4.dp),
++    medium = RoundedCornerShape(6.dp),
++    large = RoundedCornerShape(8.dp),
++    extraLarge = RoundedCornerShape(12.dp),
++)
++
++@Composable
++fun HyakuninTheme(content: @Composable () -> Unit) {
++    MaterialTheme(
++        colorScheme = WafuColorScheme,
++        typography = WafuTypography,
++        shapes = WafuShapes,
++        content = content,
++    )
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Type.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Type.kt
+new file mode 100644
+index 0000000..86873ac
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Type.kt
+@@ -0,0 +1,38 @@
++package io.github.abonsan.hyakunin.ui.theme
++
++import androidx.compose.material3.Typography
++import androidx.compose.ui.text.TextStyle
++import androidx.compose.ui.text.font.Font
++import androidx.compose.ui.text.font.FontFamily
++import androidx.compose.ui.text.font.FontWeight
++import io.github.abonsan.hyakunin.R
++
++/** しっぽり明朝（アプリで使う文字だけのサブセット）。 */
++val ShipporiMincho = FontFamily(
++    Font(R.font.shippori_mincho_regular, FontWeight.Normal),
++    Font(R.font.shippori_mincho_bold, FontWeight.Bold),
++)
++
++private val Base = Typography()
++
++private fun TextStyle.mincho(weight: FontWeight? = fontWeight) =
++    copy(fontFamily = ShipporiMincho, fontWeight = weight)
++
++/** すべての文字を明朝体にした Typography。見出しとボタンは太字。 */
++val WafuTypography = Typography(
++    displayLarge = Base.displayLarge.mincho(),
++    displayMedium = Base.displayMedium.mincho(),
++    displaySmall = Base.displaySmall.mincho(),
++    headlineLarge = Base.headlineLarge.mincho(),
++    headlineMedium = Base.headlineMedium.mincho(),
++    headlineSmall = Base.headlineSmall.mincho(),
++    titleLarge = Base.titleLarge.mincho(FontWeight.Bold),
++    titleMedium = Base.titleMedium.mincho(FontWeight.Bold),
++    titleSmall = Base.titleSmall.mincho(FontWeight.Bold),
++    bodyLarge = Base.bodyLarge.mincho(),
++    bodyMedium = Base.bodyMedium.mincho(),
++    bodySmall = Base.bodySmall.mincho(),
++    labelLarge = Base.labelLarge.mincho(FontWeight.Bold),
++    labelMedium = Base.labelMedium.mincho(FontWeight.Normal),
++    labelSmall = Base.labelSmall.mincho(FontWeight.Normal),
++)
+diff --git a/app/src/main/res/drawable/ic_launcher_foreground.xml b/app/src/main/res/drawable/ic_launcher_foreground.xml
+new file mode 100644
+index 0000000..4be549d
+--- /dev/null
++++ b/app/src/main/res/drawable/ic_launcher_foreground.xml
+@@ -0,0 +1,32 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- アイコンの前景: 少し傾けた生成りの取り札に、墨の縦線3本（下の句の3列） -->
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="108dp"
++    android:height="108dp"
++    android:viewportWidth="108"
++    android:viewportHeight="108">
++    <group
++        android:pivotX="54"
++        android:pivotY="54"
++        android:rotation="-8">
++        <!-- 影 -->
++        <path
++            android:fillColor="#38000000"
++            android:pathData="M40,31.25H71A2.5,2.5 0,0 1,73.5 33.75V79.25A2.5,2.5 0,0 1,71 81.75H40A2.5,2.5 0,0 1,37.5 79.25V33.75A2.5,2.5 0,0 1,40 31.25Z" />
++        <!-- 札面 -->
++        <path
++            android:fillColor="#FFF4ECD8"
++            android:pathData="M38.5,28.75H69.5A2.5,2.5 0,0 1,72 31.25V76.75A2.5,2.5 0,0 1,69.5 79.25H38.5A2.5,2.5 0,0 1,36 76.75V31.25A2.5,2.5 0,0 1,38.5 28.75Z" />
++        <!-- 金茶の細い枠 -->
++        <path
++            android:strokeColor="#FFB08D3C"
++            android:strokeWidth="0.9"
++            android:pathData="M39.4,30.95H68.6A1.2,1.2 0,0 1,69.8 32.15V75.85A1.2,1.2 0,0 1,68.6 77.05H39.4A1.2,1.2 0,0 1,38.2 75.85V32.15A1.2,1.2 0,0 1,39.4 30.95Z" />
++        <!-- 墨の縦線（右の列から） -->
++        <path
++            android:strokeColor="#FF2B2621"
++            android:strokeWidth="3.2"
++            android:strokeLineCap="round"
++            android:pathData="M61.5,36.5V71.5M54,36.5V71.5M46.5,36.5V60" />
++    </group>
++</vector>
+diff --git a/app/src/main/res/drawable/ic_launcher_monochrome.xml b/app/src/main/res/drawable/ic_launcher_monochrome.xml
+new file mode 100644
+index 0000000..f4b7e73
+--- /dev/null
++++ b/app/src/main/res/drawable/ic_launcher_monochrome.xml
+@@ -0,0 +1,17 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- テーマアイコン用の単色版: 取り札の形から縦線3本を抜く -->
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="108dp"
++    android:height="108dp"
++    android:viewportWidth="108"
++    android:viewportHeight="108">
++    <group
++        android:pivotX="54"
++        android:pivotY="54"
++        android:rotation="-8">
++        <path
++            android:fillColor="#FFFFFFFF"
++            android:fillType="evenOdd"
++            android:pathData="M38.5,28.75H69.5A2.5,2.5 0,0 1,72 31.25V76.75A2.5,2.5 0,0 1,69.5 79.25H38.5A2.5,2.5 0,0 1,36 76.75V31.25A2.5,2.5 0,0 1,38.5 28.75Z M61.5,34.9A1.6,1.6 0,0 1,63.1 36.5V71.5A1.6,1.6 0,0 1,61.5 73.1A1.6,1.6 0,0 1,59.9 71.5V36.5A1.6,1.6 0,0 1,61.5 34.9Z M54,34.9A1.6,1.6 0,0 1,55.6 36.5V71.5A1.6,1.6 0,0 1,54 73.1A1.6,1.6 0,0 1,52.4 71.5V36.5A1.6,1.6 0,0 1,54 34.9Z M46.5,34.9A1.6,1.6 0,0 1,48.1 36.5V60A1.6,1.6 0,0 1,46.5 61.6A1.6,1.6 0,0 1,44.9 60V36.5A1.6,1.6 0,0 1,46.5 34.9Z" />
++    </group>
++</vector>
+diff --git a/app/src/main/res/drawable/ic_minus.xml b/app/src/main/res/drawable/ic_minus.xml
+new file mode 100644
+index 0000000..8263ec2
+--- /dev/null
++++ b/app/src/main/res/drawable/ic_minus.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- 減らす -->
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24">
++    <path
++        android:fillColor="#FF000000"
++        android:pathData="M5,11.1h14a0.9,0.9 0,0 1,0 1.8h-14a0.9,0.9 0,0 1,0 -1.8z" />
++</vector>
+diff --git a/app/src/main/res/drawable/ic_pause.xml b/app/src/main/res/drawable/ic_pause.xml
+new file mode 100644
+index 0000000..cbdd5f2
+--- /dev/null
++++ b/app/src/main/res/drawable/ic_pause.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- 一時停止 -->
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24">
++    <path
++        android:fillColor="#FF000000"
++        android:pathData="M7.5,5h2.6a0.9,0.9 0,0 1,0.9 0.9v12.2a0.9,0.9 0,0 1,-0.9 0.9h-2.6a0.9,0.9 0,0 1,-0.9 -0.9v-12.2a0.9,0.9 0,0 1,0.9 -0.9zM13.9,5h2.6a0.9,0.9 0,0 1,0.9 0.9v12.2a0.9,0.9 0,0 1,-0.9 0.9h-2.6a0.9,0.9 0,0 1,-0.9 -0.9v-12.2a0.9,0.9 0,0 1,0.9 -0.9z" />
++</vector>
+diff --git a/app/src/main/res/drawable/ic_plus.xml b/app/src/main/res/drawable/ic_plus.xml
+new file mode 100644
+index 0000000..d5aa58b
+--- /dev/null
++++ b/app/src/main/res/drawable/ic_plus.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- 増やす -->
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24">
++    <path
++        android:fillColor="#FF000000"
++        android:pathData="M12,4.1a0.9,0.9 0,0 1,0.9 0.9v6.1h6.1a0.9,0.9 0,0 1,0 1.8h-6.1v6.1a0.9,0.9 0,0 1,-1.8 0v-6.1h-6.1a0.9,0.9 0,0 1,0 -1.8h6.1v-6.1a0.9,0.9 0,0 1,0.9 -0.9z" />
++</vector>
+diff --git a/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml b/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+new file mode 100644
+index 0000000..c78bee3
+--- /dev/null
++++ b/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
++    <background android:drawable="@color/ic_launcher_background" />
++    <foreground android:drawable="@drawable/ic_launcher_foreground" />
++    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
++</adaptive-icon>
+diff --git a/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml b/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+new file mode 100644
+index 0000000..c78bee3
+--- /dev/null
++++ b/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
++    <background android:drawable="@color/ic_launcher_background" />
++    <foreground android:drawable="@drawable/ic_launcher_foreground" />
++    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
++</adaptive-icon>
+diff --git a/app/src/main/res/values/colors.xml b/app/src/main/res/values/colors.xml
+new file mode 100644
+index 0000000..bf866ba
+--- /dev/null
++++ b/app/src/main/res/values/colors.xml
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <!-- 和紙の生成り（起動時の背景） -->
++    <color name="washi">#FFF4ECD8</color>
++    <!-- アイコンの背景（朱） -->
++    <color name="ic_launcher_background">#FFC8452D</color>
++</resources>
+diff --git a/app/src/main/res/values/themes.xml b/app/src/main/res/values/themes.xml
+new file mode 100644
+index 0000000..8652686
+--- /dev/null
++++ b/app/src/main/res/values/themes.xml
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <!-- 起動直後から和紙の色で表示する（画面の中身は Compose で描く） -->
++    <style name="Theme.Hyakunin" parent="android:Theme.Material.Light.NoActionBar">
++        <item name="android:windowBackground">@color/washi</item>
++        <item name="android:windowLightStatusBar">true</item>
++    </style>
++</resources>
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/ui/Fixtures.kt b/app/src/test/java/io/github/abonsan/hyakunin/ui/Fixtures.kt
+new file mode 100644
+index 0000000..0ef4af0
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/ui/Fixtures.kt
+@@ -0,0 +1,196 @@
++package io.github.abonsan.hyakunin.ui
++
++import io.github.abonsan.hyakunin.data.Poem
++import io.github.abonsan.hyakunin.data.Poems
++import io.github.abonsan.hyakunin.game.FieldCard
++import io.github.abonsan.hyakunin.game.GameConfig
++import io.github.abonsan.hyakunin.game.MatchActions
++import io.github.abonsan.hyakunin.game.MatchPhase
++import io.github.abonsan.hyakunin.game.MatchUiState
++import io.github.abonsan.hyakunin.game.ReadResult
++import io.github.abonsan.hyakunin.game.ReadingState
++import io.github.abonsan.hyakunin.game.Side
++import io.github.abonsan.hyakunin.game.Transfer
++
++/** スクリーンショットとテスト用の偽の対戦状態。 */
++internal object Fixtures {
++    /** 1〜3番はアプリのデータ、4〜12番はテスト用に用意した歌。 */
++    val poems: List<Poem> = Poems.all.take(3) + listOf(
++        Poem(
++            no = 4,
++            kami = "田子の浦に　うち出でてみれば　白妙の",
++            shimo = "富士の高嶺に　雪は降りつつ",
++            kamiYomi = "たごのうらに　うちいでてみれば　しろたえの",
++            shimoYomi = "ふじのたかねに　ゆきはふりつつ",
++            shimoKana = "ふじのたかねに　ゆきはふりつつ",
++            author = "山部赤人",
++            authorYomi = "やまべのあかひと",
++        ),
++        Poem(
++            no = 5,
++            kami = "奥山に　紅葉踏み分け　鳴く鹿の",
++            shimo = "声聞く時ぞ　秋は悲しき",
++            kamiYomi = "おくやまに　もみじふみわけ　なくしかの",
++            shimoYomi = "こえきくときぞ　あきはかなしき",
++            shimoKana = "こゑきくときぞ　あきはかなしき",
++            author = "猿丸大夫",
++            authorYomi = "さるまるだゆう",
++        ),
++        Poem(
++            no = 6,
++            kami = "かささぎの　渡せる橋に　置く霜の",
++            shimo = "白きを見れば　夜ぞ更けにける",
++            kamiYomi = "かささぎの　わたせるはしに　おくしもの",
++            shimoYomi = "しろきをみれば　よぞふけにける",
++            shimoKana = "しろきをみれば　よぞふけにける",
++            author = "中納言家持",
++            authorYomi = "ちゅうなごんやかもち",
++        ),
++        Poem(
++            no = 7,
++            kami = "天の原　ふりさけ見れば　春日なる",
++            shimo = "三笠の山に　出でし月かも",
++            kamiYomi = "あまのはら　ふりさけみれば　かすがなる",
++            shimoYomi = "みかさのやまに　いでしつきかも",
++            shimoKana = "みかさのやまに　いでしつきかも",
++            author = "安倍仲麿",
++            authorYomi = "あべのなかまろ",
++        ),
++        Poem(
++            no = 8,
++            kami = "わが庵は　都のたつみ　しかぞ住む",
++            shimo = "世をうぢ山と　人はいふなり",
++            kamiYomi = "わがいおは　みやこのたつみ　しかぞすむ",
++            shimoYomi = "よをうじやまと　ひとはいうなり",
++            shimoKana = "よをうぢやまと　ひとはいふなり",
++            author = "喜撰法師",
++            authorYomi = "きせんほうし",
++        ),
++        Poem(
++            no = 9,
++            kami = "花の色は　移りにけりな　いたづらに",
++            shimo = "わが身世にふる　ながめせし間に",
++            kamiYomi = "はなのいろは　うつりにけりな　いたずらに",
++            shimoYomi = "わがみよにふる　ながめせしまに",
++            shimoKana = "わがみよにふる　ながめせしまに",
++            author = "小野小町",
++            authorYomi = "おののこまち",
++        ),
++        Poem(
++            no = 10,
++            kami = "これやこの　行くも帰るも　別れては",
++            shimo = "知るも知らぬも　逢坂の関",
++            kamiYomi = "これやこの　ゆくもかえるも　わかれては",
++            shimoYomi = "しるもしらぬも　おうさかのせき",
++            shimoKana = "しるもしらぬも　あふさかのせき",
++            author = "蝉丸",
++            authorYomi = "せみまる",
++        ),
++        Poem(
++            no = 11,
++            kami = "わたの原　八十島かけて　漕ぎ出でぬと",
++            shimo = "人には告げよ　海人の釣舟",
++            kamiYomi = "わたのはら　やそしまかけて　こぎいでぬと",
++            shimoYomi = "ひとにはつげよ　あまのつりぶね",
++            shimoKana = "ひとにはつげよ　あまのつりぶね",
++            author = "参議篁",
++            authorYomi = "さんぎたかむら",
++        ),
++        Poem(
++            no = 12,
++            kami = "天つ風　雲の通ひ路　吹き閉ぢよ",
++            shimo = "をとめの姿　しばしとどめむ",
++            kamiYomi = "あまつかぜ　くものかよいじ　ふきとじよ",
++            shimoYomi = "おとめのすがた　しばしとどめん",
++            shimoKana = "をとめのすがた　しばしとどめむ",
++            author = "僧正遍昭",
++            authorYomi = "そうじょうへんじょう",
++        ),
++    )
++
++    fun poem(no: Int): Poem = poems.first { it.no == no }
++
++    fun card(no: Int, isNew: Boolean = false) = FieldCard(no, poem(no).shimoKana, isNew)
++
++    fun reading(no: Int, readNumber: Int, totalReads: Int, revealed: Int): ReadingState {
++        val poem = poem(no)
++        val kami = poem.kamiYomi.count { !it.isWhitespace() }
++        val total = kami + poem.shimoYomi.count { !it.isWhitespace() }
++        return ReadingState(
++            poem = poem,
++            readNumber = readNumber,
++            totalReads = totalReads,
++            revealedKana = revealed.coerceAtMost(total),
++            kamiKanaCount = kami,
++            totalKanaCount = total,
++        )
++    }
++
++    fun result(
++        no: Int,
++        kimarijiLength: Int,
++        revealedAtTake: Int?,
++        takenBy: Side?,
++        takenFrom: Side?,
++        message: String,
++        isEmptyCard: Boolean = false,
++        faults: Set<Side> = emptySet(),
++        safeMisses: Set<Side> = emptySet(),
++        transfers: List<Transfer> = emptyList(),
++    ) = ReadResult(
++        poem = poem(no),
++        isEmptyCard = isEmptyCard,
++        kimarijiLength = kimarijiLength,
++        revealedAtTake = revealedAtTake,
++        takenBy = takenBy,
++        takenFrom = takenFrom,
++        faults = faults,
++        safeMisses = safeMisses,
++        transfers = transfers,
++        message = message,
++    )
++
++    fun state(
++        config: GameConfig = GameConfig(),
++        phase: MatchPhase = MatchPhase.Reading,
++        player: List<FieldCard> = listOf(1, 2, 3, 4, 5).map { card(it) },
++        cpu: List<FieldCard> = listOf(6, 7, 8, 9, 10).map { card(it) },
++        reading: ReadingState? = null,
++        lastResult: ReadResult? = null,
++        playerLockedOut: Boolean = false,
++        pendingPlayerSends: Int = 0,
++        playerTaken: Int = 0,
++        cpuTaken: Int = 0,
++        playerFaults: Int = 0,
++        cpuFaults: Int = 0,
++        readsDone: Int = 0,
++        isPaused: Boolean = false,
++    ) = MatchUiState(
++        config = config,
++        phase = phase,
++        playerCards = player,
++        cpuCards = cpu,
++        reading = reading,
++        lastResult = lastResult,
++        playerLockedOut = playerLockedOut,
++        pendingPlayerSends = pendingPlayerSends,
++        playerTakenCount = playerTaken,
++        cpuTakenCount = cpuTaken,
++        playerFaultCount = playerFaults,
++        cpuFaultCount = cpuFaults,
++        readsDone = readsDone,
++        totalReads = 2 * GameConfig.CARDS_PER_SIDE + config.emptyCardCount,
++        isPaused = isPaused,
++    )
++}
++
++/** 何もしない操作。 */
++internal object NoopActions : MatchActions {
++    override fun onCardTap(side: Side, poemNo: Int) = Unit
++
++    override fun onNext() = Unit
++
++    override fun onRestart() = Unit
++
++    override fun setPaused(paused: Boolean) = Unit
++}
