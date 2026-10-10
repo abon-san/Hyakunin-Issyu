@@ -1,44 +1,108 @@
 package io.github.abonsan.hyakunin.game
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import io.github.abonsan.hyakunin.data.Poem
 import io.github.abonsan.hyakunin.data.Poems
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlin.random.Random
 
-// 暫定スタブ。対戦ロジック実装時に置き換える（コンストラクタと公開APIは変更しない）。
-class MatchViewModel(
-    config: GameConfig,
-    random: Random = Random.Default,
+/**
+ * 対戦の進行役。生成と同時に試合を始める。
+ *
+ * [viewModelScope] で 1 本のループを回し、[tickMillis] ごとに [clock] で測った経過時間をエンジンへ渡す。
+ * 一時停止中は経過時間を進めない。UI のスレッド（メイン）からだけ呼ぶこと。
+ */
+class MatchViewModel internal constructor(
+    private val engineFactory: () -> MatchEngine,
+    private val clock: () -> Long,
+    private val tickMillis: Long,
 ) : ViewModel(), MatchActions {
 
-    private val _uiState = MutableStateFlow(
-        MatchUiState(
-            config = config,
-            phase = MatchPhase.Waiting,
-            playerCards = Poems.all.take(2).map { FieldCard(it.no, it.shimoKana) },
-            cpuCards = Poems.all.drop(2).take(1).map { FieldCard(it.no, it.shimoKana) },
-            reading = null,
-            lastResult = null,
-            playerLockedOut = false,
-            pendingPlayerSends = 0,
-            playerTakenCount = 0,
-            cpuTakenCount = 0,
-            playerFaultCount = 0,
-            cpuFaultCount = 0,
-            readsDone = 0,
-            totalReads = 2 * GameConfig.CARDS_PER_SIDE + config.emptyCardCount,
-            isPaused = false,
-        ),
+    /**
+     * @param poems 100首。決まり字の判定と配札に使う
+     * @param timing 読み上げと進行のタイミング。既定は [GameConfig.readingSpeed] に合わせる
+     * @param clock 単調増加の時計（ms）。テストでは仮想時間を渡す
+     */
+    constructor(
+        config: GameConfig,
+        random: Random = Random.Default,
+        poems: List<Poem> = Poems.all,
+        timing: ReadTiming = ReadTiming.of(config.readingSpeed),
+        clock: () -> Long = ::monotonicMillis,
+        tickMillis: Long = DEFAULT_TICK_MILLIS,
+    ) : this(
+        engineFactory = { MatchEngine.create(config, random, poems, timing) },
+        clock = clock,
+        tickMillis = tickMillis,
     )
+
+    private var engine: MatchEngine = engineFactory()
+    private var paused = false
+    private var lastClock = clock()
+
+    private val _uiState = MutableStateFlow(engine.snapshot())
     val uiState: StateFlow<MatchUiState> = _uiState.asStateFlow()
 
-    override fun onCardTap(side: Side, poemNo: Int) = Unit
+    init {
+        viewModelScope.launch {
+            while (true) {
+                delay(tickMillis)
+                tick()
+            }
+        }
+    }
 
-    override fun onNext() = Unit
+    private fun tick() {
+        val now = clock()
+        val elapsed = now - lastClock
+        lastClock = now
+        if (paused) return
+        // 実時間の遅れ（delay のずれ）を取り込む。仮想時間では 1 刻みぶんだけ進む
+        engine.advanceBy(elapsed.coerceIn(tickMillis, MAX_STEP_MILLIS))
+        publish()
+    }
 
-    override fun onRestart() = Unit
+    private fun publish() {
+        _uiState.value = engine.snapshot().copy(isPaused = paused)
+    }
 
-    override fun setPaused(paused: Boolean) = Unit
+    override fun onCardTap(side: Side, poemNo: Int) {
+        if (paused) return
+        engine.tapCard(side, poemNo)
+        publish()
+    }
+
+    override fun onNext() {
+        if (paused) return
+        engine.next()
+        publish()
+    }
+
+    override fun onRestart() {
+        engine = engineFactory()
+        lastClock = clock()
+        publish()
+    }
+
+    override fun setPaused(paused: Boolean) {
+        if (this.paused == paused) return
+        this.paused = paused
+        // 一時停止していた間の時間は進めない
+        lastClock = clock()
+        publish()
+    }
+
+    private companion object {
+        const val DEFAULT_TICK_MILLIS = 20L
+
+        /** 1 回の刻みで進める時間の上限。長時間止まった後にいきなり進まないようにする。 */
+        const val MAX_STEP_MILLIS = 100L
+    }
 }
+
+private fun monotonicMillis(): Long = System.nanoTime() / 1_000_000L
