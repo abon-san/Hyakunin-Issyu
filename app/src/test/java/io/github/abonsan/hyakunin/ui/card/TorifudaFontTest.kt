@@ -46,7 +46,10 @@ class TorifudaFontTest {
 
     @Test
     fun hasEveryCharacterOfTheLowerVerses() {
-        val chars = Poems.all.flatMap { poem -> poem.shimoKana.filterNot { it.isWhitespace() }.toList() }.toSortedSet()
+        // 札に書く字（濁点を外したもの）と、参照画像と比べる札に書く字（濁点つき）
+        val chars = Poems.all
+            .flatMap { poem -> (withoutDakuten(poem.shimoKana) + poem.shimoKana).filterNot { it.isWhitespace() }.toList() }
+            .toSortedSet()
         val missing = chars.filter { glyphInSubset(it.toString()) == null }
         assertEquals("サブセットに無い字", "", missing.joinToString(""))
     }

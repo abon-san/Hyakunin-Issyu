@@ -7,6 +7,8 @@
 
 design/card/torifuda_reference.png の2枚（左が78番、右が58番）と、同じ札をアプリで同じ大きさに描いた
 app/build/outputs/roborazzi/torifuda_reference_78.png・_58.png（TorifudaReferenceScreenshotTest）を比べる。
+参照画像は濁点つきで書かれているので、アプリの札も濁点を外さずに描いたものと比べる
+（アプリで実際に出す札は濁点なしで、torifuda_display_<番号>.png に撮る）。
 比べる項目: 縁の太さ（四辺）と色、地の色、各字のインクの外接矩形（位置と大きさ）。
 位置は札の外形の左上を原点にした px（アプリの札は参照画像の大きさにそろえる）。字の位置ずれの最大値は
 「の」「で」を除いて出す（参照画像ではこの2字だけ作者が目で見て下げてあり、アプリでは再現しない）。
@@ -140,8 +142,8 @@ class Card:
         y0, y1 = int(self.top + margin), int(self.bottom - margin)
         ink = np.clip((face_luma - luma[y0:y1, x0:x1]) / face_luma, 0.0, 1.0)
         mask = ink >= 0.5
-        per_column = (len(text) + 2) // 3
-        columns = [text[i:i + per_column] for i in range(0, len(text), per_column)]
+        # アプリ（torifudaColumns）と同じく、右の列から5字・5字・残りすべて
+        columns = [c for c in (text[:5], text[5:10], text[10:]) if c]
         col_runs = runs(np.where(mask.any(axis=0))[0], min_gap=int(self.width * 0.05))
         if len(col_runs) != len(columns):
             raise SystemExit(f"列の数が合わない: {len(col_runs)}（想定 {len(columns)}）")
