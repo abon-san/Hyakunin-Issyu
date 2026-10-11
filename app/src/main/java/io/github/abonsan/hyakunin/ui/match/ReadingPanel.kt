@@ -2,7 +2,6 @@ package io.github.abonsan.hyakunin.ui.match
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -31,7 +30,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
 import io.github.abonsan.hyakunin.game.MatchPhase
 import io.github.abonsan.hyakunin.game.MatchUiState
 import io.github.abonsan.hyakunin.game.ReadingState
@@ -43,7 +41,6 @@ import io.github.abonsan.hyakunin.ui.theme.Shu
 import io.github.abonsan.hyakunin.ui.theme.ShuDeep
 import io.github.abonsan.hyakunin.ui.theme.ShuPale
 import io.github.abonsan.hyakunin.ui.theme.Sumi
-import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
 
 private val Revealed = SpanStyle(color = Sumi)
 private val Hidden = SpanStyle(color = Color.Transparent)
@@ -52,57 +49,31 @@ private val Hidden = SpanStyle(color = Color.Transparent)
 private val ReadingFontMax = 34.dp
 private val ReadingFontMin = 17.dp
 
+/** 幅も高さも [LargePanelSize] 以上ある欄（タブレットなど）での、文字の大きさの上限。 */
+private val LargeReadingFontMax = 48.dp
+
+/** 文字の大きさの上限を上げる欄の大きさ。 */
+internal val LargePanelSize = 560.dp
+
 /** お手つきの知らせを出す欄の高さ。知らせが出ても読みの位置が動かないよう、常に空けておく。 */
 private val NoticeSlotHeight = 64.dp
+
+/** 狭い欄では知らせを2段に積むので、欄を高くする。 */
+private val NarrowNoticeSlotHeight = 92.dp
+
+/** 知らせ（印と文）を横に並べられる欄の幅。これより狭ければ積む。 */
+private val WideNoticeMinWidth = 320.dp
 
 /** 「第 n 首 ／ 全 m 首」とその下の間の高さ。 */
 private val ReadingHeaderHeight = 40.dp
 
 internal fun readCounterText(readNumber: Int, totalReads: Int) = "第 $readNumber 首 ／ 全 $totalReads 首"
 
-/** 次の札を読むまでの表示。 */
-@Composable
-internal fun WaitingPanel(
-    nextNumber: Int,
-    totalReads: Int,
-    isFirst: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    CenterPanel(modifier) {
-        Column(
-            Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            OrnamentTitle(
-                text = readCounterText(nextNumber, totalReads),
-                modifier = Modifier.padding(horizontal = 32.dp),
-            )
-            Spacer(Modifier.height(18.dp))
-            Text(
-                text = if (isFirst) "まもなく読み始めます" else "次の札を読みます",
-                style = MaterialTheme.typography.headlineSmall,
-                color = UsuzumiText,
-                letterSpacing = 0.1.em,
-            )
-            if (isFirst) {
-                Spacer(Modifier.height(20.dp))
-                Text(
-                    text = "下が自陣（あなた）、上が敵陣（相手）です。\n読まれた歌の札に、相手より先に触れると取れます。",
-                    modifier = Modifier.padding(horizontal = 24.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = UsuzumiText,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
-    }
-}
-
 /**
  * 読み上げ中の表示。読みを [ReadingState.revealedKana] 文字まで見せる。
  * まだ読んでいない文字は透明で描き、文字が増えても配置が動かないようにする。
  * 下にはお手つきの知らせの欄を空けておき、残りの高さに収まる範囲で文字をなるべく大きくする。
+ * 1句1行では収まらない低い欄（分割画面など）では、句を横に並べて詰める。
  */
 @Composable
 internal fun ReadingPanel(
@@ -114,45 +85,54 @@ internal fun ReadingPanel(
     val revealed = reading.revealedKana
     CenterPanel(modifier) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val fontSize = fittingVerseFontSize(
-                width = maxWidth - 32.dp,
-                height = maxHeight - NoticeSlotHeight - ReadingHeaderHeight - 24.dp,
-                max = ReadingFontMax,
-                min = ReadingFontMin,
-            )
+            val narrowNotice = maxWidth < WideNoticeMinWidth
+            val slotHeight = if (narrowNotice) NarrowNoticeSlotHeight else NoticeSlotHeight
+            val verseWidth = maxWidth - 32.dp
+            val roomBelowHeader = maxHeight - slotHeight - ReadingHeaderHeight - 24.dp
+            val flowed = roomBelowHeader < verseHeight(ReadingFontMin)
+            // 句を横に並べても見出しまでは入らない低い欄では、何首目かの見出しを省く（成績の欄にも出ている）
+            val showCounter = !flowed || roomBelowHeader >= flowedVerseHeight(ReadingFontMin)
+            val verseRoom = if (showCounter) roomBelowHeader else maxHeight - slotHeight - 24.dp
+            val fontMax = if (maxWidth >= LargePanelSize && maxHeight >= LargePanelSize) LargeReadingFontMax else ReadingFontMax
+            val fontSize = if (flowed) {
+                fittingFlowedVerseFontSize(verseWidth, verseRoom, max = fontMax, min = ReadingFontMin)
+            } else {
+                fittingVerseFontSize(verseWidth, verseRoom, max = fontMax, min = ReadingFontMin)
+            }
+            val spanFor = { index: Int -> if (index < revealed) Revealed else Hidden }
+            // 読み上げ済みの部分だけを読み上げ機能に渡す
+            val verseSemantics = Modifier.clearAndSetSemantics { contentDescription = revealedText(reading) }
             Column(Modifier.fillMaxSize()) {
                 Box(
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 12.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = if (flowed) 8.dp else 12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        OrnamentTitle(
-                            text = readCounterText(reading.readNumber, reading.totalReads),
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                        )
-                        Spacer(Modifier.height(14.dp))
-                        VerseText(
-                            verse = verse,
-                            style = verseTextStyle(fontSize),
-                            spanFor = { if (it < revealed) Revealed else Hidden },
-                            // 読み上げ済みの部分だけを読み上げ機能に渡す
-                            modifier = Modifier.clearAndSetSemantics {
-                                contentDescription = revealedText(reading)
-                            },
-                        )
+                        if (showCounter) {
+                            OrnamentTitle(
+                                text = readCounterText(reading.readNumber, reading.totalReads),
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                            )
+                            Spacer(Modifier.height(if (flowed) 8.dp else 14.dp))
+                        }
+                        if (flowed) {
+                            CompactVerseText(verse, verseTextStyle(fontSize), spanFor, verseSemantics.fillMaxWidth())
+                        } else {
+                            VerseText(verse, verseTextStyle(fontSize), spanFor, verseSemantics)
+                        }
                     }
                 }
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .height(NoticeSlotHeight)
+                        .height(slotHeight)
                         .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (notice != null) LockoutBanner(notice)
+                    if (notice != null) LockoutBanner(notice, stacked = narrowNotice)
                 }
             }
         }
@@ -219,46 +199,73 @@ internal fun lockoutNotice(state: MatchUiState, touchedSide: Side?): LockoutNoti
     }
 }
 
+/**
+ * 自分が札を取れなくなったことの知らせ。[stacked] なら（狭い欄）印と文を縦に積む。
+ */
 @Composable
-private fun LockoutBanner(notice: LockoutNotice, modifier: Modifier = Modifier) {
+private fun LockoutBanner(notice: LockoutNotice, stacked: Boolean, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
         shape = MaterialTheme.shapes.medium,
         color = ShuPale,
         border = BorderStroke(1.dp, Shu.copy(alpha = 0.6f)),
     ) {
-        Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (notice.stamp != null) {
-                // 朱の印のような「お手つき」
-                Text(
-                    text = notice.stamp,
-                    modifier = Modifier
-                        .rotate(-6f)
-                        .border(2.dp, Shu, MaterialTheme.shapes.small)
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Shu,
-                )
-                Spacer(Modifier.width(14.dp))
-            }
-            Column {
-                Text(
-                    text = notice.message,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = ShuDeep,
-                )
-                if (notice.detail != null) {
-                    Text(
-                        text = notice.detail,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Sumi,
-                    )
+        if (stacked) {
+            Column(
+                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (notice.stamp != null) {
+                    FaultStamp(notice.stamp)
+                    Spacer(Modifier.height(6.dp))
                 }
+                LockoutMessage(notice, TextAlign.Center)
+            }
+        } else {
+            Row(
+                Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (notice.stamp != null) {
+                    FaultStamp(notice.stamp)
+                    Spacer(Modifier.width(14.dp))
+                }
+                Column { LockoutMessage(notice, TextAlign.Start) }
             }
         }
+    }
+}
+
+/** 朱の印のような「お手つき」。 */
+@Composable
+private fun FaultStamp(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier
+            .rotate(-6f)
+            .border(2.dp, Shu, MaterialTheme.shapes.small)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        style = MaterialTheme.typography.titleMedium,
+        color = Shu,
+        maxLines = 1,
+    )
+}
+
+@Composable
+private fun LockoutMessage(notice: LockoutNotice, align: TextAlign) {
+    Text(
+        text = notice.message,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold,
+        color = ShuDeep,
+        textAlign = align,
+    )
+    if (notice.detail != null) {
+        Text(
+            text = notice.detail,
+            style = MaterialTheme.typography.bodySmall,
+            color = Sumi,
+            textAlign = align,
+        )
     }
 }

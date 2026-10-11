@@ -1,5 +1,7 @@
 package io.github.abonsan.hyakunin.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.annotation.VisibleForTesting
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -8,6 +10,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
@@ -15,35 +19,122 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.github.abonsan.hyakunin.game.CpuLevel
+import io.github.abonsan.hyakunin.game.GameConfig
+import io.github.abonsan.hyakunin.game.MemorizeTime
+import io.github.abonsan.hyakunin.game.ReadInterval
+import io.github.abonsan.hyakunin.game.ReadStartMode
+import io.github.abonsan.hyakunin.game.ReadingSpeed
+import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.ui.home.GameConfigStore
-import io.github.abonsan.hyakunin.ui.home.HomeScreen
+import io.github.abonsan.hyakunin.ui.home.MatchSetupScreen
+import io.github.abonsan.hyakunin.ui.home.TopScreen
 import io.github.abonsan.hyakunin.ui.match.MatchRoute
+import io.github.abonsan.hyakunin.ui.settings.AppSettingsStore
+import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
+import io.github.abonsan.hyakunin.ui.settings.SettingsScreen
 
-/** ホームと対戦画面を切り替えるアプリ全体。 */
+/** アプリの画面。 */
+internal enum class Screen {
+    /** トップ（モードの選択）。 */
+    TOP,
+
+    /** 選んだモードの対戦設定。 */
+    SETUP,
+
+    /** 画面の設定。 */
+    SETTINGS,
+
+    /** 対戦。 */
+    MATCH,
+}
+
+/**
+ * トップ・対戦設定・設定・対戦の画面を切り替えるアプリ全体。
+ * 表示中の画面と対戦の設定は画面の回転などでも保つ。設定は変えるたびに保存する。
+ *
+ * @param onOrientationChange 画面の向きの設定が変わったときに呼ぶ（Activity に向きを指定する）。
+ */
 @Composable
-fun HyakuninApp(configStore: GameConfigStore) {
-    var config by remember { mutableStateOf(configStore.load()) }
-    var inMatch by rememberSaveable { mutableStateOf(false) }
+fun HyakuninApp(
+    configStore: GameConfigStore,
+    settingsStore: AppSettingsStore,
+    onOrientationChange: (ScreenOrientation) -> Unit = {},
+) {
+    var screen by rememberSaveable { mutableStateOf(Screen.TOP) }
+    var mode by rememberSaveable { mutableStateOf(RuleMode.COMPETITIVE) }
     var matchId by rememberSaveable { mutableIntStateOf(0) }
+    // 対戦を始めたときの設定（対戦中は変わらない）
+    var matchConfig by rememberSaveable(stateSaver = GameConfigSaver) { mutableStateOf(GameConfig()) }
+    var settings by remember { mutableStateOf(settingsStore.load()) }
+    var setupConfig by remember(mode) { mutableStateOf(configStore.load(mode)) }
 
-    if (inMatch) {
-        MatchScope(matchId = matchId, isActive = { inMatch }) {
-            MatchRoute(config = config, onExit = { inMatch = false })
-        }
-    } else {
-        HomeScreen(
-            config = config,
+    BackHandler(enabled = screen == Screen.SETUP || screen == Screen.SETTINGS) { screen = Screen.TOP }
+
+    when (screen) {
+        Screen.TOP -> TopScreen(
+            onSelectMode = {
+                mode = it
+                screen = Screen.SETUP
+            },
+            onOpenSettings = { screen = Screen.SETTINGS },
+        )
+        Screen.SETUP -> MatchSetupScreen(
+            config = setupConfig,
             onConfigChange = {
-                config = it
+                setupConfig = it
                 configStore.save(it)
             },
             onStart = {
+                matchConfig = setupConfig.copy(flipOpponentCards = settings.flipOpponentCards)
                 matchId++
-                inMatch = true
+                screen = Screen.MATCH
             },
+            onBack = { screen = Screen.TOP },
         )
+        Screen.SETTINGS -> SettingsScreen(
+            settings = settings,
+            onSettingsChange = { new ->
+                val orientationChanged = new.orientation != settings.orientation
+                settings = new
+                settingsStore.save(new)
+                if (orientationChanged) onOrientationChange(new.orientation)
+            },
+            onBack = { screen = Screen.TOP },
+        )
+        Screen.MATCH -> MatchScope(matchId = matchId, isActive = { screen == Screen.MATCH }) {
+            MatchRoute(config = matchConfig, onExit = { screen = Screen.SETUP })
+        }
     }
 }
+
+/** [GameConfig] を画面の状態として保存する。 */
+private val GameConfigSaver: Saver<GameConfig, Any> = listSaver(
+    save = {
+        listOf(
+            it.ruleMode.name,
+            it.emptyCardCount,
+            it.cpuLevel.name,
+            it.readingSpeed.name,
+            it.flipOpponentCards,
+            it.readStartMode.name,
+            it.memorizeTime.name,
+            it.readInterval.name,
+        )
+    },
+    restore = {
+        GameConfig(
+            ruleMode = RuleMode.valueOf(it[0] as String),
+            emptyCardCount = it[1] as Int,
+            cpuLevel = CpuLevel.valueOf(it[2] as String),
+            readingSpeed = ReadingSpeed.valueOf(it[3] as String),
+            flipOpponentCards = it[4] as Boolean,
+            readStartMode = ReadStartMode.valueOf(it[5] as String),
+            memorizeTime = MemorizeTime.valueOf(it[6] as String),
+            readInterval = ReadInterval.valueOf(it[7] as String),
+        )
+    },
+)
 
 /**
  * 対戦ごとに新しい ViewModelStore を [content] に渡す。
@@ -63,6 +154,9 @@ private fun MatchScope(matchId: Int, isActive: () -> Boolean, content: @Composab
 /** 対戦用の ViewModelStore を Activity の ViewModel として持つ。 */
 internal class MatchStoreHolder : ViewModel() {
     private val store = ViewModelStore()
+    private val owner = object : ViewModelStoreOwner {
+        override val viewModelStore: ViewModelStore get() = store
+    }
     private var matchId: Int? = null
 
     fun ownerFor(id: Int): ViewModelStoreOwner {
@@ -70,10 +164,12 @@ internal class MatchStoreHolder : ViewModel() {
             store.clear()
             matchId = id
         }
-        return object : ViewModelStoreOwner {
-            override val viewModelStore: ViewModelStore get() = store
-        }
+        return owner
     }
+
+    /** 対戦中なら、その対戦の ViewModel を持つ owner。対戦していなければ null（テストで状態を確かめるため）。 */
+    @VisibleForTesting
+    fun activeOwner(): ViewModelStoreOwner? = owner.takeIf { matchId != null }
 
     fun release(id: Int) {
         if (matchId == id) {

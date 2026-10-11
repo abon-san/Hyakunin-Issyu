@@ -25,6 +25,14 @@ val JapaneseLineBreak = LineBreak(
     wordBreak = LineBreak.WordBreak.Phrase,
 )
 
+/**
+ * [text] の途中で改行しないよう、文字の間に WORD JOINER（U+2060、幅も字形も無い）を挟む。
+ * 「（2枚）」のような数と単位が行をまたいで分かれないようにする。
+ */
+fun noLineBreak(text: String): String = text.toList().joinToString(WORD_JOINER)
+
+private const val WORD_JOINER = "⁠"
+
 private val Base = Typography()
 
 private fun TextStyle.mincho(weight: FontWeight? = fontWeight) = copy(

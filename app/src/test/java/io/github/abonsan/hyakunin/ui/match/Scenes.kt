@@ -4,6 +4,7 @@ import io.github.abonsan.hyakunin.game.CpuLevel
 import io.github.abonsan.hyakunin.game.GameConfig
 import io.github.abonsan.hyakunin.game.MatchPhase
 import io.github.abonsan.hyakunin.game.MatchUiState
+import io.github.abonsan.hyakunin.game.ReadStartMode
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.Side
 import io.github.abonsan.hyakunin.game.Transfer
@@ -16,7 +17,47 @@ import io.github.abonsan.hyakunin.ui.Fixtures.cards
  * 自陣は 1・17・33・61・87番、敵陣は 12・23・46・70・99番から始まる。
  */
 internal object Scenes {
-    fun waiting(): MatchUiState = Fixtures.state(phase = MatchPhase.Waiting)
+    /** 最初の札を読む前（札を覚える時間）。30秒のうち残り25秒。 */
+    fun memorizing(): MatchUiState = Fixtures.state(
+        phase = MatchPhase.Waiting,
+        waitRemainingMillis = 24_200L,
+        isMemorizing = true,
+    )
+
+    /**
+     * 読みの間。お手つきの後に相手が自陣の札を取り、相手から2枚（金の縁）送られてきた。
+     * 4秒のうち残り3秒。
+     */
+    fun interval(): MatchUiState = Fixtures.state(
+        phase = MatchPhase.Waiting,
+        player = cards(1, 17, 33, 61) + listOf(card(12, isNew = true), card(70, isNew = true)),
+        cpu = cards(23, 46, 99),
+        reading = Fixtures.reading(no = 87, readNumber = 6, totalReads = 20, revealed = 4),
+        readsDone = 6,
+        playerTaken = 1,
+        cpuTaken = 2,
+        playerFaults = 1,
+        waitRemainingMillis = 2_300L,
+    )
+
+    /** タップで読み始める設定。敵陣の札を取って自陣の1番を送った後、「読み始める」を待っている。 */
+    fun tapToStart(): MatchUiState = Fixtures.state(
+        config = GameConfig(readStartMode = ReadStartMode.TAP),
+        phase = MatchPhase.Waiting,
+        player = cards(17, 33, 61, 87),
+        cpu = cards(23, 46, 70, 99) + listOf(card(1, isNew = true)),
+        reading = Fixtures.reading(no = 12, readNumber = 5, totalReads = 20, revealed = 5),
+        readsDone = 5,
+        playerTaken = 2,
+        cpuTaken = 2,
+    )
+
+    /** タップで読み始める設定で、最初の札を読む前。 */
+    fun tapToStartFirst(): MatchUiState = Fixtures.state(
+        config = GameConfig(readStartMode = ReadStartMode.TAP),
+        phase = MatchPhase.Waiting,
+        isMemorizing = true,
+    )
 
     /** 自陣の61番「いにしえの」を読んでいる途中。 */
     fun reading(revealed: Int = 9): MatchUiState = Fixtures.state(

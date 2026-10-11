@@ -74,6 +74,8 @@ internal object Fixtures {
         cpuFaults: Int = 0,
         readsDone: Int = 0,
         isPaused: Boolean = false,
+        waitRemainingMillis: Long? = null,
+        isMemorizing: Boolean = false,
     ) = MatchUiState(
         config = config,
         phase = phase,
@@ -90,6 +92,8 @@ internal object Fixtures {
         readsDone = readsDone,
         totalReads = 2 * GameConfig.CARDS_PER_SIDE + config.emptyCardCount,
         isPaused = isPaused,
+        waitRemainingMillis = waitRemainingMillis,
+        isMemorizing = isMemorizing,
     )
 }
 
@@ -108,6 +112,7 @@ internal object NoopActions : MatchActions {
 internal class RecordingActions : MatchActions {
     val taps = mutableListOf<Pair<Side, Int>>()
     var nextCount = 0
+    var startReadingCount = 0
     var restartCount = 0
     val pauses = mutableListOf<Boolean>()
 
@@ -117,6 +122,10 @@ internal class RecordingActions : MatchActions {
 
     override fun onNext() {
         nextCount++
+    }
+
+    override fun onStartReading() {
+        startReadingCount++
     }
 
     override fun onRestart() {

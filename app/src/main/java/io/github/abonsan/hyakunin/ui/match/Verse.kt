@@ -106,6 +106,29 @@ internal fun fittingVerseFontSize(width: Dp, height: Dp, max: Dp, min: Dp): Dp {
     return minOf(byWidth, byHeight, max).coerceAtLeast(min)
 }
 
+/** 文字の大きさ [fontSize] で、読みを1句1行（5行）に書いたときの高さ。 */
+internal fun verseHeight(fontSize: Dp): Dp = fontSize * (VERSE_LINES * VERSE_LINE_HEIGHT + VERSE_GAP)
+
+/** 文字の大きさ [fontSize] で、句を横に並べた読み（上の句・下の句をそれぞれ1行）の高さ。 */
+internal fun flowedVerseHeight(fontSize: Dp): Dp = fontSize * (2 * VERSE_LINE_HEIGHT)
+
+/** 上の句・下の句の読みの仮名の数の上限（100首の読みで最も長いものは19文字と16文字）。 */
+internal const val MAX_KAMI_KANA = 19
+internal const val MAX_SHIMO_KANA = 16
+
+/** [CompactVerseText] の句の間（文字の大きさに対する割合）。 */
+private const val FLOW_PHRASE_GAP = 0.6f
+
+/**
+ * 句を横に並べた読み（[CompactVerseText]。上の句・下の句をそれぞれ1行）が幅 [width]・高さ [height] に
+ * 収まる文字の大きさ。[min]〜[max] の範囲にする。句の長さは最長の歌で見積もる。
+ */
+internal fun fittingFlowedVerseFontSize(width: Dp, height: Dp, max: Dp, min: Dp): Dp {
+    val byWidth = width / (MAX_KAMI_KANA * (1f + VERSE_LETTER_SPACING) + 2 * FLOW_PHRASE_GAP)
+    val byHeight = height / (2 * VERSE_LINE_HEIGHT)
+    return minOf(byWidth, byHeight, max).coerceAtLeast(min)
+}
+
 /**
  * 読みの明朝体。大きさは画面の広さから決めるので、端末の文字の大きさの設定には左右されない。
  */
@@ -154,7 +177,7 @@ internal fun CompactVerseText(
     spanFor: (Int) -> SpanStyle,
     modifier: Modifier = Modifier,
 ) {
-    val gap = with(LocalDensity.current) { (style.fontSize * 0.6f).toDp() }
+    val gap = with(LocalDensity.current) { (style.fontSize * FLOW_PHRASE_GAP).toDp() }
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         for (lines in listOf(verse.kami, verse.shimo)) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(gap, Alignment.CenterHorizontally)) {

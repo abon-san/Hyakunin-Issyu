@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,14 +25,17 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.abonsan.hyakunin.data.Poem
 import io.github.abonsan.hyakunin.game.ReadResult
@@ -53,6 +57,7 @@ import io.github.abonsan.hyakunin.ui.theme.Sumi
 import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
 import io.github.abonsan.hyakunin.ui.theme.WashiDeep
 import io.github.abonsan.hyakunin.ui.theme.WashiLight
+import io.github.abonsan.hyakunin.ui.theme.noLineBreak
 
 /** 結果表示の読みの大きさの上限と下限。読み上げ中より一回り小さくする。 */
 private val ResultFontMax = 24.dp
@@ -64,16 +69,32 @@ private val ResultChromeHeight = 300.dp
 /** これより低い欄では、見出しを1行にまとめ、読みを句ごとに詰めて並べる。 */
 private val CompactPanelHeight = 380.dp
 
+/** これより低い欄では、「次へ」を見出しの横に置く。 */
+private val TightPanelHeight = 240.dp
+
 /** 詰めて並べるときの読みの大きさ。 */
 private val CompactFontSize = 19.dp
+
+/** 読みと内訳を左右に並べられる欄の幅。 */
+private val WideResultMinWidth = 340.dp
+
+/** 左右に並べるときの読みの大きさの上限と下限。 */
+private val WideFontMax = 28.dp
+private val WideFontMin = 16.dp
+
+/** 大きな欄（タブレットなど）で左右に並べるときの、読みの大きさの上限。 */
+private val LargeWideFontMax = 40.dp
 
 /**
  * 1回の読みの結果。読みを全文表示し、決まり字を緑、取った時点で決まり字を超えて読まれていた部分を赤で示す。
  * 何が起きたかの説明と色分けした読みを先に、お手つき・送り札の内訳、歌の表記と作者を後に置く。
  * 入り切らないときは中だけ動かせる（ボタンや案内は常に見える）。
  *
+ * 横に広い画面で欄に幅があるときは、左に色分けした読み、右に内訳と歌の表記を並べる。
+ *
  * @param pendingSends 自陣から送る札をあと何枚選ぶか。0 より大きい間は「次へ」の代わりに案内を出す。
  * @param onNext 「次へ」。null なら出さない（試合終了後など）。
+ * @param fieldsAside 場が右側にある配置（横に広い画面）。
  */
 @Composable
 internal fun ResultPanel(
@@ -83,58 +104,177 @@ internal fun ResultPanel(
     pendingSends: Int,
     onNext: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    fieldsAside: Boolean = false,
 ) {
     CenterPanel(modifier, shadowElevation = 3.dp) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val compact = maxHeight < CompactPanelHeight
-            val fontSize = if (compact) {
-                CompactFontSize
+            if (fieldsAside && maxWidth >= WideResultMinWidth) {
+                val large = maxWidth >= LargePanelSize && maxHeight >= LargePanelSize
+                WideResult(result, ruleMode, pendingSends, onNext, large)
             } else {
-                fittingVerseFontSize(
-                    width = maxWidth - 32.dp,
-                    height = maxHeight - ResultChromeHeight,
-                    max = ResultFontMax,
-                    min = ResultFontMin,
-                )
-            }
-            val verse = rememberVerse(result.poem)
-            val spanFor = { index: Int -> kanaTone(index, result.kimarijiLength, result.revealedAtTake).spanStyle() }
-            val message = splitResultMessage(result.message)
-            val scroll = rememberScrollState()
-            Column(Modifier.fillMaxSize()) {
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .fadingBottomEdge(scroll, WashiLight)
-                        .verticalScroll(scroll)
-                        .padding(horizontal = 16.dp, vertical = if (compact) 10.dp else 12.dp),
-                ) {
-                    if (compact) {
-                        CompactResultHeader(result, message)
-                        Spacer(Modifier.height(8.dp))
-                        CompactVerseText(verse, verseTextStyle(fontSize), spanFor, Modifier.fillMaxWidth())
-                    } else {
-                        ResultHeader(result, reading?.takeIf { it.poem.no == result.poem.no })
-                        Spacer(Modifier.height(8.dp))
-                        ResultMessage(message)
-                        Spacer(Modifier.height(14.dp))
-                        VerseText(verse, verseTextStyle(fontSize), spanFor, Modifier.fillMaxWidth())
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    KimarijiLegend(result, Modifier.fillMaxWidth())
-                    val notes = resultNotes(result, ruleMode)
-                    if (notes.isNotEmpty()) {
-                        Spacer(Modifier.height(10.dp))
-                        notes.forEach { NoteLine(it) }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    HorizontalDivider(color = Kincha.copy(alpha = 0.35f))
-                    Spacer(Modifier.height(10.dp))
-                    PoemInfo(result.poem)
-                }
-                ResultFooter(pendingSends, onNext, compact)
+                StackedResult(result, reading, ruleMode, pendingSends, onNext, fieldsAside, maxWidth, maxHeight)
             }
         }
+    }
+}
+
+/** 縦に積んだ結果。低い欄では見出しを1行にまとめ、読みを句ごとに詰めて並べる。 */
+@Composable
+private fun StackedResult(
+    result: ReadResult,
+    reading: ReadingState?,
+    ruleMode: RuleMode,
+    pendingSends: Int,
+    onNext: (() -> Unit)?,
+    fieldsAside: Boolean,
+    maxWidth: Dp,
+    maxHeight: Dp,
+) {
+    val compact = maxHeight < CompactPanelHeight
+    // とても低い欄（分割画面など）では「次へ」を見出しの横に置き、色分けした読みに高さを回す
+    val nextInHeader = onNext.takeIf { maxHeight < TightPanelHeight && pendingSends == 0 }
+    val fontSize = if (compact) {
+        CompactFontSize
+    } else {
+        fittingVerseFontSize(
+            width = maxWidth - 32.dp,
+            height = maxHeight - ResultChromeHeight,
+            max = ResultFontMax,
+            min = ResultFontMin,
+        )
+    }
+    val verse = rememberVerse(result.poem)
+    val spanFor = { index: Int -> kanaTone(index, result.kimarijiLength, result.revealedAtTake).spanStyle() }
+    val message = splitResultMessage(result.message)
+    val scroll = rememberScrollState()
+    Column(Modifier.fillMaxSize()) {
+        if (nextInHeader != null) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 8.dp, top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CompactResultHeader(result, message, Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                PrimaryButton(text = "次へ", onClick = nextInHeader, minHeight = 44.dp)
+            }
+        }
+        Column(
+            Modifier
+                .weight(1f)
+                .fadingBottomEdge(scroll, WashiLight)
+                .verticalScroll(scroll)
+                .padding(horizontal = 16.dp, vertical = if (compact) 8.dp else 12.dp),
+        ) {
+            if (compact) {
+                if (nextInHeader == null) {
+                    CompactResultHeader(result, message)
+                    Spacer(Modifier.height(8.dp))
+                }
+                CompactVerseText(verse, verseTextStyle(fontSize), spanFor, Modifier.fillMaxWidth())
+            } else {
+                ResultHeader(result, reading?.takeIf { it.poem.no == result.poem.no })
+                Spacer(Modifier.height(8.dp))
+                ResultMessage(message)
+                Spacer(Modifier.height(14.dp))
+                VerseText(verse, verseTextStyle(fontSize), spanFor, Modifier.fillMaxWidth())
+            }
+            Spacer(Modifier.height(10.dp))
+            KimarijiLegend(result, Modifier.fillMaxWidth())
+            val notes = resultNotes(result, ruleMode)
+            if (notes.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                notes.forEach { NoteLine(it) }
+            }
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(color = Kincha.copy(alpha = 0.35f))
+            Spacer(Modifier.height(10.dp))
+            PoemInfo(result.poem)
+        }
+        ResultFooter(pendingSends, onNext.takeIf { nextInHeader == null }, compact, fieldsAside)
+    }
+}
+
+/**
+ * 横に広い欄の結果。上に印と説明と内訳（お手つき・送り札）、左に色分けした読み、
+ * 右に凡例と歌の表記、下に「次へ」（または送る札の案内）。[large] なら（タブレットなど）読みを大きくする。
+ */
+@Composable
+private fun WideResult(
+    result: ReadResult,
+    ruleMode: RuleMode,
+    pendingSends: Int,
+    onNext: (() -> Unit)?,
+    large: Boolean,
+) {
+    val verse = rememberVerse(result.poem)
+    val spanFor = { index: Int -> kanaTone(index, result.kimarijiLength, result.revealedAtTake).spanStyle() }
+    val message = splitResultMessage(result.message)
+    Column(Modifier.fillMaxSize()) {
+        // 何枚目の読みかは成績の帯に出ているので、見出しは印と説明だけにする
+        CompactResultHeader(
+            result,
+            message,
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp),
+        )
+        val notes = resultNotes(result, ruleMode)
+        if (notes.isNotEmpty()) {
+            FlowRow(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                notes.forEach { NoteLine(it) }
+            }
+        }
+        Row(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(start = 8.dp, end = 12.dp, top = 6.dp, bottom = 8.dp),
+        ) {
+            BoxWithConstraints(
+                Modifier
+                    .weight(1.3f)
+                    .fillMaxHeight(),
+                contentAlignment = Alignment.Center,
+            ) {
+                val fontSize = fittingVerseFontSize(
+                    width = maxWidth - 8.dp,
+                    height = maxHeight - 4.dp,
+                    max = if (large) LargeWideFontMax else WideFontMax,
+                    min = WideFontMin,
+                )
+                VerseText(verse, verseTextStyle(fontSize), spanFor)
+            }
+            Box(
+                Modifier
+                    .padding(horizontal = 8.dp)
+                    .fillMaxHeight()
+                    .width(1.dp)
+                    .background(Kincha.copy(alpha = 0.3f)),
+            )
+            val scroll = rememberScrollState()
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .fadingBottomEdge(scroll, WashiLight)
+                    .verticalScroll(scroll)
+                    .padding(vertical = 4.dp),
+            ) {
+                KimarijiLegend(result, Modifier.fillMaxWidth(), stacked = true)
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider(color = Kincha.copy(alpha = 0.35f))
+                Spacer(Modifier.height(8.dp))
+                PoemInfo(result.poem, compact = true)
+            }
+        }
+        ResultFooter(pendingSends, onNext, compact = true, fieldsAside = true)
     }
 }
 
@@ -153,13 +293,19 @@ private fun ResultHeader(result: ReadResult, reading: ReadingState?) {
     }
 }
 
-/** 低い欄の見出し。印と最初の文を1行に並べ、続く文は小さく添える。 */
+/**
+ * 低い欄の見出し。印と最初の文を1行に並べ、続く文は小さく添える。
+ * 狭くて並ばないときは、文を途中で折り返さずに印の下へ送る。
+ */
 @Composable
-private fun CompactResultHeader(result: ReadResult, message: ResultMessageParts) {
-    Column(Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+private fun CompactResultHeader(result: ReadResult, message: ResultMessageParts, modifier: Modifier = Modifier) {
+    Column(modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
+        ) {
             TakerBadge(result)
-            Spacer(Modifier.width(10.dp))
             Text(text = message.headline, style = MaterialTheme.typography.titleSmall, color = Sumi)
         }
         if (message.detail != null) {
@@ -211,32 +357,42 @@ internal fun splitResultMessage(message: String): ResultMessageParts {
     )
 }
 
-/** 凡例と、決まり字・取った位置のまとめ。 */
+/** 決まり字を超えて読まれた部分（赤）の凡例。 */
+internal const val OVER_READ_LABEL = "読み過ぎた部分"
+
+/**
+ * 凡例と、決まり字・取った位置のまとめ。
+ * [stacked] なら（狭い列）凡例を縦に並べて左にそろえる。
+ */
 @Composable
-private fun KimarijiLegend(result: ReadResult, modifier: Modifier = Modifier) {
+private fun KimarijiLegend(result: ReadResult, modifier: Modifier = Modifier, stacked: Boolean = false) {
     val taken = result.revealedAtTake
     val early = taken != null && taken < result.kimarijiLength
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            LegendItem(
-                color = KimarijiGreen,
-                text = "決まり字「${kimarijiOf(result.poem, result.kimarijiLength)}」",
-                underline = true,
-            )
-            if (taken != null && taken > result.kimarijiLength) {
-                LegendItem(color = OverReadRed, text = "決まり字を超えて読まれた部分")
-            }
+    val overRead = taken != null && taken > result.kimarijiLength
+    val items: @Composable () -> Unit = {
+        LegendItem(
+            color = KimarijiGreen,
+            text = "決まり字「${kimarijiOf(result.poem, result.kimarijiLength)}」",
+            underline = true,
+        )
+        if (overRead) LegendItem(color = OverReadRed, text = OVER_READ_LABEL)
+    }
+    Column(modifier, horizontalAlignment = if (stacked) Alignment.Start else Alignment.CenterHorizontally) {
+        if (stacked) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { items() }
+        } else {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) { items() }
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(if (stacked) 6.dp else 4.dp))
         Text(
             text = takeSummary(result),
             style = MaterialTheme.typography.bodySmall,
             fontWeight = if (early) FontWeight.Bold else null,
             color = if (early) Kon else UsuzumiText,
-            textAlign = TextAlign.Center,
+            textAlign = if (stacked) TextAlign.Start else TextAlign.Center,
         )
     }
 }
@@ -270,9 +426,9 @@ private fun LegendItem(color: Color, text: String, underline: Boolean = false) {
     }
 }
 
-/** 歌番号・作者・漢字表記の歌。 */
+/** 歌番号・作者・漢字表記の歌。[compact] なら下の句の字下げを浅くする（狭い欄）。 */
 @Composable
-private fun PoemInfo(poem: Poem) {
+private fun PoemInfo(poem: Poem, compact: Boolean = false) {
     Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -288,8 +444,9 @@ private fun PoemInfo(poem: Poem) {
             )
         }
         Spacer(Modifier.height(4.dp))
-        PhraseFlow(poem.kami, MaterialTheme.typography.bodyLarge)
-        PhraseFlow(poem.shimo, MaterialTheme.typography.bodyLarge, Modifier.padding(start = 28.dp))
+        val style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge
+        PhraseFlow(poem.kami, style)
+        PhraseFlow(poem.shimo, style, Modifier.padding(start = if (compact) 16.dp else 28.dp))
     }
 }
 
@@ -350,8 +507,31 @@ private fun NoteLine(note: ResultNote) {
     }
 }
 
+/** 送る札を選ぶときの見出し。枚数の部分は行をまたいで分けない。 */
+internal fun sendPrompt(pendingSends: Int): String = "送る札を選んでください" + noLineBreak("（あと $pendingSends 枚）")
+
+/** 送る札を選ぶときの、自陣の場所の案内。前に自陣の方を指す印（[GuideArrow]）を添える。 */
+internal fun sendGuide(fieldsAside: Boolean): String =
+    if (fieldsAside) "右下の自陣の札に触れると相手へ送ります" else "下の自陣の札に触れると相手へ送ります"
+
+/**
+ * 自陣の方を指す三角の印。縦長の画面では下、横に広い画面では右（右下の自陣）を指す。
+ * 明朝体に右向きの三角が無いので、下向きの三角を回して使う。飾りなので読み上げない。
+ */
 @Composable
-private fun ResultFooter(pendingSends: Int, onNext: (() -> Unit)?, compact: Boolean) {
+private fun GuideArrow(fieldsAside: Boolean) {
+    Text(
+        text = "▼",
+        modifier = Modifier
+            .rotate(if (fieldsAside) -90f else 0f)
+            .clearAndSetSemantics {},
+        style = MaterialTheme.typography.bodySmall,
+        color = Sumi,
+    )
+}
+
+@Composable
+private fun ResultFooter(pendingSends: Int, onNext: (() -> Unit)?, compact: Boolean, fieldsAside: Boolean) {
     val margin = if (compact) 8.dp else 12.dp
     when {
         pendingSends > 0 -> Surface(
@@ -368,17 +548,21 @@ private fun ResultFooter(pendingSends: Int, onNext: (() -> Unit)?, compact: Bool
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    text = "送る札を自陣から選んでください（あと $pendingSends 枚）",
+                    text = sendPrompt(pendingSends),
                     style = MaterialTheme.typography.titleSmall,
                     color = ShuDeep,
                     textAlign = TextAlign.Center,
                 )
-                Text(
-                    text = "▼ 下の自陣の札に触れると相手へ送ります",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Sumi,
-                    textAlign = TextAlign.Center,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    GuideArrow(fieldsAside)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = sendGuide(fieldsAside),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Sumi,
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
         }
         onNext != null -> PrimaryButton(

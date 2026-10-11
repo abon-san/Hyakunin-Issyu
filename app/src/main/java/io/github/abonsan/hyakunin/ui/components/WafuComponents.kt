@@ -18,14 +18,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -42,13 +45,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.isSpecified
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import io.github.abonsan.hyakunin.R
 import io.github.abonsan.hyakunin.ui.theme.Gofun
 import io.github.abonsan.hyakunin.ui.theme.Kincha
 import io.github.abonsan.hyakunin.ui.theme.Kon
@@ -81,27 +89,52 @@ fun PrimaryButton(
         ),
         contentPadding = PaddingValues(horizontal = 28.dp, vertical = if (minHeight < 52.dp) 8.dp else 12.dp),
     ) {
-        Text(text, style = MaterialTheme.typography.titleMedium, letterSpacing = 0.12.em)
+        ButtonLabel(text)
     }
 }
 
-/** 金茶の枠の控えめなボタン。 */
+/** 金茶の枠の控えめなボタン。[icon] を付けると文字の前に置く。 */
 @Composable
 fun SecondaryButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    @DrawableRes icon: Int? = null,
+    minHeight: Dp = 52.dp,
 ) {
     OutlinedButton(
         onClick = onClick,
-        modifier = modifier.heightIn(min = 52.dp),
+        modifier = modifier.heightIn(min = minHeight),
         shape = MaterialTheme.shapes.medium,
         colors = ButtonDefaults.outlinedButtonColors(contentColor = Sumi),
         border = BorderStroke(1.dp, Kincha),
-        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(
+            start = if (icon != null) 18.dp else 24.dp,
+            end = 24.dp,
+            top = if (minHeight < 52.dp) 8.dp else 12.dp,
+            bottom = if (minHeight < 52.dp) 8.dp else 12.dp,
+        ),
     ) {
-        Text(text, style = MaterialTheme.typography.titleMedium, letterSpacing = 0.12.em)
+        if (icon != null) {
+            Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(20.dp), tint = Sumi)
+            Spacer(Modifier.width(8.dp))
+        }
+        ButtonLabel(text)
     }
+}
+
+/** ボタンの文字。折り返さず、入り切らないときは少し小さくして1行に収める。 */
+@Composable
+private fun ButtonLabel(text: String) {
+    val style = MaterialTheme.typography.titleMedium
+    Text(
+        text = text,
+        style = style,
+        letterSpacing = 0.12.em,
+        softWrap = false,
+        maxLines = 1,
+        autoSize = TextAutoSize.StepBased(minFontSize = 12.sp, maxFontSize = style.fontSize, stepSize = 0.5.sp),
+    )
 }
 
 /** 朱の短い縦線を添えた見出し。[trailing] は右端に置く。 */
@@ -124,7 +157,12 @@ fun SectionLabel(
     }
 }
 
-/** 横に並べた選択肢から1つを選ぶ。選択中は紺地に胡粉の文字。 */
+/**
+ * 横に並べた選択肢から1つを選ぶ。選択中は紺地に胡粉の文字。
+ * 文字が欄に入り切らないときは、小さくして1行に収める。
+ *
+ * @param enabled false なら選べない（選んである項目は淡く示す）。
+ */
 @Composable
 fun <T> ChoiceRow(
     options: List<T>,
@@ -132,26 +170,37 @@ fun <T> ChoiceRow(
     label: (T) -> String,
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    height: Dp = 46.dp,
 ) {
     val shape = MaterialTheme.shapes.medium
+    val line = if (enabled) Kincha else Kincha.copy(alpha = 0.4f)
+    val textStyle = MaterialTheme.typography.bodyLarge
     Row(
         modifier
             .fillMaxWidth()
-            .height(46.dp)
+            .height(height)
             .clip(shape)
-            .border(1.dp, Kincha, shape)
+            .border(1.dp, line, shape)
             .selectableGroup(),
     ) {
         options.forEachIndexed { index, option ->
-            if (index > 0) VerticalDivider(color = Kincha.copy(alpha = 0.6f))
+            if (index > 0) VerticalDivider(color = line.copy(alpha = line.alpha * 0.6f))
             val isSelected = option == selected
             Box(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .background(if (isSelected) Kon else Color.Transparent)
+                    .background(
+                        when {
+                            !isSelected -> Color.Transparent
+                            enabled -> Kon
+                            else -> WashiDeep
+                        },
+                    )
                     .selectable(
                         selected = isSelected,
+                        enabled = enabled,
                         role = Role.RadioButton,
                         onClick = { onSelect(option) },
                     ),
@@ -159,9 +208,22 @@ fun <T> ChoiceRow(
             ) {
                 Text(
                     text = label(option),
-                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                    style = textStyle,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                    color = if (isSelected) Gofun else Sumi,
+                    color = when {
+                        isSelected && enabled -> Gofun
+                        enabled -> Sumi
+                        isSelected -> UsuzumiText
+                        else -> Usuzumi
+                    },
+                    softWrap = false,
+                    maxLines = 1,
+                    autoSize = TextAutoSize.StepBased(
+                        minFontSize = 11.sp,
+                        maxFontSize = textStyle.fontSize,
+                        stepSize = 0.5.sp,
+                    ),
                 )
             }
         }
@@ -195,7 +257,41 @@ fun RoundIconButton(
     }
 }
 
-/** 左右に金茶の飾り罫を付けた小見出し（例:「第 3 首 ／ 全 20 首」）。 */
+/**
+ * 戻るボタンと見出しの帯。上端はステータスバーの分だけ空ける。
+ * [caption] は見出しの上に小さく添える（例:「対戦設定」）。
+ */
+@Composable
+fun ScreenHeader(
+    title: String,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    caption: String? = null,
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(start = 4.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(painterResource(R.drawable.ic_back), contentDescription = "戻る", tint = Sumi)
+        }
+        Spacer(Modifier.width(4.dp))
+        Column(Modifier.semantics(mergeDescendants = true) { heading() }) {
+            if (caption != null) {
+                Text(caption, style = MaterialTheme.typography.labelMedium, color = UsuzumiText)
+            }
+            Text(title, style = MaterialTheme.typography.titleLarge, color = Sumi, letterSpacing = 0.06.em)
+        }
+    }
+}
+
+/**
+ * 左右に金茶の飾り罫を付けた小見出し（例:「第 3 首 ／ 全 20 首」）。
+ * 狭い欄では飾り罫から縮め、それでも入らなければ文字を小さくして1行に収める。
+ */
 @Composable
 fun OrnamentTitle(
     text: String,
@@ -210,6 +306,13 @@ fun OrnamentTitle(
             modifier = Modifier.padding(horizontal = 12.dp),
             style = style,
             color = color,
+            softWrap = false,
+            maxLines = 1,
+            autoSize = if (style.fontSize.isSpecified) {
+                TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = style.fontSize, stepSize = 0.5.sp)
+            } else {
+                null
+            },
         )
         OrnamentLine(Modifier.weight(1f), towardEnd = false)
     }
@@ -282,7 +385,7 @@ fun WafuDialog(
     ) {
         Surface(
             modifier = Modifier
-                .padding(horizontal = 28.dp)
+                .padding(horizontal = 28.dp, vertical = 16.dp)
                 .widthIn(max = 400.dp)
                 .fillMaxWidth(),
             shape = MaterialTheme.shapes.large,

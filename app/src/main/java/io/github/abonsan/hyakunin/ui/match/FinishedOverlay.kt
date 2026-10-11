@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -46,80 +48,127 @@ import io.github.abonsan.hyakunin.ui.theme.Sumi
 import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
 import io.github.abonsan.hyakunin.ui.theme.WashiLight
 
-/** 試合終了の表示。盤面の上に重ねる。[winner] が null なら引き分け。 */
+/** 試合終了の画面から対戦設定へ戻るボタンの文字。 */
+internal const val BACK_TO_SETUP_LABEL = "対戦設定へ"
+
+/**
+ * 試合終了の表示。盤面の上に重ねる。[winner] が null なら引き分け。
+ * [wide] なら（横に広い画面）、左に勝敗、右に成績とボタンを並べて高さを抑える。
+ * 縦に積む表示が入らない低い画面（分割画面など）では、横に並べられる幅があれば並べ、なければ詰めて積む。
+ */
 @Composable
 internal fun FinishedOverlay(
     state: MatchUiState,
     winner: Side?,
     onRestart: () -> Unit,
     onExit: () -> Unit,
+    wide: Boolean = false,
 ) {
-    Box(
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .background(Sumi.copy(alpha = 0.5f))
             .windowInsetsPadding(WindowInsets.safeDrawing),
         contentAlignment = Alignment.Center,
     ) {
+        val low = maxHeight < StackedFinishedHeight
+        val sideBySide = wide || (low && maxWidth >= SideBySideFinishedWidth)
+        val compact = low && !sideBySide
         Surface(
             modifier = Modifier
-                .padding(20.dp)
-                .widthIn(max = 420.dp),
+                .padding(if (sideBySide || compact) 16.dp else 20.dp)
+                .widthIn(max = if (sideBySide) 640.dp else 420.dp),
             shape = MaterialTheme.shapes.large,
             color = WashiLight,
             border = BorderStroke(1.dp, Kincha),
             shadowElevation = 12.dp,
         ) {
-            Column(
-                Modifier
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 24.dp, vertical = 22.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    text = "対戦終了",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = UsuzumiText,
-                    letterSpacing = 0.3.em,
-                )
-                Spacer(Modifier.height(14.dp))
-                OutcomeStamp(winner)
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    text = when (winner) {
-                        Side.PLAYER -> "あなたの勝ちです"
-                        Side.CPU -> "あなたの負けです"
-                        null -> "引き分けです"
-                    },
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Sumi,
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = finishReason(state, winner),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = UsuzumiText,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(18.dp))
-                StatsTable(state)
-                Spacer(Modifier.height(22.dp))
+            if (sideBySide) {
                 Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    Modifier
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 24.dp, vertical = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    SecondaryButton("ホームへ", onExit, Modifier.weight(1f))
-                    PrimaryButton("もう一度", onRestart, Modifier.weight(1f))
+                    Outcome(state, winner, Modifier.weight(0.9f))
+                    Spacer(Modifier.width(24.dp))
+                    Column(Modifier.weight(1.1f)) {
+                        StatsTable(state)
+                        Spacer(Modifier.height(16.dp))
+                        FinishedButtons(onRestart, onExit)
+                    }
+                }
+            } else {
+                Column(
+                    Modifier
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = if (compact) 20.dp else 24.dp, vertical = if (compact) 14.dp else 22.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Outcome(state, winner, compact = compact)
+                    Spacer(Modifier.height(if (compact) 10.dp else 18.dp))
+                    StatsTable(state, compact = compact)
+                    Spacer(Modifier.height(if (compact) 12.dp else 22.dp))
+                    FinishedButtons(onRestart, onExit)
                 }
             }
         }
     }
 }
 
+/** これより低い画面では、勝敗と成績を縦に積む表示が入り切らない。 */
+private val StackedFinishedHeight = 560.dp
+
+/** 勝敗と成績を横に並べられる幅。 */
+private val SideBySideFinishedWidth = 560.dp
+
+/** 「対戦終了」・勝敗の印・勝敗の文と理由。[compact] なら印を小さくし、間を詰める。 */
+@Composable
+private fun Outcome(state: MatchUiState, winner: Side?, modifier: Modifier = Modifier, compact: Boolean = false) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = "対戦終了",
+            style = MaterialTheme.typography.labelLarge,
+            color = UsuzumiText,
+            letterSpacing = 0.3.em,
+        )
+        Spacer(Modifier.height(if (compact) 8.dp else 14.dp))
+        OutcomeStamp(winner, compact)
+        Spacer(Modifier.height(if (compact) 10.dp else 16.dp))
+        Text(
+            text = when (winner) {
+                Side.PLAYER -> "あなたの勝ちです"
+                Side.CPU -> "あなたの負けです"
+                null -> "引き分けです"
+            },
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            style = MaterialTheme.typography.titleMedium,
+            color = Sumi,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = finishReason(state, winner),
+            style = MaterialTheme.typography.bodySmall,
+            color = UsuzumiText,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun FinishedButtons(onRestart: () -> Unit, onExit: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        SecondaryButton(BACK_TO_SETUP_LABEL, onExit, Modifier.weight(1f))
+        PrimaryButton("もう一度", onRestart, Modifier.weight(1f))
+    }
+}
+
 /** 朱肉の印のような勝敗の文字。 */
 @Composable
-private fun OutcomeStamp(winner: Side?) {
+private fun OutcomeStamp(winner: Side?, compact: Boolean) {
     val (label, color) = when (winner) {
         Side.PLAYER -> "勝ち" to Shu
         Side.CPU -> "負け" to Kon
@@ -131,11 +180,11 @@ private fun OutcomeStamp(winner: Side?) {
             .border(3.dp, color, MaterialTheme.shapes.medium)
             .padding(3.dp)
             .border(1.dp, color, MaterialTheme.shapes.small)
-            .padding(horizontal = 22.dp, vertical = 4.dp),
+            .padding(horizontal = if (compact) 18.dp else 22.dp, vertical = if (compact) 2.dp else 4.dp),
     ) {
         Text(
             text = label,
-            fontSize = 46.sp,
+            fontSize = if (compact) 36.sp else 46.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 0.12.em,
             color = color,
@@ -156,28 +205,28 @@ internal fun finishReason(state: MatchUiState, winner: Side?): String {
 }
 
 @Composable
-private fun StatsTable(state: MatchUiState) {
+private fun StatsTable(state: MatchUiState, compact: Boolean = false) {
     val competitive = state.config.ruleMode == RuleMode.COMPETITIVE
     Column(Modifier.fillMaxWidth()) {
-        StatsRow("", "あなた", "相手", header = true)
+        StatsRow("", "あなた", "相手", compact, header = true)
         HorizontalDivider(color = Kincha.copy(alpha = 0.5f))
-        StatsRow("取った札", "${state.playerTakenCount} 枚", "${state.cpuTakenCount} 枚")
+        StatsRow("取った札", "${state.playerTakenCount} 枚", "${state.cpuTakenCount} 枚", compact)
         HorizontalDivider(color = Kincha.copy(alpha = 0.25f))
-        StatsRow("お手つき", "${state.playerFaultCount} 回", "${state.cpuFaultCount} 回")
+        StatsRow("お手つき", "${state.playerFaultCount} 回", "${state.cpuFaultCount} 回", compact)
         if (competitive) {
             HorizontalDivider(color = Kincha.copy(alpha = 0.25f))
-            StatsRow("残りの札", "${state.playerCards.size} 枚", "${state.cpuCards.size} 枚")
+            StatsRow("残りの札", "${state.playerCards.size} 枚", "${state.cpuCards.size} 枚", compact)
         }
     }
 }
 
 @Composable
-private fun StatsRow(label: String, player: String, cpu: String, header: Boolean = false) {
+private fun StatsRow(label: String, player: String, cpu: String, compact: Boolean, header: Boolean = false) {
     val valueStyle = if (header) MaterialTheme.typography.labelLarge else MaterialTheme.typography.bodyLarge
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(vertical = 7.dp),
+            .padding(vertical = if (compact) 4.dp else 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
