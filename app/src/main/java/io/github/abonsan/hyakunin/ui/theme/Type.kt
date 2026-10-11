@@ -15,6 +15,9 @@ val ShipporiMincho = FontFamily(
     Font(R.font.shippori_mincho_bold, FontWeight.Bold),
 )
 
+/** 取り札の文字。しっぽり明朝 SemiBold の、仮名と記号（縦書き用の字形を含む）だけのサブセット。 */
+val TorifudaFont = FontFamily(Font(R.font.shippori_mincho_semibold, FontWeight.SemiBold))
+
 /** 文はすべて日本語。 */
 val JapaneseLocale = LocaleList("ja-JP")
 

@@ -19,8 +19,8 @@ val Gofun = Color(0xFFFFFBF2)
 /** 取り札の札面。 */
 val CardFace = Color(0xFFFCF8EE)
 
-/** 取り札の札面の下側（わずかに陰らせる）。 */
-val CardFaceShade = Color(0xFFF5EEDC)
+/** 取り札の文字。 */
+val CardInk = Color(0xFF000000)
 
 /** 墨。本文の文字。 */
 val Sumi = Color(0xFF2B2621)
@@ -77,7 +77,7 @@ val TatamiLine = Color(0xFFA99E62)
 val TatamiHeri = Color(0xFF233650)
 
 /** 取り札の縁（裏紙の緑）。 */
-val CardEdge = Color(0xFF35573F)
+val CardEdge = Color(0xFF295737)
 
 /** 決まり字の緑（生成りの上で約 5.3:1）。 */
 val KimarijiGreen = Color(0xFF2A6E2E)
