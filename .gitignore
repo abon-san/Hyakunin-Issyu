@@ -13,3 +13,5 @@
 *.keystore
 /tools/fonts-src/
 /.claude/worktrees/
+/tools/voice-src/
+__pycache__/
