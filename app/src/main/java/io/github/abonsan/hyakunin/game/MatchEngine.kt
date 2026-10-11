@@ -1,7 +1,11 @@
 package io.github.abonsan.hyakunin.game
 
+import io.github.abonsan.hyakunin.data.Joka
 import io.github.abonsan.hyakunin.data.Poem
 import io.github.abonsan.hyakunin.data.Poems
+import io.github.abonsan.hyakunin.game.voice.VoiceBank
+import io.github.abonsan.hyakunin.game.voice.VoiceClip
+import kotlin.math.roundToLong
 import kotlin.random.Random
 
 /** CPU の行動予定（読みの開始時に決める）。 */
@@ -15,6 +19,14 @@ internal sealed interface CpuPlan {
     /** 出札以外の札（友札）に誤って触れる。 */
     data class Fault(override val atMillis: Long, val poemNo: Int, val cardSide: Side) : CpuPlan
 }
+
+/** 鳴らす音声クリップ1つ。時刻はエンジンの経過時間（ms）。[cueId] は試合の中で重ならず、鳴る順に増える。 */
+internal class AudioItem(
+    val cueId: Long,
+    val asset: String,
+    val startMillis: Long,
+    val endMillis: Long,
+)
 
 /** 1回の読みの進行状態。時刻はすべてエンジンの経過時間（ms）。 */
 internal class ReadSession(
@@ -30,15 +42,23 @@ internal class ReadSession(
     val kanaAt: LongArray,
     /** 上の句の仮名の数。 */
     val kamiCount: Int,
+    /** 音声で読むときの、上の句・下の句のクリップ（鳴る順）。文字だけなら空。 */
+    val audio: List<AudioItem> = emptyList(),
 ) {
     val isEmpty: Boolean get() = fieldSide == null
     val totalCount: Int get() = kanaAt.size
 
-    /** 上の句を表示し終えた時刻。 */
+    /** 音声で読むか（この歌の音声があるか）。 */
+    val hasVoice: Boolean get() = audio.isNotEmpty()
+
+    /** 上の句を表示し終えた時刻。音声では、上の句の最後の仮名が鳴る時刻。 */
     val kamiEnd: Long get() = if (kamiCount > 0) kanaAt[kamiCount - 1] else startMillis
 
-    /** 下の句まで表示し終えた時刻。 */
+    /** 下の句まで表示し終えた時刻。音声では、下の句の最後の仮名が鳴る時刻（余韻の前）。 */
     val shimoEnd: Long get() = if (kanaAt.isNotEmpty()) kanaAt[kanaAt.size - 1] else startMillis
+
+    /** 音声の最後（下の句のクリップの終わり。余韻を含む）の時刻。文字だけなら [shimoEnd]。 */
+    val audioEnd: Long get() = audio.lastOrNull()?.endMillis ?: shimoEnd
 
     var cpuPlan: CpuPlan? = null
     var playerLocked = false
@@ -52,8 +72,8 @@ internal class ReadSession(
     /** 読みが終わった時点で表示済みだった仮名の数。読み上げ中は null。 */
     var frozenRevealed: Int? = null
 
-    /** 表示される仮名の数の上限。空札は上の句までで終わるので、下の句は表示しない。 */
-    val revealableCount: Int get() = if (isEmpty) kamiCount else kanaAt.size
+    /** 表示される仮名の数の上限。文字だけの空札は上の句までで終わるので、下の句は表示しない。音声の空札は下の句まで読む。 */
+    val revealableCount: Int get() = if (isEmpty && !hasVoice) kamiCount else kanaAt.size
 
     /** 時刻 [t] までに表示される仮名の数。 */
     fun revealedAt(t: Long): Int {
@@ -63,9 +83,63 @@ internal class ReadSession(
     }
 }
 
+/** 前置きの句1つ。時刻はエンジンの経過時間（ms）。 */
+private class LeadInSegment(
+    val kind: LeadInKind,
+    val poem: Poem,
+    val verse: LeadInVerse,
+    val pass: Int,
+    /** この句を読み始める時刻（音声ではクリップの先頭。文字だけでは最初の仮名の表示間隔の手前）。 */
+    val startMillis: Long,
+    /** 各仮名が表示される時刻。 */
+    val kanaAt: LongArray,
+)
+
+/** 前置きの全体。 */
+private class LeadInPlan(
+    val startMillis: Long,
+    val segments: List<LeadInSegment>,
+    /** 最後の句を読み終え、間合いに入る時刻。 */
+    val maStartMillis: Long,
+    /** 間合いが終わり、上の句が始まる時刻。 */
+    val endMillis: Long,
+    val audio: List<AudioItem>,
+)
+
+/** 1句の時刻表。 */
+private class VerseTimeline(
+    val kanaAt: LongArray,
+    /** 句を読み終える時刻（余韻を含む）。 */
+    val endMillis: Long,
+    /** 次の句を読み始める時刻（句の間を含む）。 */
+    val nextStartMillis: Long,
+    val audio: AudioItem?,
+)
+
+/** 1首の読みの時刻表。 */
+private class ReadTimeline(
+    val poemNo: Int,
+    val startMillis: Long,
+    val kanaAt: LongArray,
+    val kamiCount: Int,
+    val audio: List<AudioItem>,
+)
+
 /**
  * 対戦の進行（純粋な Kotlin）。時間は [advanceTo] / [advanceBy] で外から与える。
  * 乱数は [Random] を注入するので、シードを固定すれば決定的に動く。スレッド安全ではない。
+ *
+ * ### 読み上げ音声と前置き
+ * [ReadTiming.voice] があり [GameConfig.voiceEnabled] なら、各仮名の表示時刻（[ReadSession.kanaAt]）を音声の時刻表から作る。
+ * CPU の予定は [ReadSession.kanaAt] から作るので、表示も CPU も音声に合う。音声がない歌は文字だけの時刻表に戻る。
+ *
+ * [GameConfig.readingStyle] が [ReadingStyle.COMPETITIVE] なら、待ちの後・上の句の前に前置き（[LeadInState]）が入る。
+ * 前置きは新しい [MatchPhase] にはせず、Waiting の後半（内部では LEAD_IN）として扱う。札を取れない・CPU が動かない・
+ * 一時停止が効く、という点が Waiting と同じで、画面に出す内容だけが違う。こうすると [MatchPhase] を網羅して分岐する既存の UI
+ * と [MatchActions] はそのまま動き、前置きの表示は [MatchUiState.leadIn] を見て足せる。
+ *
+ * 音声は、前置き・上の句・下の句のクリップを鳴る順に並べて [snapshot] の `audio` に出す。札が取られて Result になっても、
+ * その歌の下の句（余韻まで）は鳴り続ける。[next] で Waiting に進む・新しいエンジンになるときは止まる。
  */
 internal class MatchEngine private constructor(
     val config: GameConfig,
@@ -78,9 +152,16 @@ internal class MatchEngine private constructor(
     /** 読む順の歌番号。場にない歌番号は空札になる。 */
     val readOrder: List<Int>,
 ) {
-    private enum class Phase { WAITING, READING, RESULT, FINISHED }
+    private enum class Phase { WAITING, LEAD_IN, READING, RESULT, FINISHED }
 
     private class Outcome(val winner: Side?)
+
+    /** 使う音声。[GameConfig.voiceEnabled] が false なら使わない。 */
+    private val voice: VoiceBank? = if (config.voiceEnabled) timing.voice else null
+
+    /** 競技かるた式の前置きを入れるか。音声があるとき、または [ReadTiming.textLeadIn] のとき。 */
+    private val leadInEnabled: Boolean =
+        config.readingStyle == ReadingStyle.COMPETITIVE && (voice != null || timing.textLeadIn)
 
     private val poemByNo: Map<Int, Poem> = poems.associateBy { it.no }
     private val normalizedKami: Map<Int, String> = poems.associate { it.no to normalizeYomi(it.kamiYomi) }
@@ -109,6 +190,19 @@ internal class MatchEngine private constructor(
     private var outcome: Outcome? = null
     private var autoAdvance = false
 
+    /** 前置きの最中（LEAD_IN）の計画。 */
+    private var leadIn: LeadInPlan? = null
+
+    /** 前置きの間に、次の読みの時刻表を先に作っておく（上の句の音声を前置きのうちに予告するため）。 */
+    private var pendingTimeline: ReadTimeline? = null
+
+    /** 今の音声の並び（前置き・上の句・下の句）。止めるときは空にする。 */
+    private var audioItems: List<AudioItem> = emptyList()
+    private var cueCounter = 0L
+
+    /** これまでに割り当てた [AudioCue.cueId] の数。エンジンを作り直しても cueId が増え続けるように ViewModel が使う。 */
+    val cueIdsIssued: Long get() = cueCounter
+
     private var playerTaken = 0
     private var cpuTaken = 0
     private var playerFaults = 0
@@ -134,6 +228,7 @@ internal class MatchEngine private constructor(
 
     private fun nextEventTime(): Long? = when (phase) {
         Phase.WAITING -> waitMillis()?.let { phaseStartedAt + it }
+        Phase.LEAD_IN -> leadIn!!.endMillis
         Phase.READING -> {
             val s = session!!
             listOfNotNull(s.cpuPlan?.atMillis, readEndTime(s)).minOrNull()
@@ -156,6 +251,8 @@ internal class MatchEngine private constructor(
 
     /** 誰も取らずに読みが終わる時刻。まだ決まっていなければ null。 */
     private fun readEndTime(s: ReadSession): Long? = when {
+        // 音声の空札は、下の句を余韻まで読み終えたら終わり
+        s.isEmpty && s.hasVoice -> s.audioEnd
         s.isEmpty -> s.kamiEnd + timing.emptyTailMillis
         s.playerLocked && s.cpuLocked -> maxOf(s.shimoEnd + timing.noTakerMillis, s.bothLockedAt)
         else -> null
@@ -163,13 +260,15 @@ internal class MatchEngine private constructor(
 
     private fun fireEvent() {
         when (phase) {
-            Phase.WAITING -> startRead()
+            Phase.WAITING -> beginAfterWait()
+            Phase.LEAD_IN -> startRead()
             Phase.READING -> fireReadingEvent()
             Phase.RESULT -> {
                 // 空札の結果表示が終わったので自動で次へ
                 phase = Phase.WAITING
                 phaseStartedAt = nowMillis
                 autoAdvance = false
+                audioItems = emptyList()
             }
             Phase.FINISHED -> Unit
         }
@@ -192,9 +291,158 @@ internal class MatchEngine private constructor(
 
     // ---- 読みの開始 ----
 
-    /** Waiting 中に、残りの待ちを飛ばして（または [ReadStartMode.TAP] で）直ちに次の札を読み始める。Waiting 以外では何もしない。 */
+    /**
+     * Waiting 中に、残りの待ちを飛ばして（または [ReadStartMode.TAP] で）直ちに次の札を読み始める。
+     * 前置きが入るときは前置きから始まる。Waiting 以外（前置きの最中を含む）では何もしない。
+     */
     fun startReading() {
-        if (phase == Phase.WAITING) startRead()
+        if (phase == Phase.WAITING) beginAfterWait()
+    }
+
+    /** 待ちが終わった。前置きを入れるならその開始、入れないなら上の句の開始。 */
+    private fun beginAfterWait() {
+        if (leadInEnabled && nextReadIndex < readOrder.size) startLeadIn() else startRead()
+    }
+
+    // ---- 前置き ----
+
+    private fun startLeadIn() {
+        val plan = buildLeadIn(nowMillis)
+        // 次の読みの時刻表も先に作る。上の句のクリップを前置きのうちに予告できる
+        val timeline = buildReadTimeline(poemByNo.getValue(readOrder[nextReadIndex]), plan.endMillis)
+        leadIn = plan
+        pendingTimeline = timeline
+        audioItems = plan.audio + timeline.audio
+        phase = Phase.LEAD_IN
+        phaseStartedAt = nowMillis
+    }
+
+    /**
+     * 前置きの時刻表。最初の読みは序歌（上の句→下の句→下の句）、2枚目以降は直前の歌の下の句。
+     * 最後に間合い（[ReadTiming.maMillis]）を置く。
+     */
+    private fun buildLeadIn(start: Long): LeadInPlan {
+        val segments = ArrayList<LeadInSegment>()
+        val audio = ArrayList<AudioItem>()
+
+        fun add(
+            kind: LeadInKind,
+            poem: Poem,
+            verse: LeadInVerse,
+            pass: Int,
+            at: Long,
+            clip: VoiceClip?,
+            gapAfter: Boolean,
+        ): VerseTimeline {
+            val yomi = if (verse == LeadInVerse.KAMI) poem.kamiYomi else poem.shimoYomi
+            // 上の句は余韻なし、下の句は余韻つき
+            val timeline = verseTimeline(yomi, at, clip, withYoin = verse == LeadInVerse.SHIMO, gapAfter = gapAfter)
+            segments += LeadInSegment(kind, poem, verse, pass, at, timeline.kanaAt)
+            timeline.audio?.let { audio += it }
+            return timeline
+        }
+
+        val end: Long
+        if (nextReadIndex == 0) {
+            val joka = Joka.poem
+            val kami = add(LeadInKind.JOKA, joka, LeadInVerse.KAMI, 1, start, voice?.jokaKami, gapAfter = true)
+            val first = add(LeadInKind.JOKA, joka, LeadInVerse.SHIMO, 1, kami.nextStartMillis, voice?.jokaShimo, gapAfter = false)
+            val second = add(LeadInKind.JOKA, joka, LeadInVerse.SHIMO, 2, first.endMillis, voice?.jokaShimo, gapAfter = false)
+            end = second.endMillis
+        } else {
+            val previous = checkNotNull(session).poem
+            val clip = voice?.poem(previous.no)?.takeIf { it.fits(previous) }?.shimo
+            end = add(LeadInKind.PREVIOUS_SHIMO, previous, LeadInVerse.SHIMO, 1, start, clip, gapAfter = false).endMillis
+        }
+        return LeadInPlan(
+            startMillis = start,
+            segments = segments,
+            maStartMillis = end,
+            endMillis = end + timing.maMillis,
+            audio = audio,
+        )
+    }
+
+    private fun leadInState(): LeadInState? {
+        if (phase != Phase.LEAD_IN) return null
+        val plan = leadIn ?: return null
+        // 句と句の間（間）は、前の句を表示し終えたままにする
+        val seg = plan.segments.lastOrNull { it.startMillis <= nowMillis } ?: plan.segments.first()
+        var revealed = 0
+        while (revealed < seg.kanaAt.size && seg.kanaAt[revealed] <= nowMillis) revealed++
+        return LeadInState(
+            kind = seg.kind,
+            poem = seg.poem,
+            verse = seg.verse,
+            pass = seg.pass,
+            revealedKana = revealed,
+            verseKanaCount = seg.kanaAt.size,
+            remainingMillis = (plan.endMillis - nowMillis).coerceAtLeast(0L),
+            totalMillis = plan.endMillis - plan.startMillis,
+            inMa = nowMillis >= plan.maStartMillis,
+        )
+    }
+
+    // ---- 時刻表 ----
+
+    /** クリップの時間（ms）を再生速度で割って、エンジンの時間にする。 */
+    private fun scaled(clipMillis: Long): Long = (clipMillis / timing.playbackSpeed.toDouble()).roundToLong()
+
+    private fun newAudioItem(asset: String, start: Long, end: Long): AudioItem = AudioItem(++cueCounter, asset, start, end)
+
+    /**
+     * 1句の時刻表。[clip] があって仮名の数が合えば音声の時刻表、なければ文字だけ（[ReadTiming.charMillis]）。
+     * [withYoin] は文字だけのとき、句を読み終える時刻に余韻（[ReadTiming.yoinMillis]）を足すか（音声ではクリップに含まれる）。
+     * [gapAfter] は上の句で、次の句（下の句）を読み始める時刻に句の間を足すか。
+     */
+    private fun verseTimeline(yomi: String, start: Long, clip: VoiceClip?, withYoin: Boolean, gapAfter: Boolean): VerseTimeline {
+        if (clip != null && clip.fits(yomi)) {
+            val end = start + scaled(clip.durationMs)
+            val kanaAt = LongArray(clip.kanaStartMs.size) { start + scaled(clip.kanaStartMs[it].toLong()) }
+            val next = if (gapAfter) start + scaled(clip.durationMs + timing.voiceKamiShimoGapMillis) else end
+            return VerseTimeline(kanaAt, end, next, newAudioItem(clip.asset, start, end))
+        }
+        val kanaAt = textKanaTimes(yomi, start)
+        val last = kanaAt.lastOrNull() ?: start
+        val end = if (withYoin) last + timing.yoinMillis else last
+        val next = if (gapAfter) end + timing.kamiShimoGapMillis else end
+        return VerseTimeline(kanaAt, end, next, null)
+    }
+
+    /** 1首の読みの時刻表。音声があればそれ、なければ文字だけ。 */
+    private fun buildReadTimeline(poem: Poem, start: Long): ReadTimeline {
+        val pv = voice?.poem(poem.no)?.takeIf { it.fits(poem) }
+        val kami = verseTimeline(poem.kamiYomi, start, pv?.kami, withYoin = false, gapAfter = true)
+        val shimo = verseTimeline(poem.shimoYomi, kami.nextStartMillis, pv?.shimo, withYoin = false, gapAfter = false)
+        return ReadTimeline(
+            poemNo = poem.no,
+            startMillis = start,
+            kanaAt = kami.kanaAt + shimo.kanaAt,
+            kamiCount = kami.kanaAt.size,
+            audio = listOfNotNull(kami.audio, shimo.audio),
+        )
+    }
+
+    /**
+     * 文字だけで読むときの、各仮名が表示される時刻。[start] から数え、句の区切り（空白）には間を足す。
+     * 最初の仮名は [start] の [ReadTiming.charMillis] 後。
+     */
+    private fun textKanaTimes(yomi: String, start: Long): LongArray {
+        val times = ArrayList<Long>()
+        var t = start
+        var gap = 0L
+        var started = false
+        for (c in yomi) {
+            if (isYomiSpace(c)) {
+                if (started) gap += timing.phraseGapMillis
+                continue
+            }
+            t += gap + timing.charMillis
+            gap = 0L
+            started = true
+            times += t
+        }
+        return times.toLongArray()
     }
 
     private fun startRead() {
@@ -219,48 +467,27 @@ internal class MatchEngine private constructor(
             for (i in cards.indices) if (cards[i].isNew) cards[i] = cards[i].copy(isNew = false)
         }
 
-        val (kanaAt, kamiCount) = buildKanaTimeline(poem, nowMillis)
+        // 前置きの間に作っておいた時刻表（音声の cueId を予告したもの）を使う。なければここで作る
+        val timeline = pendingTimeline?.takeIf { it.poemNo == no && it.startMillis == nowMillis }
+            ?: buildReadTimeline(poem, nowMillis)
+        pendingTimeline = null
+        leadIn = null
+        audioItems = timeline.audio
+
         val s = ReadSession(
             poem = poem,
             readNumber = nextReadIndex,
             fieldSide = sideOf(no),
             kimarijiLength = kimariji,
             startMillis = nowMillis,
-            kanaAt = kanaAt,
-            kamiCount = kamiCount,
+            kanaAt = timeline.kanaAt,
+            kamiCount = timeline.kamiCount,
+            audio = timeline.audio,
         )
         s.cpuPlan = planCpu(s)
         session = s
         phase = Phase.READING
         phaseStartedAt = nowMillis
-    }
-
-    /** 各仮名が表示される時刻を求める。句の区切りと上下の句の間には間を足す。 */
-    private fun buildKanaTimeline(poem: Poem, start: Long): Pair<LongArray, Int> {
-        val times = ArrayList<Long>()
-        var t = start
-        var gap = 0L
-        var kamiCount = 0
-        for ((part, yomi) in listOf(poem.kamiYomi, poem.shimoYomi).withIndex()) {
-            if (part == 1) {
-                kamiCount = times.size
-                gap = timing.kamiShimoGapMillis
-            } else {
-                gap = 0L
-            }
-            var started = false
-            for (c in yomi) {
-                if (isYomiSpace(c)) {
-                    if (started) gap += timing.phraseGapMillis
-                    continue
-                }
-                t += gap + timing.charMillis
-                gap = 0L
-                started = true
-                times += t
-            }
-        }
-        return times.toLongArray() to kamiCount
     }
 
     // ---- CPU ----
@@ -478,10 +705,19 @@ internal class MatchEngine private constructor(
         else -> null
     }
 
-    /** 結果表示から進む。送る札の選択が残っている間は何もしない。 */
+    /**
+     * 結果表示から進む。送る札の選択が残っている間は何もしない。
+     * 次の読みへ進む（Waiting になる）と、鳴っていた音声は途中でも止まる。試合が終わる（Finished になる）ときは、
+     * 最後の札の下の句を余韻まで読み切るので止めない。
+     */
     fun next() {
         if (phase != Phase.RESULT || pendingPlayerSends > 0) return
-        phase = if (outcome != null) Phase.FINISHED else Phase.WAITING
+        if (outcome != null) {
+            phase = Phase.FINISHED
+        } else {
+            phase = Phase.WAITING
+            audioItems = emptyList()
+        }
         phaseStartedAt = nowMillis
         autoAdvance = false
     }
@@ -493,7 +729,8 @@ internal class MatchEngine private constructor(
         return MatchUiState(
             config = config,
             phase = when (phase) {
-                Phase.WAITING -> MatchPhase.Waiting
+                // 前置きは Waiting の後半。leadIn で見分ける
+                Phase.WAITING, Phase.LEAD_IN -> MatchPhase.Waiting
                 Phase.READING -> MatchPhase.Reading
                 Phase.RESULT -> MatchPhase.Result
                 Phase.FINISHED -> MatchPhase.Finished(outcome?.winner)
@@ -523,7 +760,19 @@ internal class MatchEngine private constructor(
             isPaused = false,
             waitRemainingMillis = waitRemainingMillis(),
             isMemorizing = isFirstWait,
+            leadIn = leadInState(),
+            audio = currentCue(),
+            engineTimeMillis = nowMillis,
         )
+    }
+
+    /**
+     * 今鳴らすべき音声。並びのうち、まだ鳴り終えていない最初のクリップ（鳴っている最中か、次に鳴るもの）。
+     * 次に鳴るものは始まる時刻が先なので、再生側は始まるまで待てる。全部鳴り終えたら null。
+     */
+    private fun currentCue(): AudioCue? {
+        val item = audioItems.firstOrNull { it.endMillis > nowMillis } ?: return null
+        return AudioCue(item.asset, item.startMillis, timing.playbackSpeed, item.cueId)
     }
 
     /** AUTO の Waiting 中の残り時間（ms）。それ以外は null。 */

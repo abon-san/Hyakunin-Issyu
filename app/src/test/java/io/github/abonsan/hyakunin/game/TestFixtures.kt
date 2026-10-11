@@ -50,6 +50,7 @@ internal fun steadyCpu(reaction: Long) = CpuProfile(reaction, reaction, 0.0)
 /**
  * 配置と読み順を指定したエンジン。1文字の表示間隔は既定で 100ms。
  * 読み始めの待ちは、既定では短い選択肢（札を覚える時間 10秒、読みの間 2秒）にする。
+ * 既定のタイミング（[timing]）は音声なし・前置きなしなので、読み始めの待ちが終われば直ちに上の句が始まる。
  */
 internal fun layoutEngine(
     order: List<Int>,
@@ -63,6 +64,9 @@ internal fun layoutEngine(
     readStartMode: ReadStartMode = ReadStartMode.AUTO,
     memorizeTime: MemorizeTime = MemorizeTime.SEC_10,
     readInterval: ReadInterval = ReadInterval.SEC_2,
+    readingStyle: ReadingStyle = ReadingStyle.COMPETITIVE,
+    voiceEnabled: Boolean = true,
+    timing: ReadTiming = ReadTiming(charMillis),
 ): MatchEngine = MatchEngine.withLayout(
     config = GameConfig(
         ruleMode = mode,
@@ -70,13 +74,15 @@ internal fun layoutEngine(
         readStartMode = readStartMode,
         memorizeTime = memorizeTime,
         readInterval = readInterval,
+        readingStyle = readingStyle,
+        voiceEnabled = voiceEnabled,
     ),
     random = random,
     poems = poems,
     playerNos = player,
     cpuNos = cpu,
     readOrder = order,
-    timing = ReadTiming(charMillis),
+    timing = timing,
     profile = profile,
 )
 

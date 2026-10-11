@@ -15,7 +15,11 @@ import kotlin.random.Random
  * 対戦の進行役。生成と同時に試合を始める。
  *
  * [viewModelScope] で 1 本のループを回し、[tickMillis] ごとに [clock] で測った経過時間をエンジンへ渡す。
- * 一時停止中は経過時間を進めない。UI のスレッド（メイン）からだけ呼ぶこと。
+ * 一時停止中は経過時間を進めない（このとき [MatchUiState.engineTimeMillis] も止まる。音声は同じ cue のまま、
+ * [MatchUiState.isPaused] が true になる）。UI のスレッド（メイン）からだけ呼ぶこと。
+ *
+ * [MatchUiState.audio] の [AudioCue.cueId] は、やり直し（[onRestart]）をまたいでも増え続ける。
+ * [MatchUiState.engineTimeMillis] はやり直しで 0 に戻る。
  */
 class MatchViewModel internal constructor(
     private val engineFactory: () -> MatchEngine,
@@ -25,7 +29,8 @@ class MatchViewModel internal constructor(
 
     /**
      * @param poems 100首。決まり字の判定と配札に使う
-     * @param timing 読み上げと進行のタイミング。既定は [GameConfig.readingSpeed] に合わせる
+     * @param timing 読み上げと進行のタイミング。既定は [GameConfig.readingSpeed] に合わせる。
+     *   音声で読むときは [ReadTiming.voice] を持たせる（[ReadTiming.of] の `voice`）
      * @param clock 単調増加の時計（ms）。テストでは仮想時間を渡す
      */
     constructor(
@@ -44,6 +49,9 @@ class MatchViewModel internal constructor(
     private var engine: MatchEngine = engineFactory()
     private var paused = false
     private var lastClock = clock()
+
+    /** 作り直す前のエンジンが割り当てた cueId の数。やり直しても [AudioCue.cueId] が増え続けるように足す。 */
+    private var cueIdBase = 0L
 
     private val _uiState = MutableStateFlow(engine.snapshot())
     val uiState: StateFlow<MatchUiState> = _uiState.asStateFlow()
@@ -68,7 +76,11 @@ class MatchViewModel internal constructor(
     }
 
     private fun publish() {
-        _uiState.value = engine.snapshot().copy(isPaused = paused)
+        val snapshot = engine.snapshot()
+        _uiState.value = snapshot.copy(
+            isPaused = paused,
+            audio = snapshot.audio?.let { it.copy(cueId = it.cueId + cueIdBase) },
+        )
     }
 
     override fun onCardTap(side: Side, poemNo: Int) {
@@ -90,6 +102,8 @@ class MatchViewModel internal constructor(
     }
 
     override fun onRestart() {
+        // 音声は止まる（新しいエンジンの audio は null）
+        cueIdBase += engine.cueIdsIssued
         engine = engineFactory()
         lastClock = clock()
         publish()
