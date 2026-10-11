@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import io.github.abonsan.hyakunin.game.MatchUiState
 import io.github.abonsan.hyakunin.game.ReadStartMode
+import io.github.abonsan.hyakunin.ui.card.torifudaHeight
 import io.github.abonsan.hyakunin.ui.components.CenteredScrollColumn
 import io.github.abonsan.hyakunin.ui.components.OrnamentTitle
 import io.github.abonsan.hyakunin.ui.components.PrimaryButton
@@ -307,7 +308,7 @@ private fun CountdownLabel(text: String, digitSize: TextUnit) {
     )
 }
 
-/** 送り札で動いた札の案内。札の金の縁と同じ色の印を添える。 */
+/** 送り札で動いた札の案内。金の縁の小さな札を印として添える。 */
 @Composable
 private fun MovedCardsNote(text: String, modifier: Modifier = Modifier) {
     Row(
@@ -317,11 +318,12 @@ private fun MovedCardsNote(text: String, modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
+        // 取り札を縮めた印（同じ縦横比で直角）。縁は札と同じ比なら約 0.8dp なので 1dp にする
         Box(
             Modifier
-                .size(width = 12.dp, height = 16.dp)
-                .background(CardFace, MaterialTheme.shapes.extraSmall)
-                .border(2.dp, Kin, MaterialTheme.shapes.extraSmall),
+                .size(width = MovedCardMarkWidth, height = torifudaHeight(MovedCardMarkWidth))
+                .background(CardFace)
+                .border(1.dp, Kin),
         )
         Spacer(Modifier.width(8.dp))
         Text(
@@ -332,3 +334,6 @@ private fun MovedCardsNote(text: String, modifier: Modifier = Modifier) {
         )
     }
 }
+
+/** 送り札の案内に添える小さな札の幅。 */
+private val MovedCardMarkWidth = 12.dp

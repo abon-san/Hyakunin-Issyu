@@ -62,9 +62,34 @@ class TorifudaStateTest {
         assertCard(isNew, edge = Kin)
         // 送られてきた札でも、送る札として選べるときは朱にする
         assertCard(both, edge = Shu)
-        val (dimEdges, dimFace) = sample(capture(dimmed))
-        dimEdges.forEach { assertTrue("縁が暗くない", it.luminance() < CardEdge.luminance() * 0.8f) }
-        assertTrue("地が暗くない", dimFace.luminance() < CardFace.luminance() * 0.8f)
+        assertDimmed(dimmed)
+    }
+
+    @Test
+    fun redrawsWhenTheStateChanges() {
+        // 縁の色と暗さは描くときに読むので、同じ札の状態が変われば描き直す
+        val shimoKana = Fixtures.poem(1).shimoKana
+        var selectable by mutableStateOf(false)
+        var isNew by mutableStateOf(false)
+        var dimmed by mutableStateOf(false)
+        composeRule.setContent {
+            Torifuda(shimoKana, Modifier.width(CARD_WIDTH.dp), isNew = isNew, selectable = selectable, dimmed = dimmed)
+        }
+        assertCard(shimoKana, edge = CardEdge)
+        selectable = true
+        composeRule.waitForIdle()
+        assertCard(shimoKana, edge = Shu)
+        selectable = false
+        isNew = true
+        composeRule.waitForIdle()
+        assertCard(shimoKana, edge = Kin)
+        isNew = false
+        dimmed = true
+        composeRule.waitForIdle()
+        assertDimmed(shimoKana)
+        dimmed = false
+        composeRule.waitForIdle()
+        assertCard(shimoKana, edge = CardEdge)
     }
 
     @Test
@@ -118,6 +143,13 @@ class TorifudaStateTest {
         val (edges, face) = sample(capture(shimoKana))
         edges.forEach { assertColor("$shimoKana の縁", edge, it) }
         assertColor("$shimoKana の地", CardFace, face)
+    }
+
+    /** 通常の縁の札を暗くしたもの。縁も地も暗い。 */
+    private fun assertDimmed(shimoKana: String) {
+        val (edges, face) = sample(capture(shimoKana))
+        edges.forEach { assertTrue("$shimoKana の縁が暗くない", it.luminance() < CardEdge.luminance() * 0.8f) }
+        assertTrue("$shimoKana の地が暗くない", face.luminance() < CardFace.luminance() * 0.8f)
     }
 
     private fun assertColor(label: String, expected: Color, actual: Color) {

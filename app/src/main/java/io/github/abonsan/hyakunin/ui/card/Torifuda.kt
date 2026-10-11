@@ -100,6 +100,10 @@ fun Torifuda(
         else -> Color.Black
     }
     val elevation = if (selectable || isNew) 7.dp else 2.dp
+    // 縁の色・向き・暗さは描くときに読む（変わっても字の置き方は作り直さない）
+    val currentEdgeColor by rememberUpdatedState(edgeColor)
+    val currentUpsideDown by rememberUpdatedState(upsideDown)
+    val currentDimmed by rememberUpdatedState(dimmed)
 
     Box(
         modifier
@@ -138,20 +142,21 @@ fun Torifuda(
                 },
             )
             .drawWithCache {
+                // 字の置き方は字・書体・札の大きさだけで決まる
                 val face = layoutTorifuda(columns, size, typeface)
                 onDrawBehind {
-                    drawRect(edgeColor)
+                    drawRect(currentEdgeColor)
                     drawRect(
                         CardFace,
                         topLeft = Offset(face.edge, face.edge),
                         size = Size(size.width - face.edge * 2, size.height - face.edge * 2),
                     )
-                    if (upsideDown) {
+                    if (currentUpsideDown) {
                         rotate(180f) { drawGlyphs(face) }
                     } else {
                         drawGlyphs(face)
                     }
-                    if (dimmed) drawRect(DimColor)
+                    if (currentDimmed) drawRect(DimColor)
                 }
             },
     )
