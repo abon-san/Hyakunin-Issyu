@@ -366,6 +366,7 @@ class KarutaParams:
     shimo_target_s: float = 5.0      # 下の句の長さ（余韻を除く）
     ku_pause_s: float = 0.30         # 句の間（実時間）
     kami_end_hold_s: float = 0.40    # 上の句の最後のモーラを延ばす量（実時間・追加）
+    ku_end_hold_s: float = 0.0       # 句の最後のモーラを延ばす量（実時間・追加）。上の句末・下の句末以外の句に効く
     shimo_penult_stretch_s: float = 0.15  # 下の句「最後の二字の前」を延ばす量（実時間・追加）
     yoin_hold_s: float = 1.5         # 余韻: 最後の母音の保持時間
     yoin_total_s: float = 3.0        # 余韻: 最後の母音の開始から無音の終わりまで
@@ -378,6 +379,14 @@ class KarutaParams:
     volume_scale: float = 1.0
     speed_min: float = 0.3
     speed_max: float = 2.0
+
+
+# 速さの違う 2 つの読み方（既定 = A は変えない）
+#   A: 全体を均一にゆっくり（speed_scale は 0.35～0.6 程度になる）
+#   B: 自然な速さ（speed_scale >= 0.6）＋ 句末の延ばしで間をつくる
+PACE_A = KarutaParams()
+PACE_B = KarutaParams(kami_target_s=4.5, shimo_target_s=3.8, ku_pause_s=0.35,
+                      ku_end_hold_s=0.25, speed_min=0.6)
 
 
 @dataclass
@@ -420,6 +429,11 @@ def shape_verse(qr: QueryResult, kind: str, params: KarutaParams, speed: float) 
     for k, pi in enumerate(qr.ku_phrase_end):
         if k < len(qr.ku_phrase_end) - 1:  # 句の間（実時間 → 保存値は speed 倍）
             phrases[pi].pause_mora = _pause_mora(params.ku_pause_s * speed)
+    if params.ku_end_hold_s:  # 各句の最後のモーラを少し延ばす（最後の句は下で別扱い）
+        for pi in qr.ku_phrase_end[:-1]:
+            m = phrases[pi].moras[-1]
+            m.vowel = m.vowel.lower()
+            m.vowel_length += params.ku_end_hold_s * speed
     moras = _flat_moras(phrases)
     last = moras[-1]
     last.vowel = last.vowel.lower()  # 無声化していたら有声に戻して保持できるようにする
@@ -460,7 +474,7 @@ def fit_speed_candidates(qr: QueryResult, kind: str, params: KarutaParams) -> li
     s0 = (lo + hi) / 2
     cands = []
     for k in range(-40, 41):
-        s = round(s0 * (1 + k * 0.0005), 4)
+        s = max(params.speed_min, round(s0 * (1 + k * 0.0005), 4))
         err = abs(verse_duration(shape_verse(qr, kind, params, s), kind) - target)
         cands.append((round(err, 3), abs(k), s))
     return [s for _, _, s in sorted(set(cands))]
