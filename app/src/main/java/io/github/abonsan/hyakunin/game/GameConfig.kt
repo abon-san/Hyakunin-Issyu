@@ -27,11 +27,30 @@ enum class CpuLevel(val label: String) {
     MASTER("名人"),
 }
 
-/** 読み上げ（文字表示）の速度。[charMillis] は仮名1文字あたりの表示間隔。 */
-enum class ReadingSpeed(val label: String, val charMillis: Long) {
-    SLOW("ゆっくり", 320L),
-    NORMAL("ふつう", 230L),
-    FAST("はやい", 160L),
+/**
+ * 読み上げの速さ。
+ * 文字だけのときは [charMillis]（仮名1文字あたりの表示間隔）、音声があるときは [playbackSpeed]（再生速度の倍率）を使う。
+ */
+enum class ReadingSpeed(val label: String, val charMillis: Long, val playbackSpeed: Float) {
+    SLOW("ゆっくり", 320L, 0.85f),
+    NORMAL("ふつう", 230L, 1.0f),
+    FAST("はやい", 160L, 1.2f),
+}
+
+/**
+ * 読み始めの流儀。前置き（序歌・前の歌の下の句）の有無を決める。
+ * 札の取り方や勝敗は [RuleMode] で決まり、これは変えない。
+ * 前置きは音声があるとき（[ReadTiming.voice]）、または [ReadTiming.textLeadIn] が true のときだけ入る。
+ */
+enum class ReadingStyle(val label: String) {
+    /**
+     * 競技かるた式。最初の札の前に序歌（上の句→下の句→下の句）、2枚目以降の前に直前の歌の下の句を読み、
+     * 余韻と間合いを置いてから上の句を読む。前置きの間は札を取れない。
+     */
+    COMPETITIVE("競技かるた式"),
+
+    /** 簡易式。前置きなしで、待ちのあとすぐ上の句→下の句を読む。 */
+    SIMPLE("簡易式"),
 }
 
 /**
@@ -90,6 +109,10 @@ data class GameConfig(
     val readStartMode: ReadStartMode = ReadStartMode.AUTO,
     val memorizeTime: MemorizeTime = MemorizeTime.SEC_30,
     val readInterval: ReadInterval = ReadInterval.SEC_4,
+    /** 読み始めの流儀。既定は [ReadingStyle.COMPETITIVE]（UI が [ruleMode] に合わせて選ぶ）。 */
+    val readingStyle: ReadingStyle = ReadingStyle.COMPETITIVE,
+    /** 読み上げ音声を使うか。[ReadTiming.voice] が渡されているときだけ意味がある。false なら文字だけで進める。 */
+    val voiceEnabled: Boolean = true,
 ) {
     init {
         require(emptyCardCount in 0..MAX_EMPTY_CARDS) { "emptyCardCount=$emptyCardCount" }
