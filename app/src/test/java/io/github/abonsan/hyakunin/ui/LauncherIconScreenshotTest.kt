@@ -68,7 +68,7 @@ class LauncherIconScreenshotTest {
             contentAlignment = Alignment.Center,
         ) {
             Image(
-                painter = painterResource(if (monochrome) R.drawable.ic_launcher_monochrome else R.drawable.ic_launcher_foreground),
+                painter = painterResource(if (monochrome) R.mipmap.ic_launcher_monochrome else R.mipmap.ic_launcher_foreground),
                 contentDescription = null,
                 modifier = Modifier.requiredSize(108.dp),
                 colorFilter = if (monochrome) ColorFilter.tint(Kon) else null,
