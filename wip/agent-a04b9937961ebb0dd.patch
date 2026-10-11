@@ -1,0 +1,1366 @@
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/data/Joka.kt b/app/src/main/java/io/github/abonsan/hyakunin/data/Joka.kt
+new file mode 100644
+index 0000000..7599373
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/data/Joka.kt
+@@ -0,0 +1,40 @@
++package io.github.abonsan.hyakunin.data
++
++/**
++ * 序歌（難波津の歌）。競技かるたでは最初の札を読む前に、上の句→下の句→下の句（もう一度）の順に読む。
++ *
++ * 句の区切りは [Poem] と同じ全角スペース（U+3000）。[poem] は、前置きの表示で百首と同じ部品を使えるように
++ * 歌番号 0 の [Poem] にしたもの（取り札はない）。
++ */
++data object Joka {
++    /** 上の句の表記。 */
++    val kami: String = "難波津に　咲くやこの花　冬ごもり"
++
++    /** 下の句の表記。 */
++    val shimo: String = "今を春べと　咲くやこの花"
++
++    /** 上の句の読み（現代仮名遣い）。仮名は17。 */
++    val kamiYomi: String = "なにわずに　さくやこのはな　ふゆごもり"
++
++    /** 下の句の読み（現代仮名遣い）。仮名は14。 */
++    val shimoYomi: String = "いまをはるべと　さくやこのはな"
++
++    /** 上の句の歴史的仮名遣い。 */
++    val kamiKana: String = "なにはづに　さくやこのはな　ふゆごもり"
++
++    /** 下の句の歴史的仮名遣い。 */
++    val shimoKana: String = "いまをはるべと　さくやこのはな"
++
++    /** 前置きの表示用。歌番号は 0。 */
++    val poem: Poem = Poem(
++        no = 0,
++        kami = kami,
++        shimo = shimo,
++        kamiYomi = kamiYomi,
++        shimoYomi = shimoYomi,
++        kamiKana = kamiKana,
++        shimoKana = shimoKana,
++        author = "王仁",
++        authorYomi = "わに",
++    )
++}
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/game/GameConfig.kt b/app/src/main/java/io/github/abonsan/hyakunin/game/GameConfig.kt
+index 47d8dc6..8dbe3a9 100644
+--- a/app/src/main/java/io/github/abonsan/hyakunin/game/GameConfig.kt
++++ b/app/src/main/java/io/github/abonsan/hyakunin/game/GameConfig.kt
+@@ -27,11 +27,30 @@ enum class CpuLevel(val label: String) {
+     MASTER("名人"),
+ }
+ 
+-/** 読み上げ（文字表示）の速度。[charMillis] は仮名1文字あたりの表示間隔。 */
+-enum class ReadingSpeed(val label: String, val charMillis: Long) {
+-    SLOW("ゆっくり", 320L),
+-    NORMAL("ふつう", 230L),
+-    FAST("はやい", 160L),
++/**
++ * 読み上げの速さ。
++ * 文字だけのときは [charMillis]（仮名1文字あたりの表示間隔）、音声があるときは [playbackSpeed]（再生速度の倍率）を使う。
++ */
++enum class ReadingSpeed(val label: String, val charMillis: Long, val playbackSpeed: Float) {
++    SLOW("ゆっくり", 320L, 0.85f),
++    NORMAL("ふつう", 230L, 1.0f),
++    FAST("はやい", 160L, 1.2f),
++}
++
++/**
++ * 読み始めの流儀。前置き（序歌・前の歌の下の句）の有無を決める。
++ * 札の取り方や勝敗は [RuleMode] で決まり、これは変えない。
++ * 前置きは音声があるとき（[ReadTiming.voice]）、または [ReadTiming.textLeadIn] が true のときだけ入る。
++ */
++enum class ReadingStyle(val label: String) {
++    /**
++     * 競技かるた式。最初の札の前に序歌（上の句→下の句→下の句）、2枚目以降の前に直前の歌の下の句を読み、
++     * 余韻と間合いを置いてから上の句を読む。前置きの間は札を取れない。
++     */
++    COMPETITIVE("競技かるた式"),
++
++    /** 簡易式。前置きなしで、待ちのあとすぐ上の句→下の句を読む。 */
++    SIMPLE("簡易式"),
+ }
+ 
+ /**
+@@ -90,6 +109,10 @@ data class GameConfig(
+     val readStartMode: ReadStartMode = ReadStartMode.AUTO,
+     val memorizeTime: MemorizeTime = MemorizeTime.SEC_30,
+     val readInterval: ReadInterval = ReadInterval.SEC_4,
++    /** 読み始めの流儀。既定は [ReadingStyle.COMPETITIVE]（UI が [ruleMode] に合わせて選ぶ）。 */
++    val readingStyle: ReadingStyle = ReadingStyle.COMPETITIVE,
++    /** 読み上げ音声を使うか。[ReadTiming.voice] が渡されているときだけ意味がある。false なら文字だけで進める。 */
++    val voiceEnabled: Boolean = true,
+ ) {
+     init {
+         require(emptyCardCount in 0..MAX_EMPTY_CARDS) { "emptyCardCount=$emptyCardCount" }
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/game/MatchEngine.kt b/app/src/main/java/io/github/abonsan/hyakunin/game/MatchEngine.kt
+index 031dc72..a8ecb33 100644
+--- a/app/src/main/java/io/github/abonsan/hyakunin/game/MatchEngine.kt
++++ b/app/src/main/java/io/github/abonsan/hyakunin/game/MatchEngine.kt
+@@ -1,7 +1,11 @@
+ package io.github.abonsan.hyakunin.game
+ 
++import io.github.abonsan.hyakunin.data.Joka
+ import io.github.abonsan.hyakunin.data.Poem
+ import io.github.abonsan.hyakunin.data.Poems
++import io.github.abonsan.hyakunin.game.voice.VoiceBank
++import io.github.abonsan.hyakunin.game.voice.VoiceClip
++import kotlin.math.roundToLong
+ import kotlin.random.Random
+ 
+ /** CPU の行動予定（読みの開始時に決める）。 */
+@@ -16,6 +20,14 @@ internal sealed interface CpuPlan {
+     data class Fault(override val atMillis: Long, val poemNo: Int, val cardSide: Side) : CpuPlan
+ }
+ 
++/** 鳴らす音声クリップ1つ。時刻はエンジンの経過時間（ms）。[cueId] は試合の中で重ならず、鳴る順に増える。 */
++internal class AudioItem(
++    val cueId: Long,
++    val asset: String,
++    val startMillis: Long,
++    val endMillis: Long,
++)
++
+ /** 1回の読みの進行状態。時刻はすべてエンジンの経過時間（ms）。 */
+ internal class ReadSession(
+     val poem: Poem,
+@@ -30,16 +42,24 @@ internal class ReadSession(
+     val kanaAt: LongArray,
+     /** 上の句の仮名の数。 */
+     val kamiCount: Int,
++    /** 音声で読むときの、上の句・下の句のクリップ（鳴る順）。文字だけなら空。 */
++    val audio: List<AudioItem> = emptyList(),
+ ) {
+     val isEmpty: Boolean get() = fieldSide == null
+     val totalCount: Int get() = kanaAt.size
+ 
+-    /** 上の句を表示し終えた時刻。 */
++    /** 音声で読むか（この歌の音声があるか）。 */
++    val hasVoice: Boolean get() = audio.isNotEmpty()
++
++    /** 上の句を表示し終えた時刻。音声では、上の句の最後の仮名が鳴る時刻。 */
+     val kamiEnd: Long get() = if (kamiCount > 0) kanaAt[kamiCount - 1] else startMillis
+ 
+-    /** 下の句まで表示し終えた時刻。 */
++    /** 下の句まで表示し終えた時刻。音声では、下の句の最後の仮名が鳴る時刻（余韻の前）。 */
+     val shimoEnd: Long get() = if (kanaAt.isNotEmpty()) kanaAt[kanaAt.size - 1] else startMillis
+ 
++    /** 音声の最後（下の句のクリップの終わり。余韻を含む）の時刻。文字だけなら [shimoEnd]。 */
++    val audioEnd: Long get() = audio.lastOrNull()?.endMillis ?: shimoEnd
++
+     var cpuPlan: CpuPlan? = null
+     var playerLocked = false
+     var cpuLocked = false
+@@ -52,8 +72,8 @@ internal class ReadSession(
+     /** 読みが終わった時点で表示済みだった仮名の数。読み上げ中は null。 */
+     var frozenRevealed: Int? = null
+ 
+-    /** 表示される仮名の数の上限。空札は上の句までで終わるので、下の句は表示しない。 */
+-    val revealableCount: Int get() = if (isEmpty) kamiCount else kanaAt.size
++    /** 表示される仮名の数の上限。文字だけの空札は上の句までで終わるので、下の句は表示しない。音声の空札は下の句まで読む。 */
++    val revealableCount: Int get() = if (isEmpty && !hasVoice) kamiCount else kanaAt.size
+ 
+     /** 時刻 [t] までに表示される仮名の数。 */
+     fun revealedAt(t: Long): Int {
+@@ -63,9 +83,63 @@ internal class ReadSession(
+     }
+ }
+ 
++/** 前置きの句1つ。時刻はエンジンの経過時間（ms）。 */
++private class LeadInSegment(
++    val kind: LeadInKind,
++    val poem: Poem,
++    val verse: LeadInVerse,
++    val pass: Int,
++    /** この句を読み始める時刻（音声ではクリップの先頭。文字だけでは最初の仮名の表示間隔の手前）。 */
++    val startMillis: Long,
++    /** 各仮名が表示される時刻。 */
++    val kanaAt: LongArray,
++)
++
++/** 前置きの全体。 */
++private class LeadInPlan(
++    val startMillis: Long,
++    val segments: List<LeadInSegment>,
++    /** 最後の句を読み終え、間合いに入る時刻。 */
++    val maStartMillis: Long,
++    /** 間合いが終わり、上の句が始まる時刻。 */
++    val endMillis: Long,
++    val audio: List<AudioItem>,
++)
++
++/** 1句の時刻表。 */
++private class VerseTimeline(
++    val kanaAt: LongArray,
++    /** 句を読み終える時刻（余韻を含む）。 */
++    val endMillis: Long,
++    /** 次の句を読み始める時刻（句の間を含む）。 */
++    val nextStartMillis: Long,
++    val audio: AudioItem?,
++)
++
++/** 1首の読みの時刻表。 */
++private class ReadTimeline(
++    val poemNo: Int,
++    val startMillis: Long,
++    val kanaAt: LongArray,
++    val kamiCount: Int,
++    val audio: List<AudioItem>,
++)
++
+ /**
+  * 対戦の進行（純粋な Kotlin）。時間は [advanceTo] / [advanceBy] で外から与える。
+  * 乱数は [Random] を注入するので、シードを固定すれば決定的に動く。スレッド安全ではない。
++ *
++ * ### 読み上げ音声と前置き
++ * [ReadTiming.voice] があり [GameConfig.voiceEnabled] なら、各仮名の表示時刻（[ReadSession.kanaAt]）を音声の時刻表から作る。
++ * CPU の予定は [ReadSession.kanaAt] から作るので、表示も CPU も音声に合う。音声がない歌は文字だけの時刻表に戻る。
++ *
++ * [GameConfig.readingStyle] が [ReadingStyle.COMPETITIVE] なら、待ちの後・上の句の前に前置き（[LeadInState]）が入る。
++ * 前置きは新しい [MatchPhase] にはせず、Waiting の後半（内部では LEAD_IN）として扱う。札を取れない・CPU が動かない・
++ * 一時停止が効く、という点が Waiting と同じで、画面に出す内容だけが違う。こうすると [MatchPhase] を網羅して分岐する既存の UI
++ * と [MatchActions] はそのまま動き、前置きの表示は [MatchUiState.leadIn] を見て足せる。
++ *
++ * 音声は、前置き・上の句・下の句のクリップを鳴る順に並べて [snapshot] の `audio` に出す。札が取られて Result になっても、
++ * その歌の下の句（余韻まで）は鳴り続ける。[next] で Waiting に進む・新しいエンジンになるときは止まる。
+  */
+ internal class MatchEngine private constructor(
+     val config: GameConfig,
+@@ -78,10 +152,17 @@ internal class MatchEngine private constructor(
+     /** 読む順の歌番号。場にない歌番号は空札になる。 */
+     val readOrder: List<Int>,
+ ) {
+-    private enum class Phase { WAITING, READING, RESULT, FINISHED }
++    private enum class Phase { WAITING, LEAD_IN, READING, RESULT, FINISHED }
+ 
+     private class Outcome(val winner: Side?)
+ 
++    /** 使う音声。[GameConfig.voiceEnabled] が false なら使わない。 */
++    private val voice: VoiceBank? = if (config.voiceEnabled) timing.voice else null
++
++    /** 競技かるた式の前置きを入れるか。音声があるとき、または [ReadTiming.textLeadIn] のとき。 */
++    private val leadInEnabled: Boolean =
++        config.readingStyle == ReadingStyle.COMPETITIVE && (voice != null || timing.textLeadIn)
++
+     private val poemByNo: Map<Int, Poem> = poems.associateBy { it.no }
+     private val normalizedKami: Map<Int, String> = poems.associate { it.no to normalizeYomi(it.kamiYomi) }
+ 
+@@ -109,6 +190,19 @@ internal class MatchEngine private constructor(
+     private var outcome: Outcome? = null
+     private var autoAdvance = false
+ 
++    /** 前置きの最中（LEAD_IN）の計画。 */
++    private var leadIn: LeadInPlan? = null
++
++    /** 前置きの間に、次の読みの時刻表を先に作っておく（上の句の音声を前置きのうちに予告するため）。 */
++    private var pendingTimeline: ReadTimeline? = null
++
++    /** 今の音声の並び（前置き・上の句・下の句）。止めるときは空にする。 */
++    private var audioItems: List<AudioItem> = emptyList()
++    private var cueCounter = 0L
++
++    /** これまでに割り当てた [AudioCue.cueId] の数。エンジンを作り直しても cueId が増え続けるように ViewModel が使う。 */
++    val cueIdsIssued: Long get() = cueCounter
++
+     private var playerTaken = 0
+     private var cpuTaken = 0
+     private var playerFaults = 0
+@@ -134,6 +228,7 @@ internal class MatchEngine private constructor(
+ 
+     private fun nextEventTime(): Long? = when (phase) {
+         Phase.WAITING -> waitMillis()?.let { phaseStartedAt + it }
++        Phase.LEAD_IN -> leadIn!!.endMillis
+         Phase.READING -> {
+             val s = session!!
+             listOfNotNull(s.cpuPlan?.atMillis, readEndTime(s)).minOrNull()
+@@ -156,6 +251,8 @@ internal class MatchEngine private constructor(
+ 
+     /** 誰も取らずに読みが終わる時刻。まだ決まっていなければ null。 */
+     private fun readEndTime(s: ReadSession): Long? = when {
++        // 音声の空札は、下の句を余韻まで読み終えたら終わり
++        s.isEmpty && s.hasVoice -> s.audioEnd
+         s.isEmpty -> s.kamiEnd + timing.emptyTailMillis
+         s.playerLocked && s.cpuLocked -> maxOf(s.shimoEnd + timing.noTakerMillis, s.bothLockedAt)
+         else -> null
+@@ -163,13 +260,15 @@ internal class MatchEngine private constructor(
+ 
+     private fun fireEvent() {
+         when (phase) {
+-            Phase.WAITING -> startRead()
++            Phase.WAITING -> beginAfterWait()
++            Phase.LEAD_IN -> startRead()
+             Phase.READING -> fireReadingEvent()
+             Phase.RESULT -> {
+                 // 空札の結果表示が終わったので自動で次へ
+                 phase = Phase.WAITING
+                 phaseStartedAt = nowMillis
+                 autoAdvance = false
++                audioItems = emptyList()
+             }
+             Phase.FINISHED -> Unit
+         }
+@@ -192,9 +291,158 @@ internal class MatchEngine private constructor(
+ 
+     // ---- 読みの開始 ----
+ 
+-    /** Waiting 中に、残りの待ちを飛ばして（または [ReadStartMode.TAP] で）直ちに次の札を読み始める。Waiting 以外では何もしない。 */
++    /**
++     * Waiting 中に、残りの待ちを飛ばして（または [ReadStartMode.TAP] で）直ちに次の札を読み始める。
++     * 前置きが入るときは前置きから始まる。Waiting 以外（前置きの最中を含む）では何もしない。
++     */
+     fun startReading() {
+-        if (phase == Phase.WAITING) startRead()
++        if (phase == Phase.WAITING) beginAfterWait()
++    }
++
++    /** 待ちが終わった。前置きを入れるならその開始、入れないなら上の句の開始。 */
++    private fun beginAfterWait() {
++        if (leadInEnabled && nextReadIndex < readOrder.size) startLeadIn() else startRead()
++    }
++
++    // ---- 前置き ----
++
++    private fun startLeadIn() {
++        val plan = buildLeadIn(nowMillis)
++        // 次の読みの時刻表も先に作る。上の句のクリップを前置きのうちに予告できる
++        val timeline = buildReadTimeline(poemByNo.getValue(readOrder[nextReadIndex]), plan.endMillis)
++        leadIn = plan
++        pendingTimeline = timeline
++        audioItems = plan.audio + timeline.audio
++        phase = Phase.LEAD_IN
++        phaseStartedAt = nowMillis
++    }
++
++    /**
++     * 前置きの時刻表。最初の読みは序歌（上の句→下の句→下の句）、2枚目以降は直前の歌の下の句。
++     * 最後に間合い（[ReadTiming.maMillis]）を置く。
++     */
++    private fun buildLeadIn(start: Long): LeadInPlan {
++        val segments = ArrayList<LeadInSegment>()
++        val audio = ArrayList<AudioItem>()
++
++        fun add(
++            kind: LeadInKind,
++            poem: Poem,
++            verse: LeadInVerse,
++            pass: Int,
++            at: Long,
++            clip: VoiceClip?,
++            gapAfter: Boolean,
++        ): VerseTimeline {
++            val yomi = if (verse == LeadInVerse.KAMI) poem.kamiYomi else poem.shimoYomi
++            // 上の句は余韻なし、下の句は余韻つき
++            val timeline = verseTimeline(yomi, at, clip, withYoin = verse == LeadInVerse.SHIMO, gapAfter = gapAfter)
++            segments += LeadInSegment(kind, poem, verse, pass, at, timeline.kanaAt)
++            timeline.audio?.let { audio += it }
++            return timeline
++        }
++
++        val end: Long
++        if (nextReadIndex == 0) {
++            val joka = Joka.poem
++            val kami = add(LeadInKind.JOKA, joka, LeadInVerse.KAMI, 1, start, voice?.jokaKami, gapAfter = true)
++            val first = add(LeadInKind.JOKA, joka, LeadInVerse.SHIMO, 1, kami.nextStartMillis, voice?.jokaShimo, gapAfter = false)
++            val second = add(LeadInKind.JOKA, joka, LeadInVerse.SHIMO, 2, first.endMillis, voice?.jokaShimo, gapAfter = false)
++            end = second.endMillis
++        } else {
++            val previous = checkNotNull(session).poem
++            val clip = voice?.poem(previous.no)?.takeIf { it.fits(previous) }?.shimo
++            end = add(LeadInKind.PREVIOUS_SHIMO, previous, LeadInVerse.SHIMO, 1, start, clip, gapAfter = false).endMillis
++        }
++        return LeadInPlan(
++            startMillis = start,
++            segments = segments,
++            maStartMillis = end,
++            endMillis = end + timing.maMillis,
++            audio = audio,
++        )
++    }
++
++    private fun leadInState(): LeadInState? {
++        if (phase != Phase.LEAD_IN) return null
++        val plan = leadIn ?: return null
++        // 句と句の間（間）は、前の句を表示し終えたままにする
++        val seg = plan.segments.lastOrNull { it.startMillis <= nowMillis } ?: plan.segments.first()
++        var revealed = 0
++        while (revealed < seg.kanaAt.size && seg.kanaAt[revealed] <= nowMillis) revealed++
++        return LeadInState(
++            kind = seg.kind,
++            poem = seg.poem,
++            verse = seg.verse,
++            pass = seg.pass,
++            revealedKana = revealed,
++            verseKanaCount = seg.kanaAt.size,
++            remainingMillis = (plan.endMillis - nowMillis).coerceAtLeast(0L),
++            totalMillis = plan.endMillis - plan.startMillis,
++            inMa = nowMillis >= plan.maStartMillis,
++        )
++    }
++
++    // ---- 時刻表 ----
++
++    /** クリップの時間（ms）を再生速度で割って、エンジンの時間にする。 */
++    private fun scaled(clipMillis: Long): Long = (clipMillis / timing.playbackSpeed.toDouble()).roundToLong()
++
++    private fun newAudioItem(asset: String, start: Long, end: Long): AudioItem = AudioItem(++cueCounter, asset, start, end)
++
++    /**
++     * 1句の時刻表。[clip] があって仮名の数が合えば音声の時刻表、なければ文字だけ（[ReadTiming.charMillis]）。
++     * [withYoin] は文字だけのとき、句を読み終える時刻に余韻（[ReadTiming.yoinMillis]）を足すか（音声ではクリップに含まれる）。
++     * [gapAfter] は上の句で、次の句（下の句）を読み始める時刻に句の間を足すか。
++     */
++    private fun verseTimeline(yomi: String, start: Long, clip: VoiceClip?, withYoin: Boolean, gapAfter: Boolean): VerseTimeline {
++        if (clip != null && clip.fits(yomi)) {
++            val end = start + scaled(clip.durationMs)
++            val kanaAt = LongArray(clip.kanaStartMs.size) { start + scaled(clip.kanaStartMs[it].toLong()) }
++            val next = if (gapAfter) start + scaled(clip.durationMs + timing.voiceKamiShimoGapMillis) else end
++            return VerseTimeline(kanaAt, end, next, newAudioItem(clip.asset, start, end))
++        }
++        val kanaAt = textKanaTimes(yomi, start)
++        val last = kanaAt.lastOrNull() ?: start
++        val end = if (withYoin) last + timing.yoinMillis else last
++        val next = if (gapAfter) end + timing.kamiShimoGapMillis else end
++        return VerseTimeline(kanaAt, end, next, null)
++    }
++
++    /** 1首の読みの時刻表。音声があればそれ、なければ文字だけ。 */
++    private fun buildReadTimeline(poem: Poem, start: Long): ReadTimeline {
++        val pv = voice?.poem(poem.no)?.takeIf { it.fits(poem) }
++        val kami = verseTimeline(poem.kamiYomi, start, pv?.kami, withYoin = false, gapAfter = true)
++        val shimo = verseTimeline(poem.shimoYomi, kami.nextStartMillis, pv?.shimo, withYoin = false, gapAfter = false)
++        return ReadTimeline(
++            poemNo = poem.no,
++            startMillis = start,
++            kanaAt = kami.kanaAt + shimo.kanaAt,
++            kamiCount = kami.kanaAt.size,
++            audio = listOfNotNull(kami.audio, shimo.audio),
++        )
++    }
++
++    /**
++     * 文字だけで読むときの、各仮名が表示される時刻。[start] から数え、句の区切り（空白）には間を足す。
++     * 最初の仮名は [start] の [ReadTiming.charMillis] 後。
++     */
++    private fun textKanaTimes(yomi: String, start: Long): LongArray {
++        val times = ArrayList<Long>()
++        var t = start
++        var gap = 0L
++        var started = false
++        for (c in yomi) {
++            if (isYomiSpace(c)) {
++                if (started) gap += timing.phraseGapMillis
++                continue
++            }
++            t += gap + timing.charMillis
++            gap = 0L
++            started = true
++            times += t
++        }
++        return times.toLongArray()
+     }
+ 
+     private fun startRead() {
+@@ -219,15 +467,22 @@ internal class MatchEngine private constructor(
+             for (i in cards.indices) if (cards[i].isNew) cards[i] = cards[i].copy(isNew = false)
+         }
+ 
+-        val (kanaAt, kamiCount) = buildKanaTimeline(poem, nowMillis)
++        // 前置きの間に作っておいた時刻表（音声の cueId を予告したもの）を使う。なければここで作る
++        val timeline = pendingTimeline?.takeIf { it.poemNo == no && it.startMillis == nowMillis }
++            ?: buildReadTimeline(poem, nowMillis)
++        pendingTimeline = null
++        leadIn = null
++        audioItems = timeline.audio
++
+         val s = ReadSession(
+             poem = poem,
+             readNumber = nextReadIndex,
+             fieldSide = sideOf(no),
+             kimarijiLength = kimariji,
+             startMillis = nowMillis,
+-            kanaAt = kanaAt,
+-            kamiCount = kamiCount,
++            kanaAt = timeline.kanaAt,
++            kamiCount = timeline.kamiCount,
++            audio = timeline.audio,
+         )
+         s.cpuPlan = planCpu(s)
+         session = s
+@@ -235,34 +490,6 @@ internal class MatchEngine private constructor(
+         phaseStartedAt = nowMillis
+     }
+ 
+-    /** 各仮名が表示される時刻を求める。句の区切りと上下の句の間には間を足す。 */
+-    private fun buildKanaTimeline(poem: Poem, start: Long): Pair<LongArray, Int> {
+-        val times = ArrayList<Long>()
+-        var t = start
+-        var gap = 0L
+-        var kamiCount = 0
+-        for ((part, yomi) in listOf(poem.kamiYomi, poem.shimoYomi).withIndex()) {
+-            if (part == 1) {
+-                kamiCount = times.size
+-                gap = timing.kamiShimoGapMillis
+-            } else {
+-                gap = 0L
+-            }
+-            var started = false
+-            for (c in yomi) {
+-                if (isYomiSpace(c)) {
+-                    if (started) gap += timing.phraseGapMillis
+-                    continue
+-                }
+-                t += gap + timing.charMillis
+-                gap = 0L
+-                started = true
+-                times += t
+-            }
+-        }
+-        return times.toLongArray() to kamiCount
+-    }
+-
+     // ---- CPU ----
+ 
+     private fun planCpu(s: ReadSession): CpuPlan? {
+@@ -478,10 +705,19 @@ internal class MatchEngine private constructor(
+         else -> null
+     }
+ 
+-    /** 結果表示から進む。送る札の選択が残っている間は何もしない。 */
++    /**
++     * 結果表示から進む。送る札の選択が残っている間は何もしない。
++     * 次の読みへ進む（Waiting になる）と、鳴っていた音声は途中でも止まる。試合が終わる（Finished になる）ときは、
++     * 最後の札の下の句を余韻まで読み切るので止めない。
++     */
+     fun next() {
+         if (phase != Phase.RESULT || pendingPlayerSends > 0) return
+-        phase = if (outcome != null) Phase.FINISHED else Phase.WAITING
++        if (outcome != null) {
++            phase = Phase.FINISHED
++        } else {
++            phase = Phase.WAITING
++            audioItems = emptyList()
++        }
+         phaseStartedAt = nowMillis
+         autoAdvance = false
+     }
+@@ -493,7 +729,8 @@ internal class MatchEngine private constructor(
+         return MatchUiState(
+             config = config,
+             phase = when (phase) {
+-                Phase.WAITING -> MatchPhase.Waiting
++                // 前置きは Waiting の後半。leadIn で見分ける
++                Phase.WAITING, Phase.LEAD_IN -> MatchPhase.Waiting
+                 Phase.READING -> MatchPhase.Reading
+                 Phase.RESULT -> MatchPhase.Result
+                 Phase.FINISHED -> MatchPhase.Finished(outcome?.winner)
+@@ -523,9 +760,21 @@ internal class MatchEngine private constructor(
+             isPaused = false,
+             waitRemainingMillis = waitRemainingMillis(),
+             isMemorizing = isFirstWait,
++            leadIn = leadInState(),
++            audio = currentCue(),
++            engineTimeMillis = nowMillis,
+         )
+     }
+ 
++    /**
++     * 今鳴らすべき音声。並びのうち、まだ鳴り終えていない最初のクリップ（鳴っている最中か、次に鳴るもの）。
++     * 次に鳴るものは始まる時刻が先なので、再生側は始まるまで待てる。全部鳴り終えたら null。
++     */
++    private fun currentCue(): AudioCue? {
++        val item = audioItems.firstOrNull { it.endMillis > nowMillis } ?: return null
++        return AudioCue(item.asset, item.startMillis, timing.playbackSpeed, item.cueId)
++    }
++
+     /** AUTO の Waiting 中の残り時間（ms）。それ以外は null。 */
+     private fun waitRemainingMillis(): Long? {
+         if (phase != Phase.WAITING) return null
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/game/MatchUiState.kt b/app/src/main/java/io/github/abonsan/hyakunin/game/MatchUiState.kt
+index 2e24d4e..dfcc5d7 100644
+--- a/app/src/main/java/io/github/abonsan/hyakunin/game/MatchUiState.kt
++++ b/app/src/main/java/io/github/abonsan/hyakunin/game/MatchUiState.kt
+@@ -1,6 +1,7 @@
+ package io.github.abonsan.hyakunin.game
+ 
+ import io.github.abonsan.hyakunin.data.Poem
++import kotlin.math.roundToLong
+ 
+ // 対戦画面（UI）と対戦ロジック（MatchViewModel）の間の契約。
+ // 「仮名の数」は読み（kamiYomi + shimoYomi）を上の句→下の句の順に通して数えた値で、空白は数えない。
+@@ -61,8 +62,79 @@ data class ReadResult(
+     val message: String,
+ )
+ 
++/** 前置きで読んでいるもの。 */
++enum class LeadInKind {
++    /** 序歌（最初の札の前だけ）。 */
++    JOKA,
++
++    /** 直前に読んだ歌の下の句（2枚目以降の前）。 */
++    PREVIOUS_SHIMO,
++}
++
++/** 前置きで読んでいる句。 */
++enum class LeadInVerse { KAMI, SHIMO }
++
++/**
++ * 競技かるた式の前置き（[GameConfig.readingStyle] が [ReadingStyle.COMPETITIVE] のときだけ）。
++ * 待ち（自動のカウントダウン、またはタップの「読み始める」）が終わってから、札の上の句を読み始めるまでの間に入る。
++ *
++ * - 最初の読み: 序歌の上の句 → 間 → 序歌の下の句（余韻つき）→ 序歌の下の句をもう一度（余韻つき）→ 間合い
++ * - 2枚目以降: 直前に読んだ歌の下の句（余韻つき。空札でも、取られた札でも）→ 間合い
++ *
++ * 前置きの間は、[MatchPhase] は [MatchPhase.Waiting] のまま（[MatchUiState.leadIn] が null でない間）。
++ * 札を取る操作・お手つきは無視され、CPU も動かない。[MatchActions.onStartReading] も無視される。
++ * 一時停止は効く。[MatchUiState.waitRemainingMillis] は null、[MatchUiState.isMemorizing] は false。
++ */
++data class LeadInState(
++    val kind: LeadInKind,
++    /** 読んでいる歌。[LeadInKind.JOKA] では [io.github.abonsan.hyakunin.data.Joka.poem]（歌番号 0）。 */
++    val poem: Poem,
++    /** 今読んでいる句。[LeadInKind.PREVIOUS_SHIMO] では常に [LeadInVerse.SHIMO]。 */
++    val verse: LeadInVerse,
++    /** 同じ句を何回目に読んでいるか（1始まり）。序歌の下の句は 2 回読むので 1 → 2。それ以外は 1。 */
++    val pass: Int,
++    /** 今読んでいる句で表示済みの仮名の数（0..[verseKanaCount]）。句と句の間（間）は前の句が表示し終えたまま。 */
++    val revealedKana: Int,
++    /** 今読んでいる句の仮名の数。 */
++    val verseKanaCount: Int,
++    /** 前置きが終わり、札の上の句が始まるまでの残り時間（ms）。 */
++    val remainingMillis: Long,
++    /** 前置き全体の長さ（ms）。 */
++    val totalMillis: Long,
++    /** 最後の句を読み終え（余韻まで含めて）、間合いに入っているか。 */
++    val inMa: Boolean,
++)
++
++/**
++ * 今鳴らすべき音声。再生側は [MatchUiState.engineTimeMillis] に合わせて再生位置を追従させる。
++ *
++ * - [cueId] が前回と同じなら「同じクリップが鳴り続けている」、違えば「新しいクリップ」。
++ *   同じファイルを続けて読む（序歌の下の句の2回目など）ときも別の [cueId] になる。単調に増える
++ * - 再生位置は [positionAt]。[startedAtMillis] が [MatchUiState.engineTimeMillis] より先（正でない位置）のときは、
++ *   まだ始まっていない次のクリップの予告で、始まる時刻まで待つ（先に読み込んでおける）
++ * - 一時停止中は同じ cue のまま [MatchUiState.isPaused] が true になる。再生側が止める
++ */
++data class AudioCue(
++    /** [io.github.abonsan.hyakunin.game.voice.VoiceClip.asset]。 */
++    val asset: String,
++    /** このクリップの先頭が鳴る（鳴った）エンジンの時刻（ms）。 */
++    val startedAtMillis: Long,
++    /** 再生速度の倍率。エンジンの 1ms はクリップの [playbackSpeed] ms に当たる。 */
++    val playbackSpeed: Float,
++    val cueId: Long,
++) {
++    /** エンジンの時刻 [engineTimeMillis] に鳴っているべきクリップ内の位置（ms）。まだ始まっていなければ負。 */
++    fun positionAt(engineTimeMillis: Long): Long = ((engineTimeMillis - startedAtMillis) * playbackSpeed.toDouble()).roundToLong()
++
++    /** [engineTimeMillis] までにクリップの先頭が鳴っているべきか。 */
++    fun hasStartedAt(engineTimeMillis: Long): Boolean = engineTimeMillis >= startedAtMillis
++}
++
+ sealed interface MatchPhase {
+-    /** 次の札を読むまでの間。 */
++    /**
++     * 次の札を読むまでの間。自動のカウントダウン、タップの「読み始める」待ち、
++     * 競技かるた式の前置き（[MatchUiState.leadIn] が null でないとき）を含む。
++     */
+     data object Waiting : MatchPhase
+ 
+     /** 読み上げ中。札に触れられる。 */
+@@ -105,6 +177,18 @@ data class MatchUiState(
+     val waitRemainingMillis: Long? = null,
+     /** Waiting 中で、まだ1枚も読んでいない（札を覚える時間）なら true。 */
+     val isMemorizing: Boolean = false,
++    /** 競技かるた式の前置きの最中なら、その状態。それ以外は null。前置き中も [phase] は Waiting。 */
++    val leadIn: LeadInState? = null,
++    /**
++     * 今鳴らすべき音声。何も鳴らさないとき（Waiting のカウントダウン、音声の終わり、next() の後、文字だけのとき）は null。
++     * 札を取って Result / Finished になっても、その歌の下の句（余韻まで）は鳴り続ける。
++     */
++    val audio: AudioCue? = null,
++    /**
++     * エンジンの時計（ms）。試合の始まりを 0 とし、一時停止中は進まない。再生側が
++     * `audio.positionAt(engineTimeMillis)` で再生位置のずれを直す。
++     */
++    val engineTimeMillis: Long = 0L,
+ )
+ 
+ interface MatchActions {
+@@ -117,7 +201,10 @@ interface MatchActions {
+     /** 結果表示から次の読みへ進む。 */
+     fun onNext()
+ 
+-    /** Waiting 中に、待ち時間を飛ばして（または [ReadStartMode.TAP] で）次の札を読み始める。 */
++    /**
++     * Waiting 中に、待ち時間を飛ばして（または [ReadStartMode.TAP] で）次の札を読み始める。
++     * 競技かるた式の前置きが始まっているとき（[MatchUiState.leadIn] が null でないとき）は無視される。
++     */
+     fun onStartReading() = Unit
+ 
+     /** 同じ設定で最初からやり直す。 */
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/game/MatchViewModel.kt b/app/src/main/java/io/github/abonsan/hyakunin/game/MatchViewModel.kt
+index a487e1a..3f781f2 100644
+--- a/app/src/main/java/io/github/abonsan/hyakunin/game/MatchViewModel.kt
++++ b/app/src/main/java/io/github/abonsan/hyakunin/game/MatchViewModel.kt
+@@ -15,7 +15,11 @@ import kotlin.random.Random
+  * 対戦の進行役。生成と同時に試合を始める。
+  *
+  * [viewModelScope] で 1 本のループを回し、[tickMillis] ごとに [clock] で測った経過時間をエンジンへ渡す。
+- * 一時停止中は経過時間を進めない。UI のスレッド（メイン）からだけ呼ぶこと。
++ * 一時停止中は経過時間を進めない（このとき [MatchUiState.engineTimeMillis] も止まる。音声は同じ cue のまま、
++ * [MatchUiState.isPaused] が true になる）。UI のスレッド（メイン）からだけ呼ぶこと。
++ *
++ * [MatchUiState.audio] の [AudioCue.cueId] は、やり直し（[onRestart]）をまたいでも増え続ける。
++ * [MatchUiState.engineTimeMillis] はやり直しで 0 に戻る。
+  */
+ class MatchViewModel internal constructor(
+     private val engineFactory: () -> MatchEngine,
+@@ -25,7 +29,8 @@ class MatchViewModel internal constructor(
+ 
+     /**
+      * @param poems 100首。決まり字の判定と配札に使う
+-     * @param timing 読み上げと進行のタイミング。既定は [GameConfig.readingSpeed] に合わせる
++     * @param timing 読み上げと進行のタイミング。既定は [GameConfig.readingSpeed] に合わせる。
++     *   音声で読むときは [ReadTiming.voice] を持たせる（[ReadTiming.of] の `voice`）
+      * @param clock 単調増加の時計（ms）。テストでは仮想時間を渡す
+      */
+     constructor(
+@@ -45,6 +50,9 @@ class MatchViewModel internal constructor(
+     private var paused = false
+     private var lastClock = clock()
+ 
++    /** 作り直す前のエンジンが割り当てた cueId の数。やり直しても [AudioCue.cueId] が増え続けるように足す。 */
++    private var cueIdBase = 0L
++
+     private val _uiState = MutableStateFlow(engine.snapshot())
+     val uiState: StateFlow<MatchUiState> = _uiState.asStateFlow()
+ 
+@@ -68,7 +76,11 @@ class MatchViewModel internal constructor(
+     }
+ 
+     private fun publish() {
+-        _uiState.value = engine.snapshot().copy(isPaused = paused)
++        val snapshot = engine.snapshot()
++        _uiState.value = snapshot.copy(
++            isPaused = paused,
++            audio = snapshot.audio?.let { it.copy(cueId = it.cueId + cueIdBase) },
++        )
+     }
+ 
+     override fun onCardTap(side: Side, poemNo: Int) {
+@@ -90,6 +102,8 @@ class MatchViewModel internal constructor(
+     }
+ 
+     override fun onRestart() {
++        // 音声は止まる（新しいエンジンの audio は null）
++        cueIdBase += engine.cueIdsIssued
+         engine = engineFactory()
+         lastClock = clock()
+         publish()
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/game/ReadTiming.kt b/app/src/main/java/io/github/abonsan/hyakunin/game/ReadTiming.kt
+index 2c7302a..0568279 100644
+--- a/app/src/main/java/io/github/abonsan/hyakunin/game/ReadTiming.kt
++++ b/app/src/main/java/io/github/abonsan/hyakunin/game/ReadTiming.kt
+@@ -1,14 +1,27 @@
+ package io.github.abonsan.hyakunin.game
+ 
++import io.github.abonsan.hyakunin.game.voice.VoiceBank
++
+ /**
+  * 読み上げと進行のタイミング定数（ms）。
+  * 次の読みを始めるまでの待ち（Waiting）は [GameConfig.memorizeTime] / [GameConfig.readInterval] で決まる。
+  *
+- * @property charMillis 仮名1文字ごとの表示間隔
+- * @property emptyTailMillis 空札で、上の句を表示し終えてから読みを終えるまでの間
++ * 音声があるとき（[voice] が渡され、[GameConfig.voiceEnabled] が true）は、各仮名の表示時刻をクリップの時刻表から作る。
++ * クリップの時間（長さ・各仮名の開始・上の句と下の句の間）は [playbackSpeed] で割る。
++ * 音声がない歌・音声を使わないときは [charMillis] による文字だけの時刻表で、従来どおり進む。
++ *
++ * @property charMillis 仮名1文字ごとの表示間隔（文字だけのとき）
++ * @property emptyTailMillis 空札で、上の句を表示し終えてから読みを終えるまでの間（文字だけのとき）
+  * @property noTakerMillis 両者がロックアウトしたとき、下の句を表示し終えてから出札を取り除くまでの間
+  * @property resultAutoMillis 空札（お手つきなし）の Result を表示してから自動で進むまでの間
+  * @property cpuLateLimitMillis CPU が遅くとも下の句を表示し終えてから取るまでの間
++ * @property voice 読み上げ音声。null なら文字だけ
++ * @property playbackSpeed 音声の再生速度の倍率（0 より大きい）。[ReadingSpeed.playbackSpeed] を使う
++ * @property voiceKamiShimoGapMillis 音声で連続して読むときの、上の句のクリップの終わりから下の句の始まりまでの間（再生速度で割る）
++ * @property maMillis 競技かるた式の前置きの終わりの間合い（一定。再生速度では割らない）。この後に上の句が始まる
++ * @property yoinMillis 文字だけで前置きを出すときの、下の句の余韻の長さ（音声では下の句のクリップに含まれる）
++ * @property textLeadIn 音声がないときも、競技かるた式の前置きを文字だけで出すか。
++ *   false（既定）なら、音声を使わないときは [GameConfig.readingStyle] によらず前置きなしで、従来の進行と同じ
+  */
+ data class ReadTiming(
+     val charMillis: Long,
+@@ -16,14 +29,30 @@ data class ReadTiming(
+     val noTakerMillis: Long = 1500L,
+     val resultAutoMillis: Long = 1200L,
+     val cpuLateLimitMillis: Long = 500L,
++    val voice: VoiceBank? = null,
++    val playbackSpeed: Float = 1.0f,
++    val voiceKamiShimoGapMillis: Long = 500L,
++    val maMillis: Long = 1000L,
++    val yoinMillis: Long = 3000L,
++    val textLeadIn: Boolean = false,
+ ) {
+-    /** 句の区切り（空白）で追加する間。 */
++    init {
++        require(playbackSpeed > 0f) { "playbackSpeed=$playbackSpeed" }
++    }
++
++    /** 句の区切り（空白）で追加する間（文字だけのとき）。 */
+     val phraseGapMillis: Long get() = charMillis
+ 
+-    /** 上の句と下の句の間に追加する間。 */
++    /** 上の句と下の句の間に追加する間（文字だけのとき）。 */
+     val kamiShimoGapMillis: Long get() = charMillis * 3
+ 
+     companion object {
+-        fun of(speed: ReadingSpeed): ReadTiming = ReadTiming(speed.charMillis)
++        /** [speed] に合わせたタイミング。[voice] を渡すと音声で進める（[playbackSpeed] は [speed] から決まる）。 */
++        fun of(speed: ReadingSpeed, voice: VoiceBank? = null, textLeadIn: Boolean = false): ReadTiming = ReadTiming(
++            charMillis = speed.charMillis,
++            voice = voice,
++            playbackSpeed = speed.playbackSpeed,
++            textLeadIn = textLeadIn,
++        )
+     }
+ }
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/game/voice/VoiceBank.kt b/app/src/main/java/io/github/abonsan/hyakunin/game/voice/VoiceBank.kt
+new file mode 100644
+index 0000000..dce52c8
+--- /dev/null
++++ b/app/src/main/java/io/github/abonsan/hyakunin/game/voice/VoiceBank.kt
+@@ -0,0 +1,72 @@
++package io.github.abonsan.hyakunin.game.voice
++
++import io.github.abonsan.hyakunin.data.Poem
++import io.github.abonsan.hyakunin.game.kanaCount
++
++// 事前に作った読み上げ音声（VOICEVOX）の型。生成したデータの読み込みと再生（Media3）がこの型を使い、
++// 対戦のエンジンは時刻表（kanaStartMs）だけを見て、表示と CPU を音声に合わせる。
++
++/**
++ * 1つの句（上の句または下の句）を読み上げた音声クリップ。
++ *
++ * @property asset 音声ファイルの名前（アセット内のパス）。再生側が解決する
++ * @property durationMs クリップ全体の長さ（ms）。下の句のクリップは、最後の音を伸ばして消える余韻（約 3 秒）を含む
++ * @property kanaStartMs 読みの仮名（空白を除く。小書き仮名も1文字）ごとの発音開始時刻（ms、クリップの先頭から）。
++ *   大きさは句の仮名の数と同じで、小さい順に並ぶ
++ */
++data class VoiceClip(
++    val asset: String,
++    val durationMs: Long,
++    val kanaStartMs: IntArray,
++) {
++    init {
++        require(durationMs >= 0L) { "durationMs=$durationMs" }
++        for (i in kanaStartMs.indices) {
++            require(kanaStartMs[i] >= 0) { "kanaStartMs[$i]=${kanaStartMs[i]}" }
++            require(i == 0 || kanaStartMs[i - 1] <= kanaStartMs[i]) { "kanaStartMs is not ascending at $i" }
++        }
++        require(kanaStartMs.isEmpty() || kanaStartMs.last() <= durationMs) {
++            "kanaStartMs.last=${kanaStartMs.last()} > durationMs=$durationMs"
++        }
++    }
++
++    /** この句の読み [yomi] の仮名の数と、時刻表の大きさが合っているか。 */
++    fun fits(yomi: String): Boolean = kanaStartMs.size == kanaCount(yomi)
++
++    // IntArray を持つので、内容で比べる
++    override fun equals(other: Any?): Boolean =
++        this === other || (
++            other is VoiceClip &&
++                asset == other.asset &&
++                durationMs == other.durationMs &&
++                kanaStartMs.contentEquals(other.kanaStartMs)
++            )
++
++    override fun hashCode(): Int = (asset.hashCode() * 31 + durationMs.hashCode()) * 31 + kanaStartMs.contentHashCode()
++
++    override fun toString(): String = "VoiceClip($asset, ${durationMs}ms, ${kanaStartMs.size} kana)"
++}
++
++/** 1首ぶんの音声。上の句と下の句のクリップは別ファイルで、どちらも必要。 */
++data class PoemVoice(
++    val kami: VoiceClip,
++    val shimo: VoiceClip,
++) {
++    /** 両方のクリップの時刻表が、[poem] の読みの仮名の数と合っているか。合わなければエンジンは文字だけの時刻表に戻る。 */
++    fun fits(poem: Poem): Boolean = kami.fits(poem.kamiYomi) && shimo.fits(poem.shimoYomi)
++}
++
++/**
++ * 読み上げ音声の一覧。生成したデータから作り、[io.github.abonsan.hyakunin.game.ReadTiming.voice] に渡す。
++ * 音声がない歌・序歌は null（エンジンはその部分を文字だけの時刻表で進める）。
++ */
++interface VoiceBank {
++    /** 歌番号 [no]（1..100）の音声。ない場合は null。 */
++    fun poem(no: Int): PoemVoice?
++
++    /** 序歌の上の句。ない場合は null。 */
++    val jokaKami: VoiceClip?
++
++    /** 序歌の下の句（余韻を含む）。ない場合は null。 */
++    val jokaShimo: VoiceClip?
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/TestFixtures.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/TestFixtures.kt
+index 6c2f5a5..2b662b8 100644
+--- a/app/src/test/java/io/github/abonsan/hyakunin/game/TestFixtures.kt
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/TestFixtures.kt
+@@ -50,6 +50,7 @@ internal fun steadyCpu(reaction: Long) = CpuProfile(reaction, reaction, 0.0)
+ /**
+  * 配置と読み順を指定したエンジン。1文字の表示間隔は既定で 100ms。
+  * 読み始めの待ちは、既定では短い選択肢（札を覚える時間 10秒、読みの間 2秒）にする。
++ * 既定のタイミング（[timing]）は音声なし・前置きなしなので、読み始めの待ちが終われば直ちに上の句が始まる。
+  */
+ internal fun layoutEngine(
+     order: List<Int>,
+@@ -63,6 +64,9 @@ internal fun layoutEngine(
+     readStartMode: ReadStartMode = ReadStartMode.AUTO,
+     memorizeTime: MemorizeTime = MemorizeTime.SEC_10,
+     readInterval: ReadInterval = ReadInterval.SEC_2,
++    readingStyle: ReadingStyle = ReadingStyle.COMPETITIVE,
++    voiceEnabled: Boolean = true,
++    timing: ReadTiming = ReadTiming(charMillis),
+ ): MatchEngine = MatchEngine.withLayout(
+     config = GameConfig(
+         ruleMode = mode,
+@@ -70,13 +74,15 @@ internal fun layoutEngine(
+         readStartMode = readStartMode,
+         memorizeTime = memorizeTime,
+         readInterval = readInterval,
++        readingStyle = readingStyle,
++        voiceEnabled = voiceEnabled,
+     ),
+     random = random,
+     poems = poems,
+     playerNos = player,
+     cpuNos = cpu,
+     readOrder = order,
+-    timing = ReadTiming(charMillis),
++    timing = timing,
+     profile = profile,
+ )
+ 
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/VoiceFixtures.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/VoiceFixtures.kt
+new file mode 100644
+index 0000000..0fa3cba
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/VoiceFixtures.kt
+@@ -0,0 +1,39 @@
++package io.github.abonsan.hyakunin.game
++
++import io.github.abonsan.hyakunin.game.voice.VoiceBank
++import io.github.abonsan.hyakunin.game.voice.fakeVoiceBank
++
++// 音声（VoiceBank）で読むテストの共通部品。時刻の見積りは、fakeVoiceBank（合成の100首）の次の値による:
++//   上の句のクリップ: 仮名 16 個が 100 + 200 i ms、長さ 3500
++//   下の句のクリップ: 仮名 10 個が 100 + 300 j ms、長さ 5800（余韻 3000）
++//   序歌の上の句: 仮名 17 個が 100 + 100 i ms、長さ 1900 / 序歌の下の句: 仮名 14 個が 100 + 100 j ms、長さ 4400（余韻 3000）
++// 再生速度 1.0、上の句と下の句の間 500、間合い 1000 のとき、読み始めを R とすると
++//   上の句の仮名 = R + 100 + 200 i、下の句のクリップの先頭 = R + 4000、下の句の仮名 = R + 4100 + 300 j、
++//   下の句の最後の仮名 = R + 6800、下の句のクリップの終わり = R + 9800
++//   最初の前置き（序歌）は 12200ms: 上の句 [0,1900]、下の句 [2400,6800]、もう一度 [6800,11200]、間合い [11200,12200]
++//   2枚目以降の前置き（直前の歌の下の句）は 6800ms: 下の句 [0,5800]、間合い [5800,6800]
++
++/** 音声で読むタイミング。1文字の表示間隔（音声がないときのため）は 100ms。 */
++internal fun voiceTiming(
++    playbackSpeed: Float = 1.0f,
++    voice: VoiceBank? = fakeVoiceBank(),
++    textLeadIn: Boolean = false,
++    charMillis: Long = 100L,
++): ReadTiming = ReadTiming(charMillis, voice = voice, playbackSpeed = playbackSpeed, textLeadIn = textLeadIn)
++
++/** 前置きが入る（競技かるた式で音声あり）ときの、最初の前置きの長さ。 */
++internal const val FIRST_LEAD_IN_MILLIS = 12_200L
++
++/** 前置きが入るときの、2枚目以降の前置きの長さ。 */
++internal const val LATER_LEAD_IN_MILLIS = 6_800L
++
++/**
++ * Waiting の待ちを飛ばして読みを始める。前置きが入るときは、その最後まで進めてから上の句を始める。
++ * 戻り値は始まった読み。前置きを飛ばさずに調べたいテストは [MatchEngine.startReading] を直接呼ぶ。
++ */
++internal fun MatchEngine.beginReadThroughLeadIn(): ReadSession {
++    startReading()
++    state.leadIn?.let { advanceBy(it.remainingMillis) }
++    check(state.phase == MatchPhase.Reading) { "phase=${state.phase}" }
++    return session!!
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/VoiceTimelineTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/VoiceTimelineTest.kt
+new file mode 100644
+index 0000000..77fdef7
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/VoiceTimelineTest.kt
+@@ -0,0 +1,187 @@
++package io.github.abonsan.hyakunin.game
++
++import io.github.abonsan.hyakunin.game.voice.FakeVoiceBank
++import io.github.abonsan.hyakunin.game.voice.fakePoemVoice
++import io.github.abonsan.hyakunin.game.voice.fakeVoiceBank
++import io.github.abonsan.hyakunin.game.voice.PoemVoice
++import io.github.abonsan.hyakunin.game.voice.VoiceClip
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import kotlin.math.roundToLong
++
++/** 音声の時刻表から作る、仮名の表示時刻（kanaAt）と、音声がないときの文字だけへの戻り。 */
++class VoiceTimelineTest {
++    /** 前置きなしの簡易式で、音声で読むエンジン。読みはすぐ始まる。 */
++    private fun voiceEngine(
++        order: List<Int> = listOf(1, 2),
++        timing: ReadTiming = voiceTiming(),
++        profile: CpuProfile = SLOW_CPU,
++        voiceEnabled: Boolean = true,
++    ) = layoutEngine(
++        order = order,
++        timing = timing,
++        profile = profile,
++        readingStyle = ReadingStyle.SIMPLE,
++        voiceEnabled = voiceEnabled,
++    )
++
++    private fun ReadSession.offsets(): List<Long> = kanaAt.map { it - startMillis }
++
++    private val kamiOffsets = (0 until 16).map { 100L + 200 * it }
++    private val shimoOffsets = (0 until 10).map { 4100L + 300 * it }
++
++    @Test
++    fun kanaAreRevealedAtTheClipTimes() {
++        val e = voiceEngine()
++        val s = e.beginRead()
++        assertEquals(kamiOffsets + shimoOffsets, s.offsets())
++        assertEquals(16, s.kamiCount)
++        assertEquals(26, s.totalCount)
++        // 上の句の最後の仮名、下の句の最後の仮名（余韻の前）
++        assertEquals(3100L, s.kamiEnd - s.startMillis)
++        assertEquals(6800L, s.shimoEnd - s.startMillis)
++        // 下の句の余韻を含む、音声の終わり
++        assertEquals(9800L, s.audioEnd - s.startMillis)
++        assertEquals(10_000L, s.startMillis)
++    }
++
++    @Test
++    fun revealedCountFollowsTheClipTimes() {
++        val e = voiceEngine()
++        val s = e.beginRead()
++
++        fun revealedAt(offset: Long): Int {
++            e.advanceToOffset(s, offset)
++            return e.state.reading!!.revealedKana
++        }
++        assertEquals(0, revealedAt(99L))
++        assertEquals(1, revealedAt(100L))
++        assertEquals(1, revealedAt(299L))
++        assertEquals(2, revealedAt(300L))
++        assertEquals(16, revealedAt(3100L))
++        // 上の句のクリップの終わり（3500）と下の句の間（500）のあいだは増えない
++        assertEquals(16, revealedAt(4099L))
++        assertEquals(17, revealedAt(4100L))
++        assertEquals(25, revealedAt(6499L))
++        assertEquals(26, revealedAt(6800L))
++        assertEquals(16, e.state.reading!!.kamiKanaCount)
++        assertEquals(26, e.state.reading!!.totalKanaCount)
++    }
++
++    @Test
++    fun clipTimesAreDividedByThePlaybackSpeed() {
++        // 2倍速: 上の句・下の句の間・下の句の位置がすべて半分
++        val fast = voiceEngine(timing = voiceTiming(playbackSpeed = 2.0f)).beginRead()
++        assertEquals(kamiOffsets.map { it / 2 } + shimoOffsets.map { (it - 4000L) / 2 + 2000L }, fast.offsets())
++        assertEquals(1550L, fast.kamiEnd - fast.startMillis)
++        assertEquals(3400L, fast.shimoEnd - fast.startMillis)
++        assertEquals(4900L, fast.audioEnd - fast.startMillis)
++
++        // 0.5倍速: 2倍
++        val slow = voiceEngine(timing = voiceTiming(playbackSpeed = 0.5f)).beginRead()
++        assertEquals(kamiOffsets.map { it * 2 } + shimoOffsets.map { (it - 4000L) * 2 + 8000L }, slow.offsets())
++        assertEquals(19_600L, slow.audioEnd - slow.startMillis)
++    }
++
++    @Test
++    fun readingSpeedMapsToThePlaybackSpeedOfTheVoice() {
++        for (speed in ReadingSpeed.entries) {
++            val timing = ReadTiming.of(speed, fakeVoiceBank())
++            val s = layoutEngine(order = listOf(1), timing = timing, readingStyle = ReadingStyle.SIMPLE).beginRead()
++            val v = speed.playbackSpeed.toDouble()
++            fun scaled(ms: Long) = (ms / v).roundToLong()
++            // 上の句は 100 + 200 i、下の句はクリップの先頭が (3500 + 500) / 速度、そこから 100 + 300 j
++            assertEquals("$speed", scaled(100L), s.kanaAt[0] - s.startMillis)
++            assertEquals("$speed", scaled(100L + 200 * 15), s.kanaAt[15] - s.startMillis)
++            assertEquals("$speed", scaled(4000L) + scaled(100L), s.kanaAt[16] - s.startMillis)
++            assertEquals("$speed", scaled(4000L) + scaled(100L + 300 * 9), s.kanaAt[25] - s.startMillis)
++            assertEquals("$speed", scaled(4000L) + scaled(5800L), s.audioEnd - s.startMillis)
++            // 文字だけの速さ（charMillis）は音声には効かない
++            assertTrue("$speed", s.kanaAt[0] - s.startMillis != speed.charMillis)
++        }
++    }
++
++    @Test
++    fun theGapBetweenTheVersesIsConfigurable() {
++        val timing = voiceTiming().copy(voiceKamiShimoGapMillis = 1_000L)
++        val s = voiceEngine(timing = timing).beginRead()
++        assertEquals(shimoOffsets.map { it + 500L }, s.offsets().drop(16))
++        assertEquals(kamiOffsets, s.offsets().take(16))
++    }
++
++    @Test
++    fun aPoemWithoutVoiceFallsBackToTheTextTimeline() {
++        // 1 番だけ音声がある。2 番は文字だけ（従来の時刻表）
++        val bank = fakeVoiceBank(only = setOf(1))
++        val e = voiceEngine(order = listOf(1, 2), timing = voiceTiming(voice = bank))
++        e.beginRead()
++        e.tapCard(Side.PLAYER, 1)
++        e.next()
++        val second = e.beginRead()
++
++        val reference = layoutEngine(order = listOf(2), readingStyle = ReadingStyle.SIMPLE).beginRead()
++        assertEquals(reference.offsets(), second.offsets())
++        assertEquals(reference.kamiCount, second.kamiCount)
++        assertTrue(second.audio.isEmpty())
++        assertNull(e.state.audio)
++        // 文字だけの時刻表では上の句の最初の仮名は 100ms（charMillis）
++        assertEquals(100L, second.kanaAt[0] - second.startMillis)
++    }
++
++    @Test
++    fun aClipWhoseKanaCountDoesNotMatchTheReadingIsNotUsed() {
++        val poem = SYNTHETIC_POEMS[0]
++        val good = fakePoemVoice(poem)
++        // 上の句の時刻表が 1 つ足りない
++        val broken = PoemVoice(
++            kami = VoiceClip(good.kami.asset, good.kami.durationMs, good.kami.kanaStartMs.copyOf(15)),
++            shimo = good.shimo,
++        )
++        val bank = FakeVoiceBank(poems = mapOf(1 to broken))
++        val s = voiceEngine(order = listOf(1), timing = voiceTiming(voice = bank)).beginRead()
++
++        val reference = layoutEngine(order = listOf(1), readingStyle = ReadingStyle.SIMPLE).beginRead()
++        assertEquals(reference.offsets(), s.offsets())
++        assertTrue(s.audio.isEmpty())
++    }
++
++    @Test
++    fun disablingTheVoiceGivesTheTextTimelineBitForBit() {
++        val reference = layoutEngine(order = listOf(1), readingStyle = ReadingStyle.SIMPLE).beginRead()
++        val off = voiceEngine(order = listOf(1), voiceEnabled = false)
++        val s = off.beginRead()
++        assertEquals(reference.offsets(), s.offsets())
++        assertEquals(reference.kamiCount, s.kamiCount)
++        assertNull(off.state.audio)
++
++        // 音声を渡さない場合も同じ
++        val none = voiceEngine(order = listOf(1), timing = voiceTiming(voice = null)).beginRead()
++        assertEquals(reference.offsets(), none.offsets())
++    }
++
++    @Test
++    fun textOnlyKeepsTheClassicTimelineAndStartsAfterTheWait() {
++        // 音声なし・既定のタイミングでは、競技かるた式の設定でも前置きなしで、待ちが終われば読みが始まる
++        val e = layoutEngine(order = listOf(1))
++        e.advanceTo(9_999L)
++        assertEquals(MatchPhase.Waiting, e.state.phase)
++        assertNull(e.state.leadIn)
++        e.advanceTo(10_000L)
++        val st = e.state
++        assertEquals(MatchPhase.Reading, st.phase)
++        assertNull(st.leadIn)
++        assertNull(st.audio)
++        assertEquals(10_000L, st.engineTimeMillis)
++        val s = e.session!!
++        assertEquals(
++            listOf(
++                100L, 200L, 300L, 400L, 500L, 600L, 800L, 900L, 1000L, 1100L, 1200L, 1400L, 1500L, 1600L, 1700L, 1800L,
++                2200L, 2300L, 2400L, 2500L, 2600L, 2800L, 2900L, 3000L, 3100L, 3200L,
++            ),
++            s.offsets(),
++        )
++        assertEquals(3200L, s.audioEnd - s.startMillis)
++    }
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/voice/FakeVoiceBank.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/voice/FakeVoiceBank.kt
+new file mode 100644
+index 0000000..09f0c5c
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/voice/FakeVoiceBank.kt
+@@ -0,0 +1,53 @@
++package io.github.abonsan.hyakunin.game.voice
++
++import io.github.abonsan.hyakunin.data.Poem
++import io.github.abonsan.hyakunin.game.SYNTHETIC_POEMS
++import io.github.abonsan.hyakunin.game.kanaCount
++
++/** テスト用の [VoiceBank]。渡した歌・序歌のクリップだけを返す。 */
++internal class FakeVoiceBank(
++    private val poems: Map<Int, PoemVoice> = emptyMap(),
++    override val jokaKami: VoiceClip? = null,
++    override val jokaShimo: VoiceClip? = null,
++) : VoiceBank {
++    override fun poem(no: Int): PoemVoice? = poems[no]
++}
++
++/**
++ * 仮名 [count] 個を、[firstMs] から [stepMs] 間隔で読むクリップ。長さは最後の仮名の [tailMs] 後。
++ * [tailMs] が下の句の余韻（約 3 秒）に当たる。
++ */
++internal fun fakeClip(asset: String, count: Int, firstMs: Int, stepMs: Int, tailMs: Long): VoiceClip {
++    val starts = IntArray(count) { firstMs + stepMs * it }
++    val last = if (count > 0) starts.last().toLong() else 0L
++    return VoiceClip(asset, last + tailMs, starts)
++}
++
++/** 歌 [poem] のクリップ。上の句は 100ms から 200ms ごと（長さは最後の 400ms 後）、下の句は 100ms から 300ms ごと（余韻 3000ms）。 */
++internal fun fakePoemVoice(poem: Poem): PoemVoice {
++    val id = "p%03d".format(poem.no)
++    return PoemVoice(
++        kami = fakeClip("voice/${id}_kami.ogg", kanaCount(poem.kamiYomi), firstMs = 100, stepMs = 200, tailMs = 400L),
++        shimo = fakeClip("voice/${id}_shimo.ogg", kanaCount(poem.shimoYomi), firstMs = 100, stepMs = 300, tailMs = 3000L),
++    )
++}
++
++/** 序歌の上の句（仮名 17）。100ms から 100ms ごと、長さは最後の 200ms 後（1900ms）。 */
++internal val FAKE_JOKA_KAMI: VoiceClip = fakeClip("voice/joka_kami.ogg", 17, firstMs = 100, stepMs = 100, tailMs = 200L)
++
++/** 序歌の下の句（仮名 14）。100ms から 100ms ごと、余韻 3000ms（長さは 4400ms）。 */
++internal val FAKE_JOKA_SHIMO: VoiceClip = fakeClip("voice/joka_shimo.ogg", 14, firstMs = 100, stepMs = 100, tailMs = 3000L)
++
++/**
++ * [poems]（[only] があればその歌番号だけ）に [fakePoemVoice] を持つ [VoiceBank]。[joka] が true なら序歌のクリップも持つ。
++ * 合成の100首（上の句 16 仮名・下の句 10 仮名）では、上の句の長さが 3500ms、下の句の長さが 5800ms になる。
++ */
++internal fun fakeVoiceBank(
++    poems: List<Poem> = SYNTHETIC_POEMS,
++    only: Set<Int>? = null,
++    joka: Boolean = true,
++): FakeVoiceBank = FakeVoiceBank(
++    poems = poems.filter { only == null || it.no in only }.associate { it.no to fakePoemVoice(it) },
++    jokaKami = FAKE_JOKA_KAMI.takeIf { joka },
++    jokaShimo = FAKE_JOKA_SHIMO.takeIf { joka },
++)
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/game/voice/VoiceModelTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/game/voice/VoiceModelTest.kt
+new file mode 100644
+index 0000000..5fcad79
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/game/voice/VoiceModelTest.kt
+@@ -0,0 +1,116 @@
++package io.github.abonsan.hyakunin.game.voice
++
++import io.github.abonsan.hyakunin.data.Joka
++import io.github.abonsan.hyakunin.game.GameConfig
++import io.github.abonsan.hyakunin.game.ReadTiming
++import io.github.abonsan.hyakunin.game.ReadingSpeed
++import io.github.abonsan.hyakunin.game.ReadingStyle
++import io.github.abonsan.hyakunin.game.SYNTHETIC_POEMS
++import io.github.abonsan.hyakunin.game.kanaCount
++import io.github.abonsan.hyakunin.game.testPoem
++import io.github.abonsan.hyakunin.game.verseBoundaries
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertNotEquals
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertThrows
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++/** 音声のデータモデル、序歌、設定の既定値。 */
++class VoiceModelTest {
++    @Test
++    fun voiceClipRequiresAscendingNonNegativeStartsWithinTheDuration() {
++        VoiceClip("a.ogg", 1000L, intArrayOf(0, 100, 100, 900))
++        VoiceClip("empty.ogg", 0L, intArrayOf())
++        assertThrows(IllegalArgumentException::class.java) { VoiceClip("a.ogg", 1000L, intArrayOf(100, 50)) }
++        assertThrows(IllegalArgumentException::class.java) { VoiceClip("a.ogg", 1000L, intArrayOf(-1, 50)) }
++        assertThrows(IllegalArgumentException::class.java) { VoiceClip("a.ogg", 1000L, intArrayOf(100, 1001)) }
++        assertThrows(IllegalArgumentException::class.java) { VoiceClip("a.ogg", -1L, intArrayOf()) }
++    }
++
++    @Test
++    fun voiceClipsAreComparedByContent() {
++        val a = VoiceClip("a.ogg", 1000L, intArrayOf(0, 100))
++        assertEquals(a, VoiceClip("a.ogg", 1000L, intArrayOf(0, 100)))
++        assertEquals(a.hashCode(), VoiceClip("a.ogg", 1000L, intArrayOf(0, 100)).hashCode())
++        assertNotEquals(a, VoiceClip("a.ogg", 1000L, intArrayOf(0, 101)))
++        assertNotEquals(a, VoiceClip("b.ogg", 1000L, intArrayOf(0, 100)))
++    }
++
++    @Test
++    fun clipFitsWhenTheKanaCountMatches() {
++        // 空白は数えない
++        val clip = fakeClip("a.ogg", 5, firstMs = 0, stepMs = 100, tailMs = 100L)
++        assertTrue(clip.fits("あいう　えお"))
++        assertFalse(clip.fits("あいう　え"))
++
++        val poem = SYNTHETIC_POEMS.first()
++        assertTrue(fakePoemVoice(poem).fits(poem))
++        assertFalse(fakePoemVoice(poem).fits(testPoem(1, "あい", "うえ")))
++    }
++
++    @Test
++    fun fakeBankReturnsOnlyTheClipsItHolds() {
++        val bank = fakeVoiceBank(only = setOf(1, 2))
++        assertEquals(fakePoemVoice(SYNTHETIC_POEMS[0]), bank.poem(1))
++        assertNull(bank.poem(3))
++        assertEquals(17, bank.jokaKami!!.kanaStartMs.size)
++        assertEquals(14, bank.jokaShimo!!.kanaStartMs.size)
++        assertNull(fakeVoiceBank(joka = false).jokaKami)
++        assertNull(fakeVoiceBank(joka = false).jokaShimo)
++    }
++
++    @Test
++    fun jokaHoldsTheOpeningPoem() {
++        assertEquals("なにわずに　さくやこのはな　ふゆごもり", Joka.kamiYomi)
++        assertEquals("いまをはるべと　さくやこのはな", Joka.shimoYomi)
++        assertEquals("難波津に　咲くやこの花　冬ごもり", Joka.kami)
++        assertEquals("今を春べと　咲くやこの花", Joka.shimo)
++        assertEquals(17, kanaCount(Joka.kamiYomi))
++        assertEquals(14, kanaCount(Joka.shimoYomi))
++        assertEquals(0, Joka.poem.no)
++        assertEquals(Joka.kamiYomi, Joka.poem.kamiYomi)
++        assertEquals(Joka.shimoYomi, Joka.poem.shimoYomi)
++        // 歴史的仮名遣いの表示にも使える
++        assertEquals(17 + 14 + 1, verseBoundaries(Joka.poem).size)
++    }
++
++    @Test
++    fun playbackSpeedFollowsTheReadingSpeed() {
++        assertEquals(0.85f, ReadingSpeed.SLOW.playbackSpeed)
++        assertEquals(1.0f, ReadingSpeed.NORMAL.playbackSpeed)
++        assertEquals(1.2f, ReadingSpeed.FAST.playbackSpeed)
++        for (speed in ReadingSpeed.entries) {
++            val timing = ReadTiming.of(speed)
++            assertEquals(speed.playbackSpeed, timing.playbackSpeed)
++            assertEquals(speed.charMillis, timing.charMillis)
++        }
++        val bank = fakeVoiceBank()
++        assertEquals(bank, ReadTiming.of(ReadingSpeed.FAST, bank).voice)
++    }
++
++    @Test
++    fun readTimingVoiceDefaults() {
++        val t = ReadTiming(100L)
++        assertNull(t.voice)
++        assertEquals(1.0f, t.playbackSpeed)
++        assertEquals(500L, t.voiceKamiShimoGapMillis)
++        assertEquals(1000L, t.maMillis)
++        assertEquals(3000L, t.yoinMillis)
++        assertFalse(t.textLeadIn)
++        // 文字だけの間は従来のまま
++        assertEquals(300L, t.kamiShimoGapMillis)
++        assertEquals(100L, t.phraseGapMillis)
++        assertThrows(IllegalArgumentException::class.java) { ReadTiming(100L, playbackSpeed = 0f) }
++    }
++
++    @Test
++    fun gameConfigVoiceDefaults() {
++        val config = GameConfig()
++        assertEquals(ReadingStyle.COMPETITIVE, config.readingStyle)
++        assertTrue(config.voiceEnabled)
++        assertEquals("競技かるた式", ReadingStyle.COMPETITIVE.label)
++        assertEquals("簡易式", ReadingStyle.SIMPLE.label)
++    }
++}
