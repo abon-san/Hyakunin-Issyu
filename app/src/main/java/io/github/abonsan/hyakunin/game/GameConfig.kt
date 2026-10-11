@@ -34,6 +34,31 @@ enum class ReadingSpeed(val label: String, val charMillis: Long) {
     FAST("はやい", 160L),
 }
 
+/** 次の札を読み始めるきっかけ。 */
+enum class ReadStartMode(val label: String) {
+    /** 開始前は [GameConfig.memorizeTime]、以後は [GameConfig.readInterval] だけ待って自動で読み始める。 */
+    AUTO("自動"),
+
+    /** 毎回、プレイヤーが「読み始める」を押すまで待つ。 */
+    TAP("タップで読み始める"),
+}
+
+/** 最初の札を読むまでの、札を覚える時間（[ReadStartMode.AUTO] のとき）。 */
+enum class MemorizeTime(val label: String, val millis: Long) {
+    SEC_10("10秒", 10_000L),
+    SEC_30("30秒", 30_000L),
+    MIN_1("1分", 60_000L),
+    MIN_2("2分", 120_000L),
+}
+
+/** 2枚目以降の札を読むまでの間（[ReadStartMode.AUTO] のとき）。 */
+enum class ReadInterval(val label: String, val millis: Long) {
+    SEC_2("2秒", 2_000L),
+    SEC_4("4秒", 4_000L),
+    SEC_6("6秒", 6_000L),
+    SEC_10("10秒", 10_000L),
+}
+
 data class GameConfig(
     val ruleMode: RuleMode = RuleMode.COMPETITIVE,
     /** 空札（読まれるが場にない札）の枚数。0..[MAX_EMPTY_CARDS]。 */
@@ -42,6 +67,9 @@ data class GameConfig(
     val readingSpeed: ReadingSpeed = ReadingSpeed.NORMAL,
     /** 敵陣の札を相手向き（上下逆さ）に表示するか。 */
     val flipOpponentCards: Boolean = true,
+    val readStartMode: ReadStartMode = ReadStartMode.AUTO,
+    val memorizeTime: MemorizeTime = MemorizeTime.SEC_30,
+    val readInterval: ReadInterval = ReadInterval.SEC_4,
 ) {
     init {
         require(emptyCardCount in 0..MAX_EMPTY_CARDS) { "emptyCardCount=$emptyCardCount" }

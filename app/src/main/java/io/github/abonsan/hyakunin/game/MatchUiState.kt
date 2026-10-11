@@ -98,6 +98,13 @@ data class MatchUiState(
     val readsDone: Int,
     val totalReads: Int,
     val isPaused: Boolean,
+    /**
+     * Waiting 中、次の札を自動で読み始めるまでの残り時間（ms）。
+     * [ReadStartMode.TAP] で「読み始める」を待っているとき、および Waiting 以外では null。
+     */
+    val waitRemainingMillis: Long? = null,
+    /** Waiting 中で、まだ1枚も読んでいない（札を覚える時間）なら true。 */
+    val isMemorizing: Boolean = false,
 )
 
 interface MatchActions {
@@ -109,6 +116,9 @@ interface MatchActions {
 
     /** 結果表示から次の読みへ進む。 */
     fun onNext()
+
+    /** Waiting 中に、待ち時間を飛ばして（または [ReadStartMode.TAP] で）次の札を読み始める。 */
+    fun onStartReading() = Unit
 
     /** 同じ設定で最初からやり直す。 */
     fun onRestart()
