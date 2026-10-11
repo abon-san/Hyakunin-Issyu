@@ -1,0 +1,2167 @@
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/card/Torifuda.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/card/Torifuda.kt
+index 5212234..d15566e 100644
+--- a/app/src/main/java/io/github/abonsan/hyakunin/ui/card/Torifuda.kt
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/card/Torifuda.kt
+@@ -1,14 +1,15 @@
+ package io.github.abonsan.hyakunin.ui.card
+ 
++import android.graphics.Paint
++import android.graphics.Path
++import android.graphics.RectF
++import android.graphics.Typeface
+ import androidx.compose.animation.core.animateFloatAsState
+-import androidx.compose.foundation.background
+-import androidx.compose.foundation.border
+ import androidx.compose.foundation.gestures.awaitEachGesture
+ import androidx.compose.foundation.gestures.awaitFirstDown
+ import androidx.compose.foundation.gestures.waitForUpOrCancellation
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.aspectRatio
+-import androidx.compose.foundation.shape.RoundedCornerShape
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableStateOf
+@@ -16,35 +17,38 @@ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.rememberUpdatedState
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Modifier
+-import androidx.compose.ui.draw.CacheDrawScope
+ import androidx.compose.ui.draw.drawWithCache
+ import androidx.compose.ui.draw.shadow
+ import androidx.compose.ui.geometry.Offset
+-import androidx.compose.ui.graphics.Brush
++import androidx.compose.ui.geometry.Size
+ import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.RectangleShape
+ import androidx.compose.ui.graphics.drawscope.DrawScope
++import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+ import androidx.compose.ui.graphics.drawscope.rotate
+ import androidx.compose.ui.graphics.graphicsLayer
++import androidx.compose.ui.graphics.nativeCanvas
++import androidx.compose.ui.graphics.toArgb
+ import androidx.compose.ui.input.pointer.pointerInput
++import androidx.compose.ui.platform.LocalFontFamilyResolver
+ import androidx.compose.ui.semantics.Role
+ import androidx.compose.ui.semantics.contentDescription
+ import androidx.compose.ui.semantics.onClick
+ import androidx.compose.ui.semantics.role
+ import androidx.compose.ui.semantics.semantics
+-import androidx.compose.ui.text.TextLayoutResult
+-import androidx.compose.ui.text.TextMeasurer
+-import androidx.compose.ui.text.TextStyle
+-import androidx.compose.ui.text.drawText
+-import androidx.compose.ui.text.rememberTextMeasurer
++import androidx.compose.ui.text.font.FontSynthesis
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.text.font.resolveAsTypeface
+ import androidx.compose.ui.unit.Dp
+ import androidx.compose.ui.unit.dp
+ import io.github.abonsan.hyakunin.ui.theme.CardEdge
+ import io.github.abonsan.hyakunin.ui.theme.CardFace
+-import io.github.abonsan.hyakunin.ui.theme.CardFaceShade
++import io.github.abonsan.hyakunin.ui.theme.CardInk
+ import io.github.abonsan.hyakunin.ui.theme.Kin
+-import io.github.abonsan.hyakunin.ui.theme.ShipporiMincho
+ import io.github.abonsan.hyakunin.ui.theme.Shu
+ import io.github.abonsan.hyakunin.ui.theme.Sumi
++import io.github.abonsan.hyakunin.ui.theme.TorifudaFont
++import kotlin.math.roundToInt
+ 
+ /** 取り札の幅:高さ（52:73）。 */
+ const val TORIFUDA_ASPECT_RATIO = 52f / 73f
+@@ -55,10 +59,12 @@ fun torifudaHeight(width: Dp): Dp = width / TORIFUDA_ASPECT_RATIO
+ /**
+  * 取り札。下の句（[shimoKana]）を3列の縦書きで、右の列から書く。
+  * 大きさは [modifier] で与えた幅から決まり、高さは縦横比で決まる。
++ * 直角の札に内側へ向けて緑の縁を引き、文字はしっぽり明朝 SemiBold の黒で書く。
++ * 縁の太さ・字の大きさと位置はすべて札の大きさとの比で決める（端末の文字サイズの設定には左右されない）。
+  *
+  * @param upsideDown 札を180度回した向き（相手から見た向き）で書く。
+- * @param isNew 送り札で移ってきた札。金の縁で目立たせる。
+- * @param selectable 送る札として選べる。朱の縁で目立たせる。
++ * @param isNew 送り札で移ってきた札。縁を金にして目立たせる。
++ * @param selectable 送る札として選べる。縁を朱にして目立たせる。
+  * @param dimmed 取れない状態として少し暗くする。
+  * @param onTap 触れたときの処理。指が触れた瞬間に呼ぶ（離すのを待たない）。null なら触れられない。
+  */
+@@ -73,18 +79,21 @@ fun Torifuda(
+     onTap: (() -> Unit)? = null,
+ ) {
+     val columns = remember(shimoKana) { torifudaColumns(shimoKana) }
+-    val measurer = rememberTextMeasurer(cacheSize = 24)
++    val fontResolver = LocalFontFamilyResolver.current
++    val typeface by remember(fontResolver) {
++        fontResolver.resolveAsTypeface(TorifudaFont, FontWeight.SemiBold, fontSynthesis = FontSynthesis.None)
++    }
+     var pressed by remember { mutableStateOf(false) }
+     val scale by animateFloatAsState(if (pressed) 0.94f else 1f, label = "torifudaPress")
+     val currentOnTap by rememberUpdatedState(onTap)
+     val tappable = onTap != null
+ 
++    // 縁の色だけを替える（太さはどの札も同じ）
+     val edgeColor = when {
+         selectable -> Shu
+         isNew -> Kin
+         else -> CardEdge
+     }
+-    val edgeWidth = if (selectable || isNew) 2.5.dp else 1.dp
+     val glowColor = when {
+         selectable -> Shu
+         isNew -> Kin
+@@ -99,9 +108,7 @@ fun Torifuda(
+                 scaleX = scale
+                 scaleY = scale
+             }
+-            .shadow(elevation, CardShape, ambientColor = glowColor, spotColor = glowColor)
+-            .background(CardFaceBrush, CardShape)
+-            .border(edgeWidth, edgeColor, CardShape)
++            .shadow(elevation, RectangleShape, ambientColor = glowColor, spotColor = glowColor)
+             .semantics {
+                 contentDescription = shimoKana
+                 if (tappable) {
+@@ -131,13 +138,18 @@ fun Torifuda(
+                 },
+             )
+             .drawWithCache {
+-                val glyphs = placeGlyphs(columns, measurer)
+-                onDrawWithContent {
+-                    drawContent()
++                val face = layoutTorifuda(columns, size, typeface)
++                onDrawBehind {
++                    drawRect(edgeColor)
++                    drawRect(
++                        CardFace,
++                        topLeft = Offset(face.edge, face.edge),
++                        size = Size(size.width - face.edge * 2, size.height - face.edge * 2),
++                    )
+                     if (upsideDown) {
+-                        rotate(180f) { drawGlyphs(glyphs) }
++                        rotate(180f) { drawGlyphs(face) }
+                     } else {
+-                        drawGlyphs(glyphs)
++                        drawGlyphs(face)
+                     }
+                     if (dimmed) drawRect(DimColor)
+                 }
+@@ -152,46 +164,92 @@ internal fun torifudaColumns(shimoKana: String): List<String> {
+     return text.chunked((text.length + 2) / 3)
+ }
+ 
+-private val CardShape = RoundedCornerShape(3.dp)
+-private val CardFaceBrush = Brush.verticalGradient(listOf(CardFace, CardFaceShade))
++/** 取り札の文字に使う OpenType の機能。小書きの仮名や長音符を縦書き用の字形にする。 */
++internal const val TORIFUDA_FONT_FEATURES = "vert"
++
+ private val DimColor = Sumi.copy(alpha = 0.28f)
+ 
+-// しっぽり明朝の em ボックス（上 0.88em・下 0.12em）の中心は、ベースラインの 0.38em 上にある
+-private const val EM_CENTER_ABOVE_BASELINE = 0.38f
+-
+-private class PlacedGlyph(val layout: TextLayoutResult, val topLeft: Offset)
+-
+-private fun CacheDrawScope.placeGlyphs(columns: List<String>, measurer: TextMeasurer): List<PlacedGlyph> {
+-    if (columns.isEmpty()) return emptyList()
+-    val rows = columns.maxOf { it.length }
+-    val padX = size.width * 0.12f
+-    val padY = size.height * 0.08f
+-    val columnWidth = (size.width - padX * 2) / 3
+-    val cellHeight = (size.height - padY * 2) / rows
+-    val fontPx = minOf(columnWidth * 0.88f, cellHeight * 0.98f)
+-    val style = TextStyle(
+-        color = Sumi,
+-        fontFamily = ShipporiMincho,
+-        fontSize = fontPx.toSp(),
+-        // 小書きの仮名や長音符を縦書き用の字形にする
+-        fontFeatureSettings = "vert",
+-    )
+-    return columns.flatMapIndexed { column, text ->
+-        val centerX = size.width - padX - columnWidth * (column + 0.5f)
++// デザイン（幅 619.7・高さ 870 の札）での寸法。札の幅・高さとの比にして使う
++private const val DESIGN_WIDTH = 619.7f
++private const val DESIGN_HEIGHT = 870f
++
++/** 縁の太さ（四辺とも同じ）。 */
++private const val EDGE_WIDTH = 40f / DESIGN_WIDTH
++
++/** 字の大きさ（em）。 */
++private const val FONT_SIZE = 109.8f / DESIGN_WIDTH
++
++/** 隣り合う列の中心の間隔。中央の列の中心は札の中心。 */
++private const val COLUMN_STEP = 158.9f / DESIGN_WIDTH
++
++/** 1行目の字のインクの上端。 */
++private const val FIRST_INK_TOP = 122.0f / DESIGN_HEIGHT
++
++/** 行の間隔（インクの上端どうし）。 */
++private const val ROW_PITCH = 134.6f / DESIGN_HEIGHT
++
++/** デザインの行数。これより行の多い札は、字の大きさと行の間隔を縮めて同じ範囲に収める。 */
++private const val DESIGN_ROWS = 5
++
++/** 字の送り幅を測る大きさ。小さな字では送り幅が整数の px に丸められるので、大きな字で測ってから縮める。 */
++private const val MEASURE_TEXT_SIZE = 1000f
++
++/** 札に書く一字。[x] は em ボックスの左端、[baseline] はベースラインの高さ。 */
++internal class PlacedGlyph(val text: String, val x: Float, val baseline: Float)
++
++/** 大きさを決めた札の中身。縁の太さ [edge] と、字を書く [paint]・[glyphs]。 */
++internal class TorifudaLayout(val edge: Float, val paint: Paint, val glyphs: List<PlacedGlyph>)
++
++/**
++ * 大きさ [size] の札に [columns]（[torifudaColumns] で分けた列）の字を置く。
++ * 列の中心に em ボックスの中心をそろえ、字形の実際の上端（インクの上端）を行の線にそろえる。
++ */
++internal fun layoutTorifuda(columns: List<String>, size: Size, typeface: Typeface): TorifudaLayout {
++    // 縁は px の境目にそろえて、内側の線をにじませない
++    val edge = (size.width * EDGE_WIDTH).roundToInt().toFloat().coerceAtLeast(1f).coerceAtMost(size.minDimension / 2)
++    val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
++        this.typeface = typeface
++        color = CardInk.toArgb()
++        fontFeatureSettings = TORIFUDA_FONT_FEATURES
++        textSize = MEASURE_TEXT_SIZE
++    }
++    val rows = columns.maxOfOrNull { it.length } ?: 0
++    val shrink = if (rows > DESIGN_ROWS) DESIGN_ROWS.toFloat() / rows else 1f
++    val fontPx = size.width * FONT_SIZE * shrink
++    val firstTop = size.height * FIRST_INK_TOP
++    val pitch = size.height * ROW_PITCH * shrink
++    // 字ごとの送り幅（em）
++    val advances = columns.joinToString("").toSet().associateWith { paint.measureText(it.toString()) / MEASURE_TEXT_SIZE }
++    paint.textSize = fontPx
++    val ink = RectF()
++    val glyphs = columns.flatMapIndexed { column, text ->
++        // 右の列から書く
++        val centerX = size.width / 2 + size.width * COLUMN_STEP * (1 - column)
+         text.mapIndexed { row, char ->
+-            val layout = measurer.measure(char.toString(), style, density = this)
+-            val centerY = padY + cellHeight * (row + 0.5f)
++            val glyph = char.toString()
++            paint.inkBounds(glyph, ink)
+             PlacedGlyph(
+-                layout = layout,
+-                topLeft = Offset(
+-                    x = centerX - layout.size.width / 2f,
+-                    y = centerY - layout.firstBaseline + EM_CENTER_ABOVE_BASELINE * fontPx,
+-                ),
++                text = glyph,
++                x = centerX - advances.getValue(char) * fontPx / 2,
++                baseline = firstTop + pitch * row - ink.top,
+             )
+         }
+     }
++    return TorifudaLayout(edge, paint, glyphs)
+ }
+ 
+-private fun DrawScope.drawGlyphs(glyphs: List<PlacedGlyph>) {
+-    glyphs.forEach { drawText(it.layout, topLeft = it.topLeft) }
++/**
++ * [text] を原点に書いたときのインクの外接矩形を [out] に入れる（字形の輪郭から求めるので小数の px まで正しい）。
++ * [Paint.getTextBounds] は整数の px に丸めるうえ、大きな字では実際より広く返すので使わない。
++ */
++internal fun Paint.inkBounds(text: String, out: RectF) {
++    val path = Path()
++    getTextPath(text, 0, text.length, 0f, 0f, path)
++    path.computeBounds(out, true)
++}
++
++private fun DrawScope.drawGlyphs(layout: TorifudaLayout) {
++    drawIntoCanvas { canvas ->
++        layout.glyphs.forEach { canvas.nativeCanvas.drawText(it.text, it.x, it.baseline, layout.paint) }
++    }
+ }
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Color.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Color.kt
+index db9d4ee..b8917f9 100644
+--- a/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Color.kt
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Color.kt
+@@ -19,8 +19,8 @@ val Gofun = Color(0xFFFFFBF2)
+ /** 取り札の札面。 */
+ val CardFace = Color(0xFFFCF8EE)
+ 
+-/** 取り札の札面の下側（わずかに陰らせる）。 */
+-val CardFaceShade = Color(0xFFF5EEDC)
++/** 取り札の文字。 */
++val CardInk = Color(0xFF000000)
+ 
+ /** 墨。本文の文字。 */
+ val Sumi = Color(0xFF2B2621)
+@@ -77,7 +77,7 @@ val TatamiLine = Color(0xFFA99E62)
+ val TatamiHeri = Color(0xFF233650)
+ 
+ /** 取り札の縁（裏紙の緑）。 */
+-val CardEdge = Color(0xFF35573F)
++val CardEdge = Color(0xFF295737)
+ 
+ /** 決まり字の緑（生成りの上で約 5.3:1）。 */
+ val KimarijiGreen = Color(0xFF2A6E2E)
+diff --git a/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Type.kt b/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Type.kt
+index 09d4c40..f7d953d 100644
+--- a/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Type.kt
++++ b/app/src/main/java/io/github/abonsan/hyakunin/ui/theme/Type.kt
+@@ -15,6 +15,9 @@ val ShipporiMincho = FontFamily(
+     Font(R.font.shippori_mincho_bold, FontWeight.Bold),
+ )
+ 
++/** 取り札の文字。しっぽり明朝 SemiBold の、仮名と記号（縦書き用の字形を含む）だけのサブセット。 */
++val TorifudaFont = FontFamily(Font(R.font.shippori_mincho_semibold, FontWeight.SemiBold))
++
+ /** 文はすべて日本語。 */
+ val JapaneseLocale = LocaleList("ja-JP")
+ 
+diff --git a/app/src/main/res/font/shippori_mincho_semibold.ttf b/app/src/main/res/font/shippori_mincho_semibold.ttf
+new file mode 100644
+index 0000000000000000000000000000000000000000..daf79fd07efc62ea8c9e70d39c401a29439fcccf
+GIT binary patch
+literal 115664
+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
+M<4fCL@5d>B1;SwZB>(^b
+
+literal 0
+HcmV?d00001
+
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/ui/card/TorifudaFontTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/ui/card/TorifudaFontTest.kt
+new file mode 100644
+index 0000000..dc046ed
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/ui/card/TorifudaFontTest.kt
+@@ -0,0 +1,70 @@
++package io.github.abonsan.hyakunin.ui.card
++
++import android.content.Context
++import android.graphics.Paint
++import android.graphics.fonts.Font
++import android.graphics.text.TextRunShaper
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.text.font.createFontFamilyResolver
++import androidx.compose.ui.text.font.resolveAsTypeface
++import androidx.test.core.app.ApplicationProvider
++import androidx.test.ext.junit.runners.AndroidJUnit4
++import io.github.abonsan.hyakunin.R
++import io.github.abonsan.hyakunin.data.Poems
++import io.github.abonsan.hyakunin.ui.theme.TorifudaFont
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertNotEquals
++import org.junit.Assert.assertNotNull
++import org.junit.Assert.assertNull
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.annotation.Config
++import org.robolectric.annotation.GraphicsMode
++
++/**
++ * 取り札のフォント（しっぽり明朝 SemiBold の仮名だけのサブセット）に、取り札に書く字がすべてあるか。
++ * 足りない字は端末のフォントで補われて書体が混ざるので、字を描くフォントまで確かめる。
++ */
++@RunWith(AndroidJUnit4::class)
++@GraphicsMode(GraphicsMode.Mode.NATIVE)
++@Config(sdk = [36])
++class TorifudaFontTest {
++    private val context: Context = ApplicationProvider.getApplicationContext()
++    private val subset = Font.Builder(context.resources, R.font.shippori_mincho_semibold).build()
++    private val paint = Paint().apply {
++        typeface = createFontFamilyResolver(context).resolveAsTypeface(TorifudaFont, FontWeight.SemiBold).value
++        textSize = 100f
++        fontFeatureSettings = TORIFUDA_FONT_FEATURES
++    }
++
++    /** [text]（1字）を [paint] で描くときの、サブセットのグリフ番号。サブセットに無ければ null。 */
++    private fun glyphInSubset(text: String, paint: Paint = this.paint): Int? {
++        val glyphs = TextRunShaper.shapeTextRun(text, 0, text.length, 0, text.length, 0f, 0f, false, paint)
++        if (glyphs.glyphCount() != 1 || glyphs.getFont(0) != subset) return null
++        return glyphs.getGlyphId(0).takeIf { it != 0 }
++    }
++
++    @Test
++    fun hasEveryCharacterOfTheLowerVerses() {
++        val chars = Poems.all.flatMap { poem -> poem.shimoKana.filterNot { it.isWhitespace() }.toList() }.toSortedSet()
++        val missing = chars.filter { glyphInSubset(it.toString()) == null }
++        assertEquals("サブセットに無い字", "", missing.joinToString(""))
++    }
++
++    @Test
++    fun detectsCharactersOutsideTheSubset() {
++        // 漢字はサブセットに無く、端末のフォントで補われる
++        assertNull(glyphInSubset("山"))
++    }
++
++    @Test
++    fun keepsTheVerticalForms() {
++        // 小書きの仮名や長音符は、縦書き用の字形（vert）に置き換わる
++        val horizontal = Paint(paint).apply { fontFeatureSettings = null }
++        for (char in listOf("ゃ", "っ", "ー", "ャ")) {
++            val vertical = glyphInSubset(char)
++            assertNotNull(char, vertical)
++            assertNotEquals(char, glyphInSubset(char, horizontal), vertical)
++        }
++    }
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/ui/card/TorifudaLayoutTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/ui/card/TorifudaLayoutTest.kt
+new file mode 100644
+index 0000000..64b8ab1
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/ui/card/TorifudaLayoutTest.kt
+@@ -0,0 +1,97 @@
++package io.github.abonsan.hyakunin.ui.card
++
++import android.content.Context
++import android.graphics.RectF
++import androidx.compose.ui.geometry.Size
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.text.font.createFontFamilyResolver
++import androidx.compose.ui.text.font.resolveAsTypeface
++import androidx.test.core.app.ApplicationProvider
++import androidx.test.ext.junit.runners.AndroidJUnit4
++import io.github.abonsan.hyakunin.data.Poems
++import io.github.abonsan.hyakunin.ui.theme.TorifudaFont
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.annotation.Config
++import org.robolectric.annotation.GraphicsMode
++
++/** 取り札の字の置き方。どの札でも、どの大きさでも、字が縁にかからず重ならないか。 */
++@RunWith(AndroidJUnit4::class)
++@GraphicsMode(GraphicsMode.Mode.NATIVE)
++@Config(sdk = [36])
++class TorifudaLayoutTest {
++    private val context: Context = ApplicationProvider.getApplicationContext()
++    private val typeface = createFontFamilyResolver(context).resolveAsTypeface(TorifudaFont, FontWeight.SemiBold).value
++
++    private fun layout(no: Int, width: Float) =
++        layoutTorifuda(torifudaColumns(Poems.byNo(no).shimoKana), Size(width, width / TORIFUDA_ASPECT_RATIO), typeface)
++
++    /** 字のインクの外接矩形（札の上の位置）。右の列から、列ごとに上から。 */
++    private fun TorifudaLayout.inkBoxes(): List<RectF> = glyphs.map { glyph ->
++        RectF().also {
++            paint.inkBounds(glyph.text, it)
++            it.offset(glyph.x, glyph.baseline)
++        }
++    }
++
++    @Test
++    fun glyphsStayInsideTheFaceWithoutOverlapping() {
++        // 参照画像の大きさ、縦画面の一般的な札（72dp・xxhdpi）、横画面の小さい札（48dp・36dp、xhdpi）
++        for (width in listOf(619.7f, 216f, 96f, 72f)) {
++            val height = width / TORIFUDA_ASPECT_RATIO
++            for (poem in Poems.all) {
++                val layout = layout(poem.no, width)
++                val boxes = layout.inkBoxes()
++                val label = "${poem.no}番 幅 $width"
++                for (box in boxes) {
++                    assertTrue("$label: 縁にかかる $box", box.left >= layout.edge && box.right <= width - layout.edge)
++                    assertTrue("$label: 縁にかかる $box", box.top >= layout.edge && box.bottom <= height - layout.edge)
++                }
++                // 同じ列の上下の字、隣り合う列の字が重ならない
++                var start = 0
++                val byColumn = torifudaColumns(poem.shimoKana).map { column ->
++                    boxes.subList(start, start + column.length).also { start += column.length }
++                }
++                byColumn.forEach { column ->
++                    column.zipWithNext { upper, lower -> assertTrue("$label: 上下の字が重なる", upper.bottom < lower.top) }
++                }
++                byColumn.zipWithNext { right, left ->
++                    assertTrue("$label: 列が重なる", left.maxOf { it.right } < right.minOf { it.left })
++                }
++            }
++        }
++    }
++
++    @Test
++    fun alignsTheInkTopOfEachRow() {
++        // 字の形によらず、インクの上端を行の線にそろえる（参照画像の札の 1px が 1px の大きさで）
++        for (no in listOf(78, 58, 22)) {
++            val layout = layout(no, 619.7f)
++            val rows = torifudaColumns(Poems.byNo(no).shimoKana).flatMap { it.indices }
++            layout.inkBoxes().zip(rows).forEach { (box, row) -> assertEquals("${no}番", 122f + 134.6f * row, box.top, 0.05f) }
++        }
++    }
++
++    @Test
++    fun centersTheEmBoxOnEachColumn() {
++        // 列の中心は札の中心と、その左右に 158.9px（右の列から）
++        val layout = layout(78, 619.7f)
++        val centers = layout.glyphs.map { it.x + layout.paint.textSize / 2 }.distinct()
++        val expected = listOf(309.85f + 158.9f, 309.85f, 309.85f - 158.9f)
++        assertEquals(3, centers.size)
++        centers.zip(expected).forEach { (actual, column) -> assertEquals(column, actual, 0.05f) }
++    }
++
++    @Test
++    fun sixRowCardShrinksToFitTheSameArea() {
++        // 21番（16字）だけが 6行。字の大きさと行の間隔を 5/6 にし、1行目の位置は変えない
++        val six = layout(21, 619.7f)
++        val five = layout(1, 619.7f)
++        assertEquals(five.paint.textSize * 5 / 6, six.paint.textSize, 0.01f)
++        val tops = six.inkBoxes().map { it.top }
++        assertEquals(122f, tops[0], 0.05f)
++        assertEquals(122f + 134.6f * 5 / 6 * 5, tops[5], 0.05f)
++    }
++}
+diff --git a/app/src/test/java/io/github/abonsan/hyakunin/ui/card/TorifudaReferenceScreenshotTest.kt b/app/src/test/java/io/github/abonsan/hyakunin/ui/card/TorifudaReferenceScreenshotTest.kt
+new file mode 100644
+index 0000000..7fcf7aa
+--- /dev/null
++++ b/app/src/test/java/io/github/abonsan/hyakunin/ui/card/TorifudaReferenceScreenshotTest.kt
+@@ -0,0 +1,80 @@
++package io.github.abonsan.hyakunin.ui.card
++
++import androidx.activity.ComponentActivity
++import androidx.compose.foundation.layout.width
++import androidx.compose.runtime.CompositionLocalProvider
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableFloatStateOf
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.graphics.ImageBitmap
++import androidx.compose.ui.graphics.toPixelMap
++import androidx.compose.ui.platform.LocalDensity
++import androidx.compose.ui.test.captureToImage
++import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
++import androidx.compose.ui.test.onNodeWithContentDescription
++import androidx.compose.ui.unit.Density
++import androidx.compose.ui.unit.dp
++import androidx.test.ext.junit.runners.AndroidJUnit4
++import com.github.takahirom.roborazzi.captureRoboImage
++import io.github.abonsan.hyakunin.ui.Fixtures
++import io.github.abonsan.hyakunin.ui.SCREENSHOT_DIR
++import org.junit.Assert.assertArrayEquals
++import org.junit.Assert.assertTrue
++import org.junit.Rule
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.annotation.Config
++import org.robolectric.annotation.GraphicsMode
++
++/**
++ * デザインの参照画像（design/card/torifuda_reference.png）の2枚と同じ札を、参照画像と同じ大きさ
++ * （1px = 札の 1px。幅 619.7px・高さ 870px）で撮る。tools/compare_torifuda.py で参照画像と数値で比べる。
++ */
++@RunWith(AndroidJUnit4::class)
++@GraphicsMode(GraphicsMode.Mode.NATIVE)
++@Config(sdk = [36], qualifiers = "w700dp-h1000dp-mdpi")
++class TorifudaReferenceScreenshotTest {
++    @get:Rule
++    val composeRule = createAndroidComposeRule<ComponentActivity>()
++
++    @Test
++    fun poem78() = capture(78)
++
++    @Test
++    fun poem58() = capture(58)
++
++    @Test
++    fun ignoresTheFontScaleSetting() {
++        val shimoKana = Fixtures.poem(78).shimoKana
++        var fontScale by mutableFloatStateOf(1f)
++        composeRule.setContent {
++            CompositionLocalProvider(LocalDensity provides Density(1f, fontScale)) {
++                Torifuda(shimoKana, Modifier.width(REFERENCE_WIDTH.dp))
++            }
++        }
++        val normal = composeRule.onNodeWithContentDescription(shimoKana).captureToImage().pixels()
++        fontScale = 2f
++        composeRule.waitForIdle()
++        val large = composeRule.onNodeWithContentDescription(shimoKana).captureToImage().pixels()
++        assertTrue("字が書かれていない", normal.any { it.isInk() })
++        assertArrayEquals(normal, large)
++    }
++
++    private fun capture(no: Int) {
++        val shimoKana = Fixtures.poem(no).shimoKana
++        composeRule.setContent {
++            Torifuda(shimoKana, Modifier.width(REFERENCE_WIDTH.dp))
++        }
++        composeRule.onNodeWithContentDescription(shimoKana)
++            .captureRoboImage("$SCREENSHOT_DIR/torifuda_reference_$no.png")
++    }
++}
++
++/** 参照画像の札の幅（px）。 */
++private const val REFERENCE_WIDTH = 619.7f
++
++private fun ImageBitmap.pixels(): IntArray = toPixelMap().buffer
++
++/** 墨（黒）の画素か。縁の緑や札面の生成りではない。 */
++private fun Int.isInk(): Boolean = (this shr 16 and 0xFF) < 0x20 && (this shr 8 and 0xFF) < 0x20 && (this and 0xFF) < 0x20
+diff --git a/tools/compare_torifuda.py b/tools/compare_torifuda.py
+new file mode 100644
+index 0000000..4b4d883
+--- /dev/null
++++ b/tools/compare_torifuda.py
+@@ -0,0 +1,232 @@
++#!/usr/bin/env python3
++"""アプリで描いた取り札を、デザインの参照画像と数値で比べる。
++
++使い方:
++  ./gradlew testDebugUnitTest --tests '*TorifudaReferenceScreenshotTest'
++  python3 tools/compare_torifuda.py
++
++design/card/torifuda_reference.png の2枚（左が78番、右が58番）と、同じ札をアプリで同じ大きさに描いた
++app/build/outputs/roborazzi/torifuda_reference_78.png・_58.png（TorifudaReferenceScreenshotTest）を比べる。
++比べる項目: 縁の太さ（四辺）と色、地の色、各字のインクの外接矩形（位置と大きさ）。
++位置は札の外形の左上を原点にした px（アプリの札は参照画像の大きさにそろえる）。字の位置ずれの最大値は
++「の」「で」を除いて出す（参照画像ではこの2字だけ作者が目で見て下げてあり、アプリでは再現しない）。
++目標（縁の太さ ±1px、字の位置と大きさ ±2px）を外れたら終了コード 1 を返す。
++"""
++import argparse
++import pathlib
++import sys
++
++import numpy as np
++from PIL import Image
++
++ROOT = pathlib.Path(__file__).resolve().parent.parent
++REFERENCE = ROOT / "design" / "card" / "torifuda_reference.png"
++SHOTS = ROOT / "app" / "build" / "outputs" / "roborazzi"
++
++# 参照画像の札（左から）の番号と下の句（空白を除く）
++CARDS = [
++    ("78", "いくよねざめぬすまのせきもり"),
++    ("58", "いでそよひとをわすれやはする"),
++]
++# 参照画像で作者が目で見て位置を直した字
++HAND_ADJUSTED = set("ので")
++EDGE_TOLERANCE = 1.0
++GLYPH_TOLERANCE = 2.0
++
++LUMA = np.array([0.299, 0.587, 0.114])
++SIDES = ("左", "右", "上", "下")
++
++
++def load_rgb(path: pathlib.Path) -> np.ndarray:
++    """白地に合成した RGB（float）。"""
++    rgba = np.asarray(Image.open(path).convert("RGBA")).astype(float)
++    alpha = rgba[..., 3:4] / 255.0
++    return rgba[..., :3] * alpha + 255.0 * (1.0 - alpha)
++
++
++def runs(indices: np.ndarray, min_gap: int) -> list[tuple[int, int]]:
++    """昇順の添字を、min_gap より広くあいたところで区切った範囲（両端を含む）。"""
++    out = []
++    start = prev = int(indices[0])
++    for i in indices[1:]:
++        if i - prev > min_gap:
++            out.append((start, prev))
++            start = int(i)
++        prev = int(i)
++    out.append((start, prev))
++    return out
++
++
++def find_cards(rgb: np.ndarray) -> list[tuple[int, int, int, int]]:
++    """札（濃い縁で囲まれた範囲）を左から順に探す。画素単位の (左, 上, 右, 下)。右と下は含まない。"""
++    mask = rgb @ LUMA < 200
++    cards = []
++    for x0, x1 in runs(np.where(mask.any(axis=0))[0], min_gap=8):
++        ys = np.where(mask[:, x0:x1 + 1].any(axis=1))[0]
++        cards.append((x0, int(ys[0]), x1 + 1, int(ys[-1]) + 1))
++    return cards
++
++
++def edge_position(profile: np.ndarray, start: float, end: float) -> float:
++    """外から内へ並べた輝度 profile が start から end へ変わる位置（profile の先頭の画素の端を 0 とする px）。
++
++    最初に end になった画素の位置から、その手前の境目の画素の被覆率を引く。
++    """
++    cov = np.clip((profile - start) / (end - start), 0.0, 1.0)
++    full = int(np.argmax(cov >= 0.98))
++    pos = float(full)
++    k = full
++    while k > 0 and cov[k - 1] > 0.02:
++        k -= 1
++        pos -= cov[k]
++    return pos
++
++
++def crossing(profile: np.ndarray) -> float:
++    """被覆率 profile が先頭から見て初めて 0.5 を超える位置（画素の中心のあいだを直線で補う）。"""
++    i = int(np.argmax(profile >= 0.5))
++    if i == 0:
++        return 0.0
++    a, b = profile[i - 1], profile[i]
++    return i - 0.5 + (0.5 - a) / (b - a)
++
++
++class Card:
++    """1枚の札の寸法。位置は画像の px、字の矩形は札の外形の左上を原点にした px。"""
++
++    def __init__(self, rgb: np.ndarray, box: tuple[int, int, int, int], text: str):
++        luma = rgb @ LUMA
++        left, top, right, bottom = box
++        w, h = right - left, bottom - top
++        ys = range(top + int(h * 0.3), top + int(h * 0.7))
++        xs = range(left + int(w * 0.3), left + int(w * 0.7))
++        # 縁の色は縁の中ほど、地の色は左の縁のすぐ内側（字の無いところ）で測る
++        self.edge_color = np.median(rgb[ys.start:ys.stop, left + int(w * 0.03)], axis=0)
++        self.face_color = np.median(rgb[ys.start:ys.stop, left + int(w * 0.12)], axis=0)
++        edge_luma = float(self.edge_color @ LUMA)
++        face_luma = float(self.face_color @ LUMA)
++
++        def measure(lines: list[np.ndarray]) -> tuple[float, float]:
++            """縁を外から内へ横切る線ごとに、外形と内側の境目の位置を求めて中央値を返す。"""
++            outer, inner = [], []
++            for line in lines:
++                # 外側に地（白）があれば外形の境目の画素も数える。札だけを撮った画像は先頭が外形
++                o = edge_position(line, 255.0, edge_luma) if line[0] > edge_luma + 20 else 0.0
++                start = int(o) + 2
++                outer.append(o)
++                inner.append(start + edge_position(line[start:], edge_luma, face_luma))
++            return float(np.median(outer)), float(np.median(inner))
++
++        pad = 3
++        span = int(w * 0.12)
++        x_lo, x_hi = max(0, left - pad), min(rgb.shape[1], right + pad)
++        y_lo, y_hi = max(0, top - pad), min(rgb.shape[0], bottom + pad)
++        lo, li = measure([luma[y, x_lo:left + span] for y in ys])
++        ro, ri = measure([luma[y, right - span:x_hi][::-1] for y in ys])
++        to, ti = measure([luma[y_lo:top + span, x] for x in xs])
++        bo, bi = measure([luma[bottom - span:y_hi, x][::-1] for x in xs])
++        self.left, self.right = x_lo + lo, x_hi - ro
++        self.top, self.bottom = y_lo + to, y_hi - bo
++        self.width = self.right - self.left
++        self.height = self.bottom - self.top
++        self.edges = dict(zip(SIDES, (li - lo, ri - ro, ti - to, bi - bo)))
++        self.glyphs = self._glyphs(luma, face_luma, text)
++
++    def _glyphs(self, luma: np.ndarray, face_luma: float, text: str) -> list[tuple[str, float, float, float, float]]:
++        """各字のインクの外接矩形 (字, 左, 上, 右, 下)。右の列から、列ごとに上から。"""
++        margin = max(self.edges.values()) + 3
++        x0, x1 = int(self.left + margin), int(self.right - margin)
++        y0, y1 = int(self.top + margin), int(self.bottom - margin)
++        ink = np.clip((face_luma - luma[y0:y1, x0:x1]) / face_luma, 0.0, 1.0)
++        mask = ink >= 0.5
++        per_column = (len(text) + 2) // 3
++        columns = [text[i:i + per_column] for i in range(0, len(text), per_column)]
++        col_runs = runs(np.where(mask.any(axis=0))[0], min_gap=int(self.width * 0.05))
++        if len(col_runs) != len(columns):
++            raise SystemExit(f"列の数が合わない: {len(col_runs)}（想定 {len(columns)}）")
++        out = []
++        for chars, (cx0, cx1) in zip(columns, reversed(col_runs)):
++            rows = runs(np.where(mask[:, cx0:cx1 + 1].any(axis=1))[0], min_gap=1)
++            # 字の中の隙間（「こ」など）は字と字の間より狭いので、狭い隙間からつなぐ
++            while len(rows) > len(chars):
++                gaps = [rows[i + 1][0] - rows[i][1] for i in range(len(rows) - 1)]
++                i = int(np.argmin(gaps))
++                rows[i:i + 2] = [(rows[i][0], rows[i + 1][1])]
++            if len(rows) != len(chars):
++                raise SystemExit(f"字の数が合わない: {len(rows)}（想定 {len(chars)}「{chars}」）")
++            for char, (ry0, ry1) in zip(chars, rows):
++                gx = np.where(mask[ry0:ry1 + 1, cx0:cx1 + 1].any(axis=0))[0]
++                # 境目の画素から小数の位置を求めるため、まわりを2画素ずつ含める
++                bx0, bx1 = cx0 + int(gx[0]) - 2, cx0 + int(gx[-1]) + 3
++                by0, by1 = ry0 - 2, ry1 + 3
++                sub = ink[by0:by1, bx0:bx1]
++                px, py = sub.max(axis=0), sub.max(axis=1)
++                gl, gr = bx0 + crossing(px), bx1 - crossing(px[::-1])
++                gt, gb = by0 + crossing(py), by1 - crossing(py[::-1])
++                out.append((
++                    char,
++                    x0 + gl - self.left,
++                    y0 + gt - self.top,
++                    x0 + gr - self.left,
++                    y0 + gb - self.top,
++                ))
++        return out
++
++
++def hex_color(rgb: np.ndarray) -> str:
++    return "#" + "".join(f"{int(round(c)):02X}" for c in rgb)
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
++    parser.add_argument("--reference", type=pathlib.Path, default=REFERENCE)
++    parser.add_argument("--shots", type=pathlib.Path, default=SHOTS, help="torifuda_reference_<番号>.png のあるところ")
++    args = parser.parse_args()
++
++    ref_rgb = load_rgb(args.reference)
++    ref_boxes = find_cards(ref_rgb)
++    if len(ref_boxes) != len(CARDS):
++        raise SystemExit(f"参照画像の札の数が合わない: {len(ref_boxes)}")
++    worst_edge = worst_pos = worst_size = worst_all = 0.0
++    for (no, text), ref_box in zip(CARDS, ref_boxes):
++        shot = args.shots / f"torifuda_reference_{no}.png"
++        app_rgb = load_rgb(shot)
++        app_boxes = find_cards(app_rgb)
++        if len(app_boxes) != 1:
++            raise SystemExit(f"{shot.name}: 札が1枚に見つからない（{len(app_boxes)}）")
++        ref = Card(ref_rgb, ref_box, text)
++        app = Card(app_rgb, app_boxes[0], text)
++        # アプリの札を参照画像の大きさにそろえて比べる
++        sx, sy = ref.width / app.width, ref.height / app.height
++        print(f"■ {no}番（外形 参照 {ref.width:.1f}×{ref.height:.1f}px → アプリ {app.width:.1f}×{app.height:.1f}px）")
++        for side in SIDES:
++            s = sx if side in ("左", "右") else sy
++            diff = app.edges[side] * s - ref.edges[side]
++            worst_edge = max(worst_edge, abs(diff))
++        print("  縁の太さ " + "  ".join(
++            f"{side} {ref.edges[side]:.2f}→{app.edges[side]:.2f}" for side in SIDES))
++        print(f"  縁の色 {hex_color(ref.edge_color)}→{hex_color(app.edge_color)}"
++              f"  地の色 {hex_color(ref.face_color)}→{hex_color(app.face_color)}")
++        print("  字  参照（左, 上, 幅, 高さ）         アプリ                           ずれ")
++        for (char, rl, rt, rr, rb), (_, al, at, ar, ab) in zip(ref.glyphs, app.glyphs):
++            al, ar, at, ab = al * sx, ar * sx, at * sy, ab * sy
++            d = (al - rl, at - rt, (ar - al) - (rr - rl), (ab - at) - (rb - rt))
++            note = "  ← 目視の調整（除外）" if char in HAND_ADJUSTED else ""
++            print(f"  {char}  ({rl:6.1f},{rt:6.1f},{rr - rl:5.1f},{rb - rt:5.1f})"
++                  f"  ({al:6.1f},{at:6.1f},{ar - al:5.1f},{ab - at:5.1f})"
++                  f"  ({d[0]:+5.1f},{d[1]:+5.1f},{d[2]:+5.1f},{d[3]:+5.1f}){note}")
++            worst_all = max(worst_all, abs(d[0]), abs(d[1]))
++            if char not in HAND_ADJUSTED:
++                worst_pos = max(worst_pos, abs(d[0]), abs(d[1]))
++                worst_size = max(worst_size, abs(d[2]), abs(d[3]))
++    ok = worst_edge <= EDGE_TOLERANCE and worst_pos <= GLYPH_TOLERANCE and worst_size <= GLYPH_TOLERANCE
++    print()
++    print(f"縁の太さのずれ: 最大 {worst_edge:.2f}px（目標 ±{EDGE_TOLERANCE:g}px）")
++    print(f"字の位置（インクの左上）のずれ: 最大 {worst_pos:.2f}px（「の」「で」を除く。含めると {worst_all:.2f}px）")
++    print(f"字の大きさ（インクの幅・高さ）のずれ: 最大 {worst_size:.2f}px（目標はどちらも ±{GLYPH_TOLERANCE:g}px）")
++    print("目標の範囲内" if ok else "目標を外れている")
++    return 0 if ok else 1
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/tools/subset_fonts.py b/tools/subset_fonts.py
+index 792d782..8aa7beb 100644
+--- a/tools/subset_fonts.py
++++ b/tools/subset_fonts.py
+@@ -1,12 +1,15 @@
+ #!/usr/bin/env python3
+ """Shippori Mincho をアプリで使う文字だけにサブセット化して res/font に出力する。
+ 
+-使い方: python3 tools/subset_fonts.py
++使い方: python3 tools/subset_fonts.py [出力名 ...]
+ アプリのソース（.kt / .xml）に新しい漢字を追加したら再実行すること。
++出力名（例: shippori_mincho_semibold.ttf）を指定すると、そのフォントだけを作り直す。
+ 元フォントは初回実行時に google/fonts から tools/fonts-src/ へダウンロードする。
+ """
+ import pathlib
++import sys
+ import urllib.request
++from dataclasses import dataclass
+ 
+ from fontTools import subset
+ 
+@@ -14,20 +17,60 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
+ CACHE = ROOT / "tools" / "fonts-src"
+ OUT = ROOT / "app" / "src" / "main" / "res" / "font"
+ BASE_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/shipporimincho/"
+-FONTS = {
+-    "ShipporiMincho-Regular.ttf": "shippori_mincho_regular.ttf",
+-    "ShipporiMincho-Bold.ttf": "shippori_mincho_bold.ttf",
+-}
++
++ASCII = (0x20, 0x7E)
++CJK_SYMBOLS = (0x3000, 0x303F)
++HIRAGANA = (0x3040, 0x309F)
++KATAKANA = (0x30A0, 0x30FF)
++FULLWIDTH = (0xFF01, 0xFF5E)
+ # 常に含める範囲: ASCII、CJK記号、ひらがな、カタカナ、全角英数記号
+-BASE_RANGES = [(0x20, 0x7E), (0x3000, 0x303F), (0x3040, 0x309F), (0x30A0, 0x30FF), (0xFF01, 0xFF5E)]
++BASE_RANGES = (ASCII, CJK_SYMBOLS, HIRAGANA, KATAKANA, FULLWIDTH)
++# 仮名だけを書くフォントの範囲: CJK記号、ひらがな、カタカナ
++KANA_RANGES = (CJK_SYMBOLS, HIRAGANA, KATAKANA)
++
++
++@dataclass(frozen=True)
++class Subset:
++    """元フォント source から、ranges の文字（app_chars ならアプリのソースに出てくる文字も）を残す。
++
++    features は残す OpenType の機能（"*" はすべて）。
++    """
++
++    source: str
++    output: str
++    ranges: tuple[tuple[int, int], ...]
++    app_chars: bool
++    features: tuple[str, ...] = ("*",)
+ 
+ 
+-def collect_chars() -> set[str]:
+-    chars = {chr(c) for start, end in BASE_RANGES for c in range(start, end + 1)}
++FONTS = [
++    Subset("ShipporiMincho-Regular.ttf", "shippori_mincho_regular.ttf", BASE_RANGES, app_chars=True),
++    Subset("ShipporiMincho-Bold.ttf", "shippori_mincho_bold.ttf", BASE_RANGES, app_chars=True),
++    # 取り札の文字（ui/card/Torifuda.kt）。取り札には仮名しか書かないので仮名と記号だけにし、
++    # 機能も縦書き用の字形（vert）だけを残す（異体の仮名や合成用の字形を含めると倍近く大きくなる）
++    Subset(
++        "ShipporiMincho-SemiBold.ttf",
++        "shippori_mincho_semibold.ttf",
++        KANA_RANGES,
++        app_chars=False,
++        features=("vert",),
++    ),
++]
++
++
++def app_chars() -> set[str]:
++    chars: set[str] = set()
+     src = ROOT / "app" / "src"
+     for path in src.rglob("*"):
+         if path.is_file() and path.suffix in {".kt", ".xml"}:
+             chars.update(path.read_text(encoding="utf-8"))
++    return chars
++
++
++def collect_chars(font: Subset) -> set[str]:
++    chars = {chr(c) for start, end in font.ranges for c in range(start, end + 1)}
++    if font.app_chars:
++        chars.update(app_chars())
+     return {c for c in chars if c.isprintable() or c == "　"}
+ 
+ 
+@@ -39,22 +82,27 @@ def ensure_source(name: str) -> pathlib.Path:
+     return path
+ 
+ 
+-def main() -> None:
+-    text = "".join(sorted(collect_chars()))
++def main(outputs: list[str]) -> None:
++    unknown = set(outputs) - {f.output for f in FONTS}
++    if unknown:
++        sys.exit(f"不明な出力名: {', '.join(sorted(unknown))}")
+     OUT.mkdir(parents=True, exist_ok=True)
+-    for src_name, out_name in FONTS.items():
++    for spec in FONTS:
++        if outputs and spec.output not in outputs:
++            continue
++        text = "".join(sorted(collect_chars(spec)))
+         options = subset.Options()
+-        options.layout_features = ["*"]  # 縦書き用グリフ(vert)などを残す
++        options.layout_features = list(spec.features)  # 縦書き用グリフ(vert)などを残す
+         options.name_IDs = ["*"]
+         options.notdef_outline = True
+-        font = subset.load_font(str(ensure_source(src_name)), options)
++        font = subset.load_font(str(ensure_source(spec.source)), options)
+         subsetter = subset.Subsetter(options)
+         subsetter.populate(text=text)
+         subsetter.subset(font)
+-        out = OUT / out_name
++        out = OUT / spec.output
+         subset.save_font(font, str(out), options)
+         print(f"{out.relative_to(ROOT)}: {out.stat().st_size // 1024} KiB ({len(text)} chars)")
+ 
+ 
+ if __name__ == "__main__":
+-    main()
++    main(sys.argv[1:])
