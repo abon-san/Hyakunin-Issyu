@@ -1,6 +1,7 @@
 package io.github.abonsan.hyakunin.game
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.random.Random
@@ -27,6 +28,14 @@ class MatchEngineSimulationTest {
             assertEquals(2 * GameConfig.CARDS_PER_SIDE - fieldReads, nos.size)
         }
         if (st.phase !is MatchPhase.Reading) assertTrue(!st.playerLockedOut)
+        // 待ちの残り時間は、自動で読み始める Waiting の間だけ。タップ待ちでは出ない
+        if (st.phase == MatchPhase.Waiting && config.readStartMode == ReadStartMode.AUTO) {
+            val wait = if (st.readsDone == 0) config.memorizeTime.millis else config.readInterval.millis
+            assertTrue(st.waitRemainingMillis!! in 0..wait)
+        } else {
+            assertNull(st.waitRemainingMillis)
+        }
+        assertEquals(st.phase == MatchPhase.Waiting && st.reading == null, st.isMemorizing)
         st.reading?.let {
             assertTrue(it.revealedKana in 0..it.totalKanaCount)
             assertTrue(it.kamiKanaCount <= it.totalKanaCount)
@@ -91,6 +100,12 @@ class MatchEngineSimulationTest {
                         e.next()
                     }
                 }
+                MatchPhase.Waiting -> when {
+                    // タップで読み始めるモードは、プレイヤーが押さないと進まない
+                    config.readStartMode == ReadStartMode.TAP -> if (player.nextInt(3) == 0) e.startReading()
+                    player.nextInt(20) == 0 -> e.startReading()
+                    else -> e.tapCard(Side.PLAYER, 1)
+                }
                 else -> e.tapCard(Side.PLAYER, 1)
             }
             checkInvariants(e, config, emptyNos)
@@ -109,6 +124,9 @@ class MatchEngineSimulationTest {
                         emptyCardCount = rnd.nextInt(0, GameConfig.MAX_EMPTY_CARDS + 1),
                         cpuLevel = level,
                         readingSpeed = ReadingSpeed.entries[seed % 3],
+                        readStartMode = ReadStartMode.entries[seed % 2],
+                        memorizeTime = MemorizeTime.entries[seed % MemorizeTime.entries.size],
+                        readInterval = ReadInterval.entries[seed % ReadInterval.entries.size],
                     )
                     play(config, seed)
                 }

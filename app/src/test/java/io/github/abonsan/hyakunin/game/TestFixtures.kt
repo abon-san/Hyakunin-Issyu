@@ -46,7 +46,10 @@ internal val FAULTY_CPU = CpuProfile(0L, 0L, 1.0)
 /** 反応時間 [reaction] ms、お手つきしない CPU。 */
 internal fun steadyCpu(reaction: Long) = CpuProfile(reaction, reaction, 0.0)
 
-/** 配置と読み順を指定したエンジン。1文字の表示間隔は既定で 100ms。 */
+/**
+ * 配置と読み順を指定したエンジン。1文字の表示間隔は既定で 100ms。
+ * 読み始めの待ちは、既定では短い選択肢（札を覚える時間 10秒、読みの間 2秒）にする。
+ */
 internal fun layoutEngine(
     order: List<Int>,
     mode: RuleMode = RuleMode.COMPETITIVE,
@@ -56,8 +59,17 @@ internal fun layoutEngine(
     random: Random = ZeroRandom,
     charMillis: Long = 100L,
     poems: List<Poem> = SYNTHETIC_POEMS,
+    readStartMode: ReadStartMode = ReadStartMode.AUTO,
+    memorizeTime: MemorizeTime = MemorizeTime.SEC_10,
+    readInterval: ReadInterval = ReadInterval.SEC_2,
 ): MatchEngine = MatchEngine.withLayout(
-    config = GameConfig(ruleMode = mode, emptyCardCount = 0),
+    config = GameConfig(
+        ruleMode = mode,
+        emptyCardCount = 0,
+        readStartMode = readStartMode,
+        memorizeTime = memorizeTime,
+        readInterval = readInterval,
+    ),
     random = random,
     poems = poems,
     playerNos = player,
@@ -67,9 +79,9 @@ internal fun layoutEngine(
     profile = profile,
 )
 
-/** Waiting を終えて次の読みを始める（直前の Waiting 開始から 1500ms 経っている必要がある）。 */
+/** Waiting の待ちを飛ばして（読み開始の指示を出して）次の読みを始める。 */
 internal fun MatchEngine.beginRead(): ReadSession {
-    advanceBy(1500L)
+    startReading()
     check(snapshot().phase == MatchPhase.Reading) { "phase=${snapshot().phase}" }
     return session!!
 }

@@ -87,7 +87,7 @@ class MatchEngineSetupTest {
                 Random(0),
                 SYNTHETIC_POEMS,
             )
-            e.advanceBy(1500L)
+            e.startReading()
             val s = e.session!!
             assertEquals(speed.charMillis, s.kanaAt[0] - s.startMillis)
         }
@@ -97,7 +97,6 @@ class MatchEngineSetupTest {
     fun readTimingDefaults() {
         val t = ReadTiming.of(ReadingSpeed.NORMAL)
         assertEquals(230L, t.charMillis)
-        assertEquals(1500L, t.waitMillis)
         assertEquals(1200L, t.emptyTailMillis)
         assertEquals(1500L, t.noTakerMillis)
         assertEquals(1200L, t.resultAutoMillis)

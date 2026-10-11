@@ -133,7 +133,7 @@ internal class MatchEngine private constructor(
     }
 
     private fun nextEventTime(): Long? = when (phase) {
-        Phase.WAITING -> phaseStartedAt + timing.waitMillis
+        Phase.WAITING -> waitMillis()?.let { phaseStartedAt + it }
         Phase.READING -> {
             val s = session!!
             listOfNotNull(s.cpuPlan?.atMillis, readEndTime(s)).minOrNull()
@@ -141,6 +141,18 @@ internal class MatchEngine private constructor(
         Phase.RESULT -> if (autoAdvance) phaseStartedAt + timing.resultAutoMillis else null
         Phase.FINISHED -> null
     }
+
+    /**
+     * Waiting の長さ（ms）。最初の読みの前は [GameConfig.memorizeTime]、2枚目以降は [GameConfig.readInterval]。
+     * [ReadStartMode.TAP] では自動では終わらないので null。
+     */
+    private fun waitMillis(): Long? = when (config.readStartMode) {
+        ReadStartMode.AUTO -> if (isFirstWait) config.memorizeTime.millis else config.readInterval.millis
+        ReadStartMode.TAP -> null
+    }
+
+    /** まだ1枚も読んでいない（札を覚える時間の）Waiting か。 */
+    private val isFirstWait: Boolean get() = phase == Phase.WAITING && nextReadIndex == 0
 
     /** 誰も取らずに読みが終わる時刻。まだ決まっていなければ null。 */
     private fun readEndTime(s: ReadSession): Long? = when {
@@ -179,6 +191,11 @@ internal class MatchEngine private constructor(
     }
 
     // ---- 読みの開始 ----
+
+    /** Waiting 中に、残りの待ちを飛ばして（または [ReadStartMode.TAP] で）直ちに次の札を読み始める。Waiting 以外では何もしない。 */
+    fun startReading() {
+        if (phase == Phase.WAITING) startRead()
+    }
 
     private fun startRead() {
         if (nextReadIndex >= readOrder.size) {
@@ -504,7 +521,16 @@ internal class MatchEngine private constructor(
             readsDone = readsDone,
             totalReads = readOrder.size,
             isPaused = false,
+            waitRemainingMillis = waitRemainingMillis(),
+            isMemorizing = isFirstWait,
         )
+    }
+
+    /** AUTO の Waiting 中の残り時間（ms）。それ以外は null。 */
+    private fun waitRemainingMillis(): Long? {
+        if (phase != Phase.WAITING) return null
+        val wait = waitMillis() ?: return null
+        return (phaseStartedAt + wait - nowMillis).coerceAtLeast(0L)
     }
 
     // ---- 補助 ----

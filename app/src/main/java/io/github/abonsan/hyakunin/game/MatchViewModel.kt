@@ -83,6 +83,12 @@ class MatchViewModel internal constructor(
         publish()
     }
 
+    override fun onStartReading() {
+        if (paused) return
+        engine.startReading()
+        publish()
+    }
+
     override fun onRestart() {
         engine = engineFactory()
         lastClock = clock()

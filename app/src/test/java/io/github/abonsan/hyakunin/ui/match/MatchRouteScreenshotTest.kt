@@ -90,7 +90,9 @@ class MatchRouteScreenshotTest {
                 }
             }
         }
-        advance(1_500L + 1_000L)
+        // 札を覚える時間を飛ばしてから読みを進める
+        composeRule.runOnUiThread { vm.onStartReading() }
+        advance(1_000L)
         val revealed = vm.uiState.value.reading!!.revealedKana
 
         composeRule.runOnUiThread { composeRule.activity.onBackPressedDispatcher.onBackPressed() }
@@ -142,8 +144,9 @@ class MatchRouteScreenshotTest {
         composeRule.onNodeWithText("まもなく読み始めます").assertExists()
         composeRule.captureScreenshot("route_waiting")
 
-        // 次の読みまでの待ち 1500ms のあと、仮名を1文字ずつ表示する
-        advance(1_500L + 2_000L)
+        // 札を覚える時間を「すぐ読む」で飛ばすと、仮名を1文字ずつ表示する
+        composeRule.runOnUiThread { vm.onStartReading() }
+        advance(2_000L)
         val state = vm.uiState.value
         assertEquals(MatchPhase.Reading, state.phase)
         val reading = state.reading!!

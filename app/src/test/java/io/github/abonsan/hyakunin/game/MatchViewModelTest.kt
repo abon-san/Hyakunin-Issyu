@@ -22,6 +22,10 @@ class MatchViewModelTest {
     private lateinit var scheduler: TestCoroutineScheduler
     private val viewModels = mutableListOf<MatchViewModel>()
 
+    /** layoutEngine の既定の待ち（札を覚える時間 10秒 / 読みの間 2秒）。 */
+    private val memorize = MemorizeTime.SEC_10.millis
+    private val interval = ReadInterval.SEC_2.millis
+
     @Before
     fun setUp() {
         scheduler = TestCoroutineScheduler()
@@ -65,7 +69,17 @@ class MatchViewModelTest {
         player: List<Int> = listOf(1, 2, 3, 4, 5),
         cpu: List<Int> = listOf(6, 7, 8, 9, 10),
         profile: CpuProfile = SLOW_CPU,
-    ) = { layoutEngine(order = order, mode = mode, player = player, cpu = cpu, profile = profile) }
+        readStartMode: ReadStartMode = ReadStartMode.AUTO,
+    ) = {
+        layoutEngine(
+            order = order,
+            mode = mode,
+            player = player,
+            cpu = cpu,
+            profile = profile,
+            readStartMode = readStartMode,
+        )
+    }
 
     @Test
     fun startsInWaitingWithTheDealtCards() {
@@ -82,12 +96,14 @@ class MatchViewModelTest {
         assertFalse(st.playerLockedOut)
         assertEquals(0, st.pendingPlayerSends)
         assertEquals(0, st.playerTakenCount + st.cpuTakenCount + st.playerFaultCount + st.cpuFaultCount)
+        assertEquals(memorize, st.waitRemainingMillis)
+        assertTrue(st.isMemorizing)
     }
 
     @Test
     fun readingProgressesWithTime() {
         val h = harness(factory = layout(order = listOf(1, 6)))
-        advance(1480L)
+        advance(memorize - 20L)
         assertEquals(MatchPhase.Waiting, h.state.phase)
         advance(20L)
         assertEquals(MatchPhase.Reading, h.state.phase)
@@ -111,7 +127,7 @@ class MatchViewModelTest {
     @Test
     fun pausingStopsTimeAndIgnoresTaps() {
         val h = harness(factory = layout(order = listOf(1, 6)))
-        advance(1500L + 400L)
+        advance(memorize + 400L)
         assertEquals(4, h.state.reading!!.revealedKana)
         val engineTime = h.engine.nowMillis
 
@@ -145,7 +161,7 @@ class MatchViewModelTest {
     @Test
     fun pauseDuringWaitingDelaysTheStart() {
         val h = harness(factory = layout(order = listOf(1)))
-        advance(1000L)
+        advance(memorize - 500L)
         h.vm.setPaused(true)
         advance(30_000L)
         assertEquals(MatchPhase.Waiting, h.state.phase)
@@ -159,7 +175,7 @@ class MatchViewModelTest {
     @Test
     fun cpuTakesTheCardWhenPlayerDoesNothing() {
         val h = harness(factory = layout(order = listOf(6, 11), profile = steadyCpu(300L)))
-        advance(1500L)
+        advance(memorize)
         assertEquals(MatchPhase.Reading, h.state.phase)
         // 決まり字 200ms + 反応 300ms
         advance(480L)
@@ -179,7 +195,7 @@ class MatchViewModelTest {
     @Test
     fun playerTakesTheCardBeforeTheCpu() {
         val h = harness(factory = layout(order = listOf(1, 11), profile = steadyCpu(300L)))
-        advance(1500L + 400L)
+        advance(memorize + 400L)
         h.vm.onCardTap(Side.PLAYER, 1)
 
         val st = h.state
@@ -199,7 +215,7 @@ class MatchViewModelTest {
     @Test
     fun wrongTouchLocksOutThePlayer() {
         val h = harness(factory = layout(order = listOf(1, 11)))
-        advance(1500L + 300L)
+        advance(memorize + 300L)
         h.vm.onCardTap(Side.CPU, 6)
         assertTrue(h.state.playerLockedOut)
         assertEquals(1, h.state.playerFaultCount)
@@ -219,7 +235,7 @@ class MatchViewModelTest {
     @Test
     fun nextMovesOnAndWaitsForSendChoices() {
         val h = harness(factory = layout(order = listOf(6, 1)))
-        advance(1500L + 200L)
+        advance(memorize + 200L)
         h.vm.onCardTap(Side.CPU, 6)
         assertEquals(1, h.state.pendingPlayerSends)
 
@@ -237,7 +253,7 @@ class MatchViewModelTest {
         assertEquals(MatchPhase.Waiting, h.state.phase)
         // 直前の読みを保持している
         assertEquals(6, h.state.reading!!.poem.no)
-        advance(1500L)
+        advance(interval)
         assertEquals(MatchPhase.Reading, h.state.phase)
         assertEquals(1, h.state.reading!!.poem.no)
         assertEquals(2, h.state.reading!!.readNumber)
@@ -247,7 +263,7 @@ class MatchViewModelTest {
     @Test
     fun emptyCardAdvancesByItself() {
         val h = harness(factory = layout(order = listOf(11, 12)))
-        advance(1500L)
+        advance(memorize)
         assertEquals(MatchPhase.Reading, h.state.phase)
         // 上の句 1800ms + 1200ms
         advance(3000L)
@@ -256,7 +272,7 @@ class MatchViewModelTest {
         assertEquals("空札でした", h.state.lastResult!!.message)
         advance(1200L)
         assertEquals(MatchPhase.Waiting, h.state.phase)
-        advance(1500L)
+        advance(interval)
         assertEquals(MatchPhase.Reading, h.state.phase)
         assertEquals(12, h.state.reading!!.poem.no)
     }
@@ -264,7 +280,7 @@ class MatchViewModelTest {
     @Test
     fun finishingTheGameAndRestarting() {
         val h = harness(factory = layout(order = listOf(1, 11), player = listOf(1)))
-        advance(1500L + 100L)
+        advance(memorize + 100L)
         h.vm.onCardTap(Side.PLAYER, 1)
         assertEquals(MatchPhase.Result, h.state.phase)
         h.vm.onNext()
@@ -284,8 +300,10 @@ class MatchViewModelTest {
         assertEquals(0, st.playerTakenCount)
         assertEquals(0, st.readsDone)
 
-        // もう一度、最初から始まる
-        advance(1480L)
+        // もう一度、最初から始まる。読みの間ではなく札を覚える時間から
+        assertTrue(st.isMemorizing)
+        assertEquals(memorize, st.waitRemainingMillis)
+        advance(memorize - 20L)
         assertEquals(MatchPhase.Waiting, h.state.phase)
         advance(20L)
         assertEquals(MatchPhase.Reading, h.state.phase)
@@ -296,7 +314,7 @@ class MatchViewModelTest {
     @Test
     fun restartInTheMiddleOfAReading() {
         val h = harness(factory = layout(order = listOf(1, 6)))
-        advance(1500L + 700L)
+        advance(memorize + 700L)
         h.vm.onCardTap(Side.CPU, 6)
         assertEquals(1, h.state.playerFaultCount)
 
@@ -307,7 +325,7 @@ class MatchViewModelTest {
         assertFalse(st.playerLockedOut)
         assertNull(st.reading)
         // 古い試合のイベントは新しい試合に影響しない
-        advance(1500L)
+        advance(memorize)
         assertEquals(MatchPhase.Reading, h.state.phase)
         assertEquals(0, h.state.reading!!.revealedKana)
     }
@@ -321,7 +339,7 @@ class MatchViewModelTest {
         advance(10_000L)
         assertEquals(MatchPhase.Waiting, h.state.phase)
         h.vm.setPaused(false)
-        advance(1500L)
+        advance(memorize)
         assertEquals(MatchPhase.Reading, h.state.phase)
     }
 
@@ -346,7 +364,12 @@ class MatchViewModelTest {
     @Test
     fun publicConstructorDealsFromTheGivenPoems() {
         // 初級の CPU は反応が 1400ms 以上かかるので、最初の数文字の間は読みが続く
-        val config = GameConfig(emptyCardCount = 10, cpuLevel = CpuLevel.BEGINNER, readingSpeed = ReadingSpeed.FAST)
+        val config = GameConfig(
+            emptyCardCount = 10,
+            cpuLevel = CpuLevel.BEGINNER,
+            readingSpeed = ReadingSpeed.FAST,
+            memorizeTime = MemorizeTime.SEC_10,
+        )
         val vm = MatchViewModel(
             config = config,
             random = Random(7),
@@ -361,7 +384,7 @@ class MatchViewModelTest {
         assertEquals(20, st.totalReads)
         assertEquals(MatchPhase.Waiting, st.phase)
 
-        advance(1500L)
+        advance(MemorizeTime.SEC_10.millis)
         val reading = vm.uiState.value.reading!!
         assertEquals(MatchPhase.Reading, vm.uiState.value.phase)
         assertEquals(1, reading.readNumber)
@@ -375,7 +398,10 @@ class MatchViewModelTest {
         val vm = MatchViewModel(GameConfig(emptyCardCount = 0), clock = { scheduler.currentTime })
         viewModels += vm
         assertEquals(MatchPhase.Waiting, vm.uiState.value.phase)
-        advance(1500L)
+        // 既定は札を覚える時間 30秒
+        advance(MemorizeTime.SEC_30.millis - 20L)
+        assertEquals(MatchPhase.Waiting, vm.uiState.value.phase)
+        advance(20L)
         assertTrue(vm.uiState.value.phase is MatchPhase.Reading || vm.uiState.value.phase is MatchPhase.Finished)
     }
 
@@ -386,6 +412,8 @@ class MatchViewModelTest {
             emptyCardCount = 5,
             cpuLevel = CpuLevel.MASTER,
             readingSpeed = ReadingSpeed.FAST,
+            memorizeTime = MemorizeTime.SEC_10,
+            readInterval = ReadInterval.SEC_2,
         )
         val vm = MatchViewModel(
             config = config,
@@ -413,5 +441,169 @@ class MatchViewModelTest {
         val finished = vm.uiState.value.phase as MatchPhase.Finished
         // 名人は一度も取り逃さず、プレイヤーは何もしないので CPU が勝つ
         assertEquals(Side.CPU, finished.winner)
+    }
+
+    // ---- 読み始めまでの待ち ----
+
+    @Test
+    fun waitRemainingCountsDownWithTime() {
+        val h = harness(factory = layout(order = listOf(1, 6)))
+        assertEquals(memorize, h.state.waitRemainingMillis)
+        advance(2_000L)
+        assertEquals(memorize - 2_000L, h.state.waitRemainingMillis)
+        assertTrue(h.state.isMemorizing)
+        advance(memorize - 2_000L)
+        assertEquals(MatchPhase.Reading, h.state.phase)
+        assertNull(h.state.waitRemainingMillis)
+        assertFalse(h.state.isMemorizing)
+    }
+
+    @Test
+    fun waitRemainingStopsWhilePaused() {
+        val h = harness(factory = layout(order = listOf(1, 6)))
+        advance(3_000L)
+        val remaining = h.state.waitRemainingMillis
+        assertEquals(memorize - 3_000L, remaining)
+
+        h.vm.setPaused(true)
+        advance(60_000L)
+        assertEquals(remaining, h.state.waitRemainingMillis)
+        assertTrue(h.state.isPaused)
+        assertEquals(MatchPhase.Waiting, h.state.phase)
+
+        h.vm.setPaused(false)
+        advance(1_000L)
+        assertEquals(remaining!! - 1_000L, h.state.waitRemainingMillis)
+    }
+
+    @Test
+    fun waitBetweenReadsUsesTheReadInterval() {
+        val h = harness(factory = layout(order = listOf(6, 1)))
+        advance(memorize + 200L)
+        h.vm.onCardTap(Side.CPU, 6)
+        h.vm.onCardTap(Side.PLAYER, 3)
+        h.vm.onNext()
+
+        val st = h.state
+        assertEquals(MatchPhase.Waiting, st.phase)
+        assertEquals(interval, st.waitRemainingMillis)
+        assertFalse(st.isMemorizing)
+        advance(interval - 20L)
+        assertEquals(MatchPhase.Waiting, h.state.phase)
+        advance(20L)
+        assertEquals(MatchPhase.Reading, h.state.phase)
+    }
+
+    @Test
+    fun onStartReadingSkipsTheWait() {
+        val h = harness(factory = layout(order = listOf(1, 6)))
+        advance(1_000L)
+        h.vm.onStartReading()
+        val st = h.state
+        assertEquals(MatchPhase.Reading, st.phase)
+        assertEquals(1, st.reading!!.poem.no)
+        assertEquals(0, st.reading!!.revealedKana)
+        assertNull(st.waitRemainingMillis)
+        assertFalse(st.isMemorizing)
+
+        // 読み始めたら通常どおり進む
+        advance(300L)
+        assertEquals(3, h.state.reading!!.revealedKana)
+    }
+
+    @Test
+    fun onStartReadingSkipsTheReadIntervalToo() {
+        val h = harness(factory = layout(order = listOf(6, 1)))
+        h.vm.onStartReading()
+        h.vm.onCardTap(Side.CPU, 6)
+        h.vm.onCardTap(Side.PLAYER, 3)
+        h.vm.onNext()
+        assertEquals(MatchPhase.Waiting, h.state.phase)
+
+        h.vm.onStartReading()
+        assertEquals(MatchPhase.Reading, h.state.phase)
+        assertEquals(2, h.state.reading!!.readNumber)
+    }
+
+    @Test
+    fun onStartReadingIsIgnoredWhilePausedAndOutsideWaiting() {
+        val h = harness(factory = layout(order = listOf(1, 6)))
+        h.vm.setPaused(true)
+        h.vm.onStartReading()
+        assertEquals(MatchPhase.Waiting, h.state.phase)
+        assertTrue(h.state.isPaused)
+        h.vm.setPaused(false)
+
+        advance(memorize + 300L)
+        assertEquals(3, h.state.reading!!.revealedKana)
+        h.vm.onStartReading()
+        assertEquals(MatchPhase.Reading, h.state.phase)
+        assertEquals(1, h.state.reading!!.readNumber)
+        assertEquals(3, h.state.reading!!.revealedKana)
+
+        h.vm.onCardTap(Side.PLAYER, 1)
+        assertEquals(MatchPhase.Result, h.state.phase)
+        h.vm.onStartReading()
+        assertEquals(MatchPhase.Result, h.state.phase)
+    }
+
+    @Test
+    fun tapModeWaitsUntilOnStartReading() {
+        val h = harness(factory = layout(order = listOf(1, 6), readStartMode = ReadStartMode.TAP))
+        advance(10 * 60 * 1000L)
+        var st = h.state
+        assertEquals(MatchPhase.Waiting, st.phase)
+        assertNull(st.waitRemainingMillis)
+        assertTrue(st.isMemorizing)
+
+        h.vm.onStartReading()
+        assertEquals(MatchPhase.Reading, h.state.phase)
+        advance(100L)
+        h.vm.onCardTap(Side.PLAYER, 1)
+        h.vm.onNext()
+
+        // 2枚目の前も、押すまで待ち続ける
+        advance(10 * 60 * 1000L)
+        st = h.state
+        assertEquals(MatchPhase.Waiting, st.phase)
+        assertNull(st.waitRemainingMillis)
+        assertFalse(st.isMemorizing)
+        h.vm.onStartReading()
+        assertEquals(MatchPhase.Reading, h.state.phase)
+        assertEquals(2, h.state.reading!!.readNumber)
+    }
+
+    @Test
+    fun restartGoesBackToMemorizingEvenAfterReads() {
+        val h = harness(factory = layout(order = listOf(6, 1)))
+        advance(memorize + 200L)
+        h.vm.onCardTap(Side.CPU, 6)
+        h.vm.onCardTap(Side.PLAYER, 3)
+        h.vm.onNext()
+        advance(500L)
+        assertFalse(h.state.isMemorizing)
+        assertEquals(interval - 500L, h.state.waitRemainingMillis)
+
+        h.vm.onRestart()
+        val st = h.state
+        assertEquals(MatchPhase.Waiting, st.phase)
+        assertTrue(st.isMemorizing)
+        assertEquals(memorize, st.waitRemainingMillis)
+        advance(interval)
+        assertEquals(MatchPhase.Waiting, h.state.phase)
+        assertEquals(memorize - interval, h.state.waitRemainingMillis)
+    }
+
+    @Test
+    fun restartInTapModeWaitsAgain() {
+        val h = harness(factory = layout(order = listOf(1, 6), readStartMode = ReadStartMode.TAP))
+        h.vm.onStartReading()
+        assertEquals(MatchPhase.Reading, h.state.phase)
+        h.vm.onRestart()
+        assertEquals(MatchPhase.Waiting, h.state.phase)
+        assertTrue(h.state.isMemorizing)
+        assertNull(h.state.waitRemainingMillis)
+        advance(60_000L)
+        assertEquals(MatchPhase.Waiting, h.state.phase)
     }
 }

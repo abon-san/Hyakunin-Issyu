@@ -16,11 +16,12 @@ class MatchEngineReadingTest {
         assertEquals(1, e.state.totalReads)
         assertEquals(0, e.state.readsDone)
 
-        e.advanceTo(1499L)
+        // 最初の読みの前は、札を覚える時間（ここでは 10秒）だけ待つ
+        e.advanceTo(9_999L)
         assertEquals(MatchPhase.Waiting, e.state.phase)
         assertNull(e.state.reading)
 
-        e.advanceTo(1500L)
+        e.advanceTo(10_000L)
         val st = e.state
         assertEquals(MatchPhase.Reading, st.phase)
         val reading = st.reading!!
@@ -140,7 +141,8 @@ class MatchEngineReadingTest {
         e.advanceBy(1L)
         assertEquals(MatchPhase.Waiting, e.state.phase)
 
-        e.advanceBy(1499L)
+        // 2枚目以降は読みの間（ここでは 2秒）だけ待つ
+        e.advanceBy(1999L)
         assertEquals(MatchPhase.Waiting, e.state.phase)
         e.advanceBy(1L)
         assertEquals(MatchPhase.Reading, e.state.phase)
