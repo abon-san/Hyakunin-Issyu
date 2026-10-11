@@ -15,6 +15,7 @@ import io.github.abonsan.hyakunin.game.GameConfig
 import io.github.abonsan.hyakunin.game.MemorizeTime
 import io.github.abonsan.hyakunin.game.ReadStartMode
 import io.github.abonsan.hyakunin.game.RuleMode
+import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.ui.home.GameConfigStore
 import io.github.abonsan.hyakunin.ui.settings.AppSettings
 import io.github.abonsan.hyakunin.ui.settings.AppSettingsStore
@@ -105,13 +106,19 @@ class HyakuninAppTest {
         showApp()
         composeRule.onNodeWithText("設定").performClick()
         composeRule.onNodeWithText(ScreenOrientation.LANDSCAPE.label).performClick()
-        composeRule.onNodeWithText("敵陣の札を逆さに表示").performClick()
+        composeRule.onNodeWithText("敵陣の札を逆さに表示").performScrollTo().performClick()
+        composeRule.onNodeWithText(VerseStyle.READING.label).performScrollTo().performClick()
 
-        assertEquals(AppSettings(ScreenOrientation.LANDSCAPE, flipOpponentCards = false), settingsStore.load())
+        assertEquals(
+            AppSettings(ScreenOrientation.LANDSCAPE, flipOpponentCards = false, verseStyle = VerseStyle.READING),
+            settingsStore.load(),
+        )
         assertEquals(listOf(ScreenOrientation.LANDSCAPE), orientations)
         // 向きを変えないときは呼ばない
-        composeRule.onNodeWithText("敵陣の札を逆さに表示").performClick()
-        composeRule.onNodeWithText(ScreenOrientation.AUTO.label).performClick()
+        composeRule.onNodeWithText("敵陣の札を逆さに表示").performScrollTo().performClick()
+        composeRule.onNodeWithText(VerseStyle.KANA.label).performScrollTo().performClick()
+        assertEquals(VerseStyle.KANA, settingsStore.load().verseStyle)
+        composeRule.onNodeWithText(ScreenOrientation.AUTO.label).performScrollTo().performClick()
         assertEquals(listOf(ScreenOrientation.LANDSCAPE, ScreenOrientation.AUTO), orientations)
     }
 
@@ -143,18 +150,33 @@ class HyakuninAppTest {
     }
 
     @Test
-    fun theMatchIsStartedWithTheModeSettingsAndTheFlipSetting() {
+    fun theMatchIsStartedWithTheModeSettingsAndTheDisplaySettings() {
         configStore.save(GameConfig(ruleMode = RuleMode.SIMPLE, emptyCardCount = 30, cpuLevel = CpuLevel.BEGINNER))
-        settingsStore.save(AppSettings(flipOpponentCards = false))
+        settingsStore.save(AppSettings(flipOpponentCards = false, verseStyle = VerseStyle.READING))
         showApp()
         composeRule.onNodeWithText("簡易モード").performClick()
         composeRule.onNodeWithText("対戦開始").performClick()
 
         val config = activeMatch()!!.uiState.value.config
         assertEquals(
-            GameConfig(ruleMode = RuleMode.SIMPLE, emptyCardCount = 30, cpuLevel = CpuLevel.BEGINNER, flipOpponentCards = false),
+            GameConfig(
+                ruleMode = RuleMode.SIMPLE,
+                emptyCardCount = 30,
+                cpuLevel = CpuLevel.BEGINNER,
+                flipOpponentCards = false,
+                verseStyle = VerseStyle.READING,
+            ),
             config,
         )
         composeRule.onNodeWithText("相手（初級）").assertExists()
+    }
+
+    @Test
+    fun theFirstMatchShowsVersesInHistoricalKana() {
+        // 何も保存していない（初めて起動した）ときは、歴史的仮名遣いで対戦する
+        showApp()
+        composeRule.onNodeWithText("競技モード").performClick()
+        composeRule.onNodeWithText("対戦開始").performClick()
+        assertEquals(VerseStyle.KANA, activeMatch()!!.uiState.value.config.verseStyle)
     }
 }

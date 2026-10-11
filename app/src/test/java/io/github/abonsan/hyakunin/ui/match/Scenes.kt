@@ -8,6 +8,7 @@ import io.github.abonsan.hyakunin.game.ReadStartMode
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.Side
 import io.github.abonsan.hyakunin.game.Transfer
+import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.ui.Fixtures
 import io.github.abonsan.hyakunin.ui.Fixtures.card
 import io.github.abonsan.hyakunin.ui.Fixtures.cards
@@ -15,8 +16,13 @@ import io.github.abonsan.hyakunin.ui.Fixtures.cards
 /**
  * スクリーンショットに使う対戦の場面（偽の [MatchUiState]）。
  * 自陣は 1・17・33・61・87番、敵陣は 12・23・46・70・99番から始まる。
+ *
+ * 句の表示は、これまでのスクリーンショットと見比べられるよう読み（[VerseStyle.READING]）にする。
+ * 歴史的仮名遣い（[VerseStyle.KANA]）の場面は [kanaReading] と [kanaResult]。
  */
 internal object Scenes {
+    private val KanaConfig = GameConfig(verseStyle = VerseStyle.KANA)
+
     /** 最初の札を読む前（札を覚える時間）。30秒のうち残り25秒。 */
     fun memorizing(): MatchUiState = Fixtures.state(
         phase = MatchPhase.Waiting,
@@ -40,9 +46,21 @@ internal object Scenes {
         waitRemainingMillis = 2_300L,
     )
 
+    /** 読みの間。相手が自陣の87番を取り、相手から1枚（金の縁）送られてきた。4秒のうち残り3秒。 */
+    fun intervalAfterOneCardSent(): MatchUiState = Fixtures.state(
+        phase = MatchPhase.Waiting,
+        player = cards(1, 17, 33, 61) + listOf(card(12, isNew = true)),
+        cpu = cards(23, 46, 70, 99),
+        reading = Fixtures.reading(no = 87, readNumber = 6, totalReads = 20, revealed = 4),
+        readsDone = 6,
+        playerTaken = 2,
+        cpuTaken = 2,
+        waitRemainingMillis = 2_300L,
+    )
+
     /** タップで読み始める設定。敵陣の札を取って自陣の1番を送った後、「読み始める」を待っている。 */
     fun tapToStart(): MatchUiState = Fixtures.state(
-        config = GameConfig(readStartMode = ReadStartMode.TAP),
+        config = GameConfig(readStartMode = ReadStartMode.TAP, verseStyle = VerseStyle.READING),
         phase = MatchPhase.Waiting,
         player = cards(17, 33, 61, 87),
         cpu = cards(23, 46, 70, 99) + listOf(card(1, isNew = true)),
@@ -54,7 +72,7 @@ internal object Scenes {
 
     /** タップで読み始める設定で、最初の札を読む前。 */
     fun tapToStartFirst(): MatchUiState = Fixtures.state(
-        config = GameConfig(readStartMode = ReadStartMode.TAP),
+        config = GameConfig(readStartMode = ReadStartMode.TAP, verseStyle = VerseStyle.READING),
         phase = MatchPhase.Waiting,
         isMemorizing = true,
     )
@@ -70,7 +88,12 @@ internal object Scenes {
 
     /** 簡易ルール。下の句まで読み進めたところ。 */
     fun readingShimo(): MatchUiState = Fixtures.state(
-        config = GameConfig(ruleMode = RuleMode.SIMPLE, emptyCardCount = 30, cpuLevel = CpuLevel.MASTER),
+        config = GameConfig(
+            ruleMode = RuleMode.SIMPLE,
+            emptyCardCount = 30,
+            cpuLevel = CpuLevel.MASTER,
+            verseStyle = VerseStyle.READING,
+        ),
         reading = Fixtures.reading(no = 41, readNumber = 12, totalReads = 40, revealed = 23),
         readsDone = 11,
         playerTaken = 2,
@@ -141,7 +164,7 @@ internal object Scenes {
 
     /** 簡易ルール。決まり字（2文字）が出る前、1文字目で取った。 */
     fun takenEarly(): MatchUiState = Fixtures.state(
-        config = GameConfig(ruleMode = RuleMode.SIMPLE),
+        config = GameConfig(ruleMode = RuleMode.SIMPLE, verseStyle = VerseStyle.READING),
         phase = MatchPhase.Result,
         cpu = cards(12, 46, 70, 99),
         reading = Fixtures.reading(no = 23, readNumber = 9, totalReads = 20, revealed = 1),
@@ -211,7 +234,7 @@ internal object Scenes {
 
     /** 簡易ルールで、場の札をすべて読み終えて同数（引き分け）。 */
     fun draw(): MatchUiState = Fixtures.state(
-        config = GameConfig(ruleMode = RuleMode.SIMPLE, emptyCardCount = 0),
+        config = GameConfig(ruleMode = RuleMode.SIMPLE, emptyCardCount = 0, verseStyle = VerseStyle.READING),
         phase = MatchPhase.Finished(null),
         player = emptyList(),
         cpu = emptyList(),
@@ -249,5 +272,41 @@ internal object Scenes {
         cpuTaken = 3,
         playerFaults = 1,
         cpuFaults = 2,
+    )
+
+    /**
+     * 歴史的仮名遣いの表示で、敵陣の2番「はるすぎて」の下の句「ころもほすちょう」の「ち」まで
+     * （上の句17文字と「ころもほすち」の6文字）読んだところ。「ちょう」は「てふ」にあたるので、「てふ」まで見せる。
+     */
+    fun kanaReading(): MatchUiState = Fixtures.state(
+        config = KanaConfig,
+        cpu = cards(2, 23, 46, 70, 99),
+        reading = Fixtures.reading(no = 2, readNumber = 4, totalReads = 20, revealed = 23),
+        readsDone = 3,
+        playerTaken = 1,
+        cpuTaken = 1,
+        cpuFaults = 1,
+    )
+
+    /**
+     * 歴史的仮名遣いの表示で、自陣の61番「いにしえの」を下の句「きょうこ」（21文字目）まで読んで取った。
+     * 決まり字「いに」が緑、「けふこ」まで（表示では20文字目まで）が赤。
+     */
+    fun kanaResult(): MatchUiState = Fixtures.state(
+        config = KanaConfig,
+        phase = MatchPhase.Result,
+        player = cards(1, 17, 33, 87),
+        reading = Fixtures.reading(no = 61, readNumber = 5, totalReads = 20, revealed = 21),
+        lastResult = Fixtures.result(
+            no = 61,
+            kimarijiLength = 2,
+            revealedAtTake = 21,
+            takenBy = Side.PLAYER,
+            takenFrom = Side.PLAYER,
+            message = "自陣の札を取りました",
+        ),
+        readsDone = 5,
+        playerTaken = 2,
+        cpuTaken = 1,
     )
 }

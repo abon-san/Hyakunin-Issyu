@@ -324,11 +324,12 @@ private fun CenterArea(
         val reading = state.reading
         val result = state.lastResult
         when {
-            it == CenterContent.Reading && reading != null -> ReadingPanel(reading, notice)
+            it == CenterContent.Reading && reading != null -> ReadingPanel(reading, state.config.verseStyle, notice)
             it == CenterContent.Result && result != null -> ResultPanel(
                 result = result,
                 reading = reading,
                 ruleMode = state.config.ruleMode,
+                verseStyle = state.config.verseStyle,
                 pendingSends = if (state.phase == MatchPhase.Result) state.pendingPlayerSends else 0,
                 onNext = if (state.phase == MatchPhase.Result) onNext else null,
                 fieldsAside = fieldsAside,

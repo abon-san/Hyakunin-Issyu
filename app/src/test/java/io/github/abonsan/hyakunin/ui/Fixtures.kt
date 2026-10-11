@@ -11,6 +11,7 @@ import io.github.abonsan.hyakunin.game.ReadResult
 import io.github.abonsan.hyakunin.game.ReadingState
 import io.github.abonsan.hyakunin.game.Side
 import io.github.abonsan.hyakunin.game.Transfer
+import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.game.kanaCount
 
 /** スクリーンショットとテスト用の偽の対戦状態。歌はアプリの100首から取る。 */
@@ -59,8 +60,12 @@ internal object Fixtures {
         message = message,
     )
 
+    /**
+     * 対戦の状態。[config] の既定は、これまでのスクリーンショットと見比べられるよう、
+     * 句の表示を読み（[VerseStyle.READING]）にする（アプリの既定は歴史的仮名遣い）。
+     */
     fun state(
-        config: GameConfig = GameConfig(),
+        config: GameConfig = GameConfig(verseStyle = VerseStyle.READING),
         phase: MatchPhase = MatchPhase.Reading,
         player: List<FieldCard> = cards(1, 17, 33, 61, 87),
         cpu: List<FieldCard> = cards(12, 23, 46, 70, 99),

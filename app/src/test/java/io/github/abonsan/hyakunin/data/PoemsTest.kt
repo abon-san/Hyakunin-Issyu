@@ -17,12 +17,13 @@ class PoemsTest {
     }
 
     @Test
-    fun yomiAndTorifudaAreHiraganaSeparatedByIdeographicSpace() {
+    fun yomiAndKanaAreHiraganaSeparatedByIdeographicSpace() {
         val hiragana = Regex("[\\u3041-\\u3096]+(\\u3000[\\u3041-\\u3096]+)*")
         for (p in poems) {
             for ((name, value) in listOf(
                 "kamiYomi" to p.kamiYomi,
                 "shimoYomi" to p.shimoYomi,
+                "kamiKana" to p.kamiKana,
                 "shimoKana" to p.shimoKana,
                 "authorYomi" to p.authorYomi,
             )) {
@@ -39,7 +40,23 @@ class PoemsTest {
             assertEquals("${p.no} kamiYomi", 3, phrases(p.kamiYomi))
             assertEquals("${p.no} shimo", 2, phrases(p.shimo))
             assertEquals("${p.no} shimoYomi", 2, phrases(p.shimoYomi))
+            assertEquals("${p.no} kamiKana", 3, phrases(p.kamiKana))
             assertEquals("${p.no} shimoKana", 2, phrases(p.shimoKana))
+        }
+    }
+
+    @Test
+    fun kamiKanaIsHistoricalKanaWithOdorijiExpanded() {
+        assertEquals("あきのたの　かりほのいほの　とまをあらみ", Poems.byNo(1).kamiKana)
+        assertEquals("はるすぎて　なつきにけらし　しろたへの", Poems.byNo(2).kamiKana)
+        assertEquals("あふことの　たえてしなくば　なかなかに", Poems.byNo(44).kamiKana)
+        // 踊り字（ゝ・ゞ）は展開してある
+        assertEquals("かささぎの　わたせるはしに　おくしもの", Poems.byNo(6).kamiKana)
+        assertEquals("つきみれば　ちぢにものこそ　かなしけれ", Poems.byNo(23).kamiKana)
+        assertEquals("をぐらやま　みねのもみぢば　こころあらば", Poems.byNo(26).kamiKana)
+        assertEquals("ひとはいさ　こころもしらず　ふるさとは", Poems.byNo(35).kamiKana)
+        for (p in poems) {
+            assertTrue("${p.no} 踊り字が残っている", p.kamiKana.none { it == 'ゝ' || it == 'ゞ' })
         }
     }
 

@@ -7,7 +7,9 @@ import io.github.abonsan.hyakunin.game.MatchPhase
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.Side
 import io.github.abonsan.hyakunin.game.Transfer
+import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.game.kanaCount
+import io.github.abonsan.hyakunin.game.kimarijiLength
 import io.github.abonsan.hyakunin.ui.Fixtures
 import io.github.abonsan.hyakunin.ui.card.TORIFUDA_ASPECT_RATIO
 import org.junit.Assert.assertEquals
@@ -22,7 +24,7 @@ private fun String.withoutJoiners() = replace("\u2060", "")
 class MatchUiLogicTest {
     @Test
     fun verseNumbersKanaThroughBothVerses() {
-        val verse = verseOf(Poems.byNo(1))
+        val verse = verseOf(Poems.byNo(1), VerseStyle.READING)
         assertEquals(
             listOf(VerseLine("あきのたの", 0), VerseLine("かりおのいおの", 5), VerseLine("とまをあらみ", 12)),
             verse.kami,
@@ -31,18 +33,107 @@ class MatchUiLogicTest {
     }
 
     @Test
+    fun historicalKanaVerseIsNumberedByTheShownCharacters() {
+        val one = verseOf(Poems.byNo(1), VerseStyle.KANA)
+        assertEquals(
+            listOf(VerseLine("あきのたの", 0), VerseLine("かりほのいほの", 5), VerseLine("とまをあらみ", 12)),
+            one.kami,
+        )
+        assertEquals(listOf(VerseLine("わがころもでは", 18), VerseLine("つゆにぬれつつ", 25)), one.shimo)
+        // 2番は「ころもほすちょう」（8文字）が「ころもほすてふ」（7文字）になるので、続く句の番号も1つ前になる
+        val two = verseOf(Poems.byNo(2), VerseStyle.KANA)
+        assertEquals(listOf(VerseLine("ころもほすてふ", 17), VerseLine("あまのかぐやま", 24)), two.shimo)
+    }
+
+    @Test
     fun everyPoemHasThreeUpperAndTwoLowerPhrasesThatFitTheLayout() {
-        for (poem in Poems.all) {
-            val verse = verseOf(poem)
-            assertEquals("${poem.no}", 3, verse.kami.size)
-            assertEquals("${poem.no}", 2, verse.shimo.size)
-            val lines = verse.kami + verse.shimo
-            assertTrue("${poem.no}", lines.all { it.text.length <= MAX_PHRASE_KANA })
-            assertEquals("${poem.no}", kanaCount(poem.kamiYomi) + kanaCount(poem.shimoYomi), lines.sumOf { it.text.length })
-            // 句を横に並べるときの見積もり（上の句・下の句の最長）に収まる
-            assertTrue("${poem.no}", kanaCount(poem.kamiYomi) <= MAX_KAMI_KANA)
-            assertTrue("${poem.no}", kanaCount(poem.shimoYomi) <= MAX_SHIMO_KANA)
+        for (style in VerseStyle.entries) {
+            for (poem in Poems.all) {
+                val label = "${poem.no} $style"
+                val (kami, shimo) = when (style) {
+                    VerseStyle.READING -> poem.kamiYomi to poem.shimoYomi
+                    VerseStyle.KANA -> poem.kamiKana to poem.shimoKana
+                }
+                val verse = verseOf(poem, style)
+                // 歴史的仮名遣いでも読みに戻さず（対応づけできて）、表記どおりの句になる
+                assertEquals(label, kami.split('　'), verse.kami.map { it.text })
+                assertEquals(label, shimo.split('　'), verse.shimo.map { it.text })
+                assertTrue(label, (verse.kami + verse.shimo).all { it.text.length <= MAX_PHRASE_KANA })
+                assertEquals(label, kanaCount(kami) + kanaCount(shimo), verse.text.length)
+                // 句を横に並べるときの見積もり（上の句・下の句の最長）に収まる
+                assertTrue(label, kanaCount(kami) <= MAX_KAMI_KANA)
+                assertTrue(label, kanaCount(shimo) <= MAX_SHIMO_KANA)
+                // 読み終えたら（エンジンの仮名の総数）、表示の文字をすべて見せる
+                val total = kanaCount(poem.kamiYomi) + kanaCount(poem.shimoYomi)
+                assertEquals(label, verse.text.length, verse.displayCount(total))
+                assertEquals(label, 0, verse.displayCount(0))
+            }
         }
+    }
+
+    @Test
+    fun readingShowsTheHistoricalKanaForTheReadKana() {
+        // 2番の下の句「ころもほすちょう」は「ころもほすてふ」（上の句の17文字は1文字ずつ対応する）
+        val kana = verseOf(Poems.byNo(2), VerseStyle.KANA)
+        fun shown(revealed: Int) = kana.text.take(kana.displayCount(revealed))
+        assertEquals("はるすぎてなつきにけらししろたへのころもほす", shown(22))
+        // 「ち」を読んだら「てふ」まで見せ、「ちょう」を読み終えるまでそのまま
+        assertEquals("はるすぎてなつきにけらししろたへのころもほすてふ", shown(23))
+        assertEquals(shown(23), shown(24))
+        assertEquals(shown(23), shown(25))
+        assertEquals("はるすぎてなつきにけらししろたへのころもほすてふあ", shown(26))
+        // 読み終えたら全文（読みは32文字、歴史的仮名遣いは31文字）
+        assertEquals("はるすぎてなつきにけらししろたへのころもほすてふあまのかぐやま", shown(32))
+        // 範囲の外は端にそろえる
+        assertEquals(0, kana.displayCount(-1))
+        assertEquals(31, kana.displayCount(40))
+
+        // 読みで表示するときは、エンジンの数がそのまま表示の文字数
+        val reading = verseOf(Poems.byNo(2), VerseStyle.READING)
+        assertEquals("はるすぎてなつきにけらししろたえのころもほすち", reading.text.take(reading.displayCount(23)))
+        assertEquals((0..32).toList(), (0..32).map(reading::displayCount))
+    }
+
+    @Test
+    fun resultMarksMapKimarijiAndOverReadToTheShownVerse() {
+        // 61番を読みの21文字目（下の句の「きょうこ」）で取った。決まり字は「いに」
+        val result = Fixtures.result(
+            61, kimarijiLength = 2, revealedAtTake = 21, takenBy = Side.PLAYER, takenFrom = Side.PLAYER, message = "",
+        )
+        val kana = verseOf(result.poem, VerseStyle.KANA)
+        val marks = takeMarks(result, kana)
+        // 「きょう」は「けふ」なので、歴史的仮名遣いでは20文字目
+        assertEquals(TakeMarks(kimariji = 2, taken = 20), marks)
+        assertEquals(
+            List(2) { KanaTone.Kimariji } + List(18) { KanaTone.OverRead } + List(11) { KanaTone.Unread },
+            kana.text.indices.map(marks::toneOf),
+        )
+        assertEquals("しへのならのみやこのやへざくらけふこ", kana.text.substring(2, 20))
+        assertEquals("このへににほひぬるかな", kana.text.substring(20))
+        assertEquals("いに", kimarijiText(kana, marks))
+        assertEquals("決まり字は 2 字・20 字目で取りました", takeSummary(marks).withoutJoiners())
+
+        // 読みで表示するときは、エンジンの数のまま
+        val reading = verseOf(result.poem, VerseStyle.READING)
+        assertEquals(TakeMarks(kimariji = 2, taken = 21), takeMarks(result, reading))
+        assertEquals("いにしえのならのみやこのやえざくらきょうこ", reading.text.take(21))
+
+        // 上の句に「てふ」がある41番を「こいすち」まで読んで取った: 赤は「てふ」
+        val early = Fixtures.result(
+            41, kimarijiLength = 3, revealedAtTake = 4, takenBy = Side.CPU, takenFrom = Side.CPU, message = "",
+        )
+        val kana41 = verseOf(early.poem, VerseStyle.KANA)
+        val marks41 = takeMarks(early, kana41)
+        assertEquals(TakeMarks(kimariji = 3, taken = 5), marks41)
+        assertEquals("こひす", kimarijiText(kana41, marks41))
+        assertEquals(listOf(KanaTone.OverRead, KanaTone.OverRead, KanaTone.Unread), (3..5).map(marks41::toneOf))
+
+        // 取られなかった札（空札など）は決まり字だけを直す
+        val empty = Fixtures.result(
+            61, kimarijiLength = 2, revealedAtTake = null, takenBy = null, takenFrom = null, isEmptyCard = true,
+            message = "",
+        )
+        assertEquals(TakeMarks(kimariji = 2, taken = null), takeMarks(empty, kana))
     }
 
     @Test
@@ -58,10 +149,32 @@ class MatchUiLogicTest {
     }
 
     @Test
-    fun kimarijiIsTheHeadOfTheUpperVerse() {
-        assertEquals("あきの", kimarijiOf(Poems.byNo(1), 3))
-        assertEquals("む", kimarijiOf(Poems.byNo(87), 1))
-        assertEquals("あさぼらけあ", kimarijiOf(Poems.byNo(31), 6))
+    fun kimarijiIsTheHeadOfTheShownVerse() {
+        fun kimariji(no: Int, length: Int, style: VerseStyle): String {
+            val verse = verseOf(Poems.byNo(no), style)
+            val result = Fixtures.result(no, length, null, takenBy = null, takenFrom = null, message = "")
+            return kimarijiText(verse, takeMarks(result, verse))
+        }
+        assertEquals("あきの", kimariji(1, 3, VerseStyle.READING))
+        assertEquals("む", kimariji(87, 1, VerseStyle.READING))
+        assertEquals("あさぼらけあ", kimariji(31, 6, VerseStyle.READING))
+        assertEquals("おうこ", kimariji(44, 3, VerseStyle.READING))
+        // 歴史的仮名遣いでは、表示している表記の先頭
+        assertEquals("あきの", kimariji(1, 3, VerseStyle.KANA))
+        assertEquals("あふこ", kimariji(44, 3, VerseStyle.KANA))
+        assertEquals("をぐ", kimariji(26, 2, VerseStyle.KANA))
+        // 既に読まれた札が多く「お」の1文字で決まるときも、「お」にあたる「あふ」まで
+        assertEquals("あふ", kimariji(44, 1, VerseStyle.KANA))
+    }
+
+    @Test
+    fun standardKimarijiKeepsItsLengthInHistoricalKana() {
+        // 100首そろった状態の決まり字は、歴史的仮名遣いでも同じ文字数（決まり字の中で文字数の変わる表記は無い）
+        for (poem in Poems.all) {
+            val length = kimarijiLength(poem, Poems.all)
+            val verse = verseOf(poem, VerseStyle.KANA)
+            assertEquals("${poem.no}", length, verse.displayCount(length))
+        }
     }
 
     @Test
@@ -83,13 +196,15 @@ class MatchUiLogicTest {
 
     @Test
     fun takeSummaryDescribesWhenTheCardWasTaken() {
-        fun summary(kimariji: Int, taken: Int?) = takeSummary(
-            Fixtures.result(1, kimariji, taken, takenBy = Side.PLAYER, takenFrom = Side.PLAYER, message = ""),
-        )
+        fun summary(kimariji: Int, taken: Int?) = takeSummary(TakeMarks(kimariji, taken)).withoutJoiners()
         assertEquals("決まり字は 3 字・7 字目で取りました", summary(3, 7))
         assertEquals("決まり字は 3 字・3 字目で取りました", summary(3, 3))
         assertEquals("決まり字が出る前に取りました（2 字目）", summary(3, 2))
         assertEquals("決まり字は 3 字", summary(3, null))
+        // 数と「字」「字目」は行をまたいで分けない（文字の間に WORD JOINER）
+        val joined = takeSummary(TakeMarks(2, 20))
+        assertTrue(joined, "2\u2060 \u2060字・" in joined)
+        assertTrue(joined, "2\u20600\u2060 \u2060字\u2060目で" in joined)
     }
 
     @Test
@@ -285,6 +400,8 @@ class MatchUiLogicTest {
     @Test
     fun movedCardsNoteTellsWhereTheGoldEdgedCardsCameFrom() {
         assertEquals(null, movedCardsNote(0, 0))
+        // 送られてきた札が1枚なら枚数は添えず、2枚以上なら添える
+        assertEquals("金の縁は相手から送られてきた札です", movedCardsNote(1, 0))
         // 枚数の部分は行をまたいで分けない（文字の間に WORD JOINER）
         assertEquals("金の縁は相手から送られてきた札です（\u20602\u2060枚\u2060）", movedCardsNote(2, 0))
         assertEquals("金の縁は相手へ送った札です（1枚）", movedCardsNote(0, 1)!!.withoutJoiners())

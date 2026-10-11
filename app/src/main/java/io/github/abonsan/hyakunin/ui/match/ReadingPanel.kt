@@ -35,6 +35,7 @@ import io.github.abonsan.hyakunin.game.MatchUiState
 import io.github.abonsan.hyakunin.game.ReadingState
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.Side
+import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.ui.components.OrnamentTitle
 import io.github.abonsan.hyakunin.ui.components.WashiPanel
 import io.github.abonsan.hyakunin.ui.theme.Shu
@@ -70,19 +71,20 @@ private val ReadingHeaderHeight = 40.dp
 internal fun readCounterText(readNumber: Int, totalReads: Int) = "第 $readNumber 首 ／ 全 $totalReads 首"
 
 /**
- * 読み上げ中の表示。読みを [ReadingState.revealedKana] 文字まで見せる。
- * まだ読んでいない文字は透明で描き、文字が増えても配置が動かないようにする。
+ * 読み上げ中の表示。句を [verseStyle] の仮名遣いで書き、[ReadingState.revealedKana]（読みの仮名の数）に
+ * 対応する文字まで見せる。まだ読んでいない文字は透明で描き、文字が増えても配置が動かないようにする。
  * 下にはお手つきの知らせの欄を空けておき、残りの高さに収まる範囲で文字をなるべく大きくする。
  * 1句1行では収まらない低い欄（分割画面など）では、句を横に並べて詰める。
  */
 @Composable
 internal fun ReadingPanel(
     reading: ReadingState,
+    verseStyle: VerseStyle,
     notice: LockoutNotice?,
     modifier: Modifier = Modifier,
 ) {
-    val verse = rememberVerse(reading.poem)
-    val revealed = reading.revealedKana
+    val verse = rememberVerse(reading.poem, verseStyle)
+    val revealed = verse.displayCount(reading.revealedKana)
     CenterPanel(modifier) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val narrowNotice = maxWidth < WideNoticeMinWidth
@@ -100,8 +102,8 @@ internal fun ReadingPanel(
                 fittingVerseFontSize(verseWidth, verseRoom, max = fontMax, min = ReadingFontMin)
             }
             val spanFor = { index: Int -> if (index < revealed) Revealed else Hidden }
-            // 読み上げ済みの部分だけを読み上げ機能に渡す
-            val verseSemantics = Modifier.clearAndSetSemantics { contentDescription = revealedText(reading) }
+            // 読み上げ済みの部分（表示している文字）だけを読み上げ機能に渡す
+            val verseSemantics = Modifier.clearAndSetSemantics { contentDescription = verse.text.take(revealed) }
             Column(Modifier.fillMaxSize()) {
                 Box(
                     Modifier
@@ -154,11 +156,6 @@ internal fun CenterPanel(
         content = content,
     )
 }
-
-private fun revealedText(reading: ReadingState): String =
-    (reading.poem.kamiYomi + reading.poem.shimoYomi)
-        .filterNot { it.isWhitespace() }
-        .take(reading.revealedKana)
 
 /** お手つきなどで札を取れなくなったときの知らせ。 */
 internal data class LockoutNotice(

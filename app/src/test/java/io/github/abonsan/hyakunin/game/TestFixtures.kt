@@ -3,7 +3,7 @@ package io.github.abonsan.hyakunin.game
 import io.github.abonsan.hyakunin.data.Poem
 import kotlin.random.Random
 
-/** テスト用の歌。読みだけを指定し、表記・作者は仮の値にする。 */
+/** テスト用の歌。読みだけを指定し、表記・作者は仮の値にする。上の句の歴史的仮名遣いは読みと同じにする。 */
 internal fun testPoem(
     no: Int,
     kamiYomi: String,
@@ -14,6 +14,7 @@ internal fun testPoem(
     shimo = shimoYomi,
     kamiYomi = kamiYomi,
     shimoYomi = shimoYomi,
+    kamiKana = kamiYomi,
     shimoKana = "しも$no",
     author = "作者$no",
     authorYomi = "さくしゃ$no",

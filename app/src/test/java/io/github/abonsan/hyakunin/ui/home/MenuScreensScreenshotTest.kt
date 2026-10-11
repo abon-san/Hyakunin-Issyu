@@ -11,10 +11,12 @@ import io.github.abonsan.hyakunin.game.ReadInterval
 import io.github.abonsan.hyakunin.game.ReadStartMode
 import io.github.abonsan.hyakunin.game.ReadingSpeed
 import io.github.abonsan.hyakunin.game.RuleMode
+import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.ui.captureScreenshot
 import io.github.abonsan.hyakunin.ui.settings.AppSettings
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
 import io.github.abonsan.hyakunin.ui.settings.SettingsScreen
+import io.github.abonsan.hyakunin.ui.settings.settingsDescription
 import io.github.abonsan.hyakunin.ui.theme.HyakuninTheme
 import org.junit.Rule
 import org.junit.Test
@@ -88,6 +90,10 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
             }
         }
         composeRule.onNodeWithText(ScreenOrientation.AUTO.description).assertExists()
+        // 句の表示の既定は歴史的仮名遣い。選んでいない方の説明は読み上げない
+        composeRule.onNodeWithText("句の表示").assertExists()
+        composeRule.onNodeWithText(VerseStyle.KANA.settingsDescription).assertExists()
+        composeRule.onNodeWithText(VerseStyle.READING.settingsDescription).assertDoesNotExist()
         capture("settings")
     }
 }

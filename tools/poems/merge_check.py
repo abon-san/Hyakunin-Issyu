@@ -2,7 +2,9 @@
 """Wikisource の100首とエージェント作成データを照合し、検証レポートを出す。
 
 - kami / shimo / shimoKana / author は Wikisource との差分を INFO として出す（語の一致を確認する材料）。
+- kamiKana は Wikisource の上の句の歴史的仮名遣い（踊り字を展開したもの）と一致し、ひらがなと U+3000 のみの3句であること。
 - kamiYomi / shimoYomi は Wikisource の歴史的仮名遣いの正当な現代仮名遣い表記になっているかを許容正規表現で照合。
+  あわせて kamiKana / shimoKana との句ごとの対応も照合する（表示の文字位置の対応 game/KanaAlignment.kt が成り立つ条件）。
 - 初期決まり字（音で判定、長音「おう」=「おお」）を Wikisource の太字と比較（44番のみ標準の三字「おうこ」）。
 使い方: merge_check.py <wikisource.json> <repo>
 ISSUES は要修正（0件にする）、INFO は要確認（妥当なら残してよい）。
@@ -42,7 +44,7 @@ for w in WS:
             w[f] = expand_odoriji(w[f])
 ROOT = pathlib.Path(sys.argv[2])
 DATA = ROOT / "app/src/main/java/io/github/abonsan/hyakunin/data"
-FIELDS = ["kami", "shimo", "kamiYomi", "shimoYomi", "shimoKana", "author", "authorYomi"]
+FIELDS = ["kami", "shimo", "kamiYomi", "shimoYomi", "kamiKana", "shimoKana", "author", "authorYomi"]
 SP = "　"
 
 agent = {}
@@ -114,10 +116,26 @@ for w in WS:
     for f in FIELDS:
         if not a[f]:
             issues[no].append(f"{f} missing")
-    if a["kamiYomi"] and not tolerant(nospace(w["kamiKanaHist"])).fullmatch(nospace(a["kamiYomi"])):
-        issues[no].append(f"kamiYomi '{a['kamiYomi']}' does not match hist '{w['kamiKanaHist']}'")
-    if a["shimoYomi"] and not tolerant(nospace(w["shimoKanaHist"])).fullmatch(nospace(a["shimoYomi"])):
-        issues[no].append(f"shimoYomi '{a['shimoYomi']}' does not match hist '{w['shimoKanaHist']}'")
+    # kamiKana: Wikisource の歴史的仮名遣い（句の区切りを U+3000 にしたもの）そのまま、ひらがなと U+3000 のみの3句
+    if a["kamiKana"]:
+        if a["kamiKana"] != w["kamiKanaHist"].replace(" ", SP):
+            issues[no].append(f"kamiKana '{a['kamiKana']}' != wikisource '{w['kamiKanaHist']}'")
+        if not re.fullmatch(f"[ぁ-ゖ]+({SP}[ぁ-ゖ]+){{2}}", a["kamiKana"]):
+            issues[no].append(f"kamiKana is not 3 hiragana phrases separated by U+3000: '{a['kamiKana']}'")
+    # 読みは、歴史的仮名遣いの正当な現代仮名遣い表記であること（句ごと）。表示の対応づけはこの句ごとの対応を前提にする
+    for yomi_f, kana_f, hist in [("kamiYomi", "kamiKana", "kamiKanaHist"), ("shimoYomi", "shimoKana", "shimoKanaHist")]:
+        if not a[yomi_f]:
+            continue
+        if not tolerant(nospace(w[hist])).fullmatch(nospace(a[yomi_f])):
+            issues[no].append(f"{yomi_f} '{a[yomi_f]}' does not match hist '{w[hist]}'")
+        if a[kana_f]:
+            ys, ks = a[yomi_f].split(SP), a[kana_f].split(SP)
+            if len(ys) != len(ks):
+                issues[no].append(f"{yomi_f} phrase count {len(ys)} != {kana_f} phrase count {len(ks)}")
+            else:
+                for y, k in zip(ys, ks):
+                    if not tolerant(k).fullmatch(y):
+                        issues[no].append(f"{yomi_f} phrase '{y}' does not match {kana_f} phrase '{k}'")
     if a["authorYomi"] and not tolerant(nospace(w["authorKanaHist"])).fullmatch(nospace(a["authorYomi"])):
         info[no].append(f"authorYomi '{a['authorYomi']}' vs hist '{w['authorKanaHist']}'")
     for f in ["kamiYomi", "shimoYomi", "authorYomi"]:

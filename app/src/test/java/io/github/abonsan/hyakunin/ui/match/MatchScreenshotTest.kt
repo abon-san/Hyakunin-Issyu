@@ -33,6 +33,14 @@ class MatchScreenshotTest : MatchScenesScreenshotTest(prefix = "match", fieldsAs
     }
 
     @Test
+    fun waitingAfterOneCardWasSent() {
+        show(Scenes.intervalAfterOneCardSent())
+        // 送られてきた札が1枚なら枚数は添えない
+        composeRule.onNodeWithText("金の縁は相手から送られてきた札です").assertExists()
+        capture("waiting_interval_one")
+    }
+
+    @Test
     fun resultAfterFaultListsBothTransfers() {
         show(Scenes.resultAfterFault())
         // 送り札と罰の送り札
@@ -43,7 +51,7 @@ class MatchScreenshotTest : MatchScenesScreenshotTest(prefix = "match", fieldsAs
     fun emptyCard() {
         show(Scenes.emptyCard())
         composeRule.onNodeWithText("空札でした").assertExists()
-        composeRule.onNodeWithText("決まり字は 3 字").assertExists()
+        composeRule.onNodeWithText(takeSummary(TakeMarks(kimariji = 3, taken = null))).assertExists()
         capture("result_empty")
     }
 
@@ -57,7 +65,7 @@ class MatchScreenshotTest : MatchScenesScreenshotTest(prefix = "match", fieldsAs
     @Test
     fun takenBeforeTheKimarijiInSimpleRule() {
         show(Scenes.takenEarly())
-        composeRule.onNodeWithText("決まり字が出る前に取りました（1 字目）").assertExists()
+        composeRule.onNodeWithText(takeSummary(TakeMarks(kimariji = 2, taken = 1))).assertExists()
         capture("result_early")
     }
 

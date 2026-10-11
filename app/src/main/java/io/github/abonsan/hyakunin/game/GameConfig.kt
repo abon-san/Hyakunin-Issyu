@@ -34,6 +34,24 @@ enum class ReadingSpeed(val label: String, val charMillis: Long) {
     FAST("はやい", 160L),
 }
 
+/**
+ * 句の表示に使う仮名遣い。表示だけに使い、エンジンの動作（決まり字・読み上げ・判定）は変えない。
+ * エンジンは常に読み（現代仮名遣い）の仮名の数で数えるので、[KANA] の表示は `verseBoundaries` で文字数に変換する。
+ */
+enum class VerseStyle(val label: String, val description: String) {
+    /** 読み上げるとおりの現代仮名遣い（例:「きょう」「ちょう」）。 */
+    READING(
+        label = "読み（現代仮名遣い）",
+        description = "読み上げるとおりの現代仮名遣いで表示する。例: きょう、ちょう",
+    ),
+
+    /** 漢字をひらがなにしただけの歴史的仮名遣い（例:「けふ」「てふ」）。取り札と同じ表記。 */
+    KANA(
+        label = "歴史的仮名遣い",
+        description = "漢字をひらがなに直しただけの表記（取り札と同じ）で表示する。例: けふ、てふ",
+    ),
+}
+
 /** 次の札を読み始めるきっかけ。 */
 enum class ReadStartMode(val label: String) {
     /** 開始前は [GameConfig.memorizeTime]、以後は [GameConfig.readInterval] だけ待って自動で読み始める。 */
@@ -67,6 +85,8 @@ data class GameConfig(
     val readingSpeed: ReadingSpeed = ReadingSpeed.NORMAL,
     /** 敵陣の札を相手向き（上下逆さ）に表示するか。 */
     val flipOpponentCards: Boolean = true,
+    /** 句の表示に使う仮名遣い。表示だけに使う設定で、エンジンの動作は変えない。 */
+    val verseStyle: VerseStyle = VerseStyle.KANA,
     val readStartMode: ReadStartMode = ReadStartMode.AUTO,
     val memorizeTime: MemorizeTime = MemorizeTime.SEC_30,
     val readInterval: ReadInterval = ReadInterval.SEC_4,

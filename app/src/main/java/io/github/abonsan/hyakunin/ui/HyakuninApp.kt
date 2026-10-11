@@ -26,6 +26,7 @@ import io.github.abonsan.hyakunin.game.ReadInterval
 import io.github.abonsan.hyakunin.game.ReadStartMode
 import io.github.abonsan.hyakunin.game.ReadingSpeed
 import io.github.abonsan.hyakunin.game.RuleMode
+import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.ui.home.GameConfigStore
 import io.github.abonsan.hyakunin.ui.home.MatchSetupScreen
 import io.github.abonsan.hyakunin.ui.home.TopScreen
@@ -86,7 +87,11 @@ fun HyakuninApp(
                 configStore.save(it)
             },
             onStart = {
-                matchConfig = setupConfig.copy(flipOpponentCards = settings.flipOpponentCards)
+                // 画面の設定（敵陣の札の向き・句の表示）は、対戦を始めるときに対戦設定へ移す
+                matchConfig = setupConfig.copy(
+                    flipOpponentCards = settings.flipOpponentCards,
+                    verseStyle = settings.verseStyle,
+                )
                 matchId++
                 screen = Screen.MATCH
             },
@@ -109,7 +114,7 @@ fun HyakuninApp(
 }
 
 /** [GameConfig] を画面の状態として保存する。 */
-private val GameConfigSaver: Saver<GameConfig, Any> = listSaver(
+internal val GameConfigSaver: Saver<GameConfig, Any> = listSaver(
     save = {
         listOf(
             it.ruleMode.name,
@@ -117,6 +122,7 @@ private val GameConfigSaver: Saver<GameConfig, Any> = listSaver(
             it.cpuLevel.name,
             it.readingSpeed.name,
             it.flipOpponentCards,
+            it.verseStyle.name,
             it.readStartMode.name,
             it.memorizeTime.name,
             it.readInterval.name,
@@ -129,9 +135,10 @@ private val GameConfigSaver: Saver<GameConfig, Any> = listSaver(
             cpuLevel = CpuLevel.valueOf(it[2] as String),
             readingSpeed = ReadingSpeed.valueOf(it[3] as String),
             flipOpponentCards = it[4] as Boolean,
-            readStartMode = ReadStartMode.valueOf(it[5] as String),
-            memorizeTime = MemorizeTime.valueOf(it[6] as String),
-            readInterval = ReadInterval.valueOf(it[7] as String),
+            verseStyle = VerseStyle.valueOf(it[5] as String),
+            readStartMode = ReadStartMode.valueOf(it[6] as String),
+            memorizeTime = MemorizeTime.valueOf(it[7] as String),
+            readInterval = ReadInterval.valueOf(it[8] as String),
         )
     },
 )

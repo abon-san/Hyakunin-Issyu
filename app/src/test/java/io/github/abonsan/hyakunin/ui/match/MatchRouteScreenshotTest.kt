@@ -19,6 +19,7 @@ import io.github.abonsan.hyakunin.game.CpuLevel
 import io.github.abonsan.hyakunin.game.GameConfig
 import io.github.abonsan.hyakunin.game.MatchPhase
 import io.github.abonsan.hyakunin.game.MatchViewModel
+import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.ui.advanceMainLooper
 import io.github.abonsan.hyakunin.ui.captureScreenshot
 import io.github.abonsan.hyakunin.ui.captureWholeScreen
@@ -48,7 +49,8 @@ abstract class MatchRouteScenesTest(private val prefix: String) {
         override val viewModelStore: ViewModelStore get() = store
     }
 
-    protected val config = GameConfig(emptyCardCount = 10, cpuLevel = CpuLevel.BEGINNER)
+    /** 句の表示は、これまでのスクリーンショットと見比べられるよう読み（現代仮名遣い）にする。 */
+    protected val config = GameConfig(emptyCardCount = 10, cpuLevel = CpuLevel.BEGINNER, verseStyle = VerseStyle.READING)
 
     @After
     fun tearDown() = store.clear()

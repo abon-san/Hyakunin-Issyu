@@ -18,9 +18,12 @@ import io.github.abonsan.hyakunin.game.ReadInterval
 import io.github.abonsan.hyakunin.game.ReadStartMode
 import io.github.abonsan.hyakunin.game.ReadingSpeed
 import io.github.abonsan.hyakunin.game.RuleMode
+import io.github.abonsan.hyakunin.game.VerseStyle
+import io.github.abonsan.hyakunin.ui.captureScreenshot
 import io.github.abonsan.hyakunin.ui.settings.AppSettings
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
 import io.github.abonsan.hyakunin.ui.settings.SettingsScreen
+import io.github.abonsan.hyakunin.ui.settings.settingsDescription
 import io.github.abonsan.hyakunin.ui.theme.HyakuninTheme
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -107,11 +110,39 @@ class MenuScreenshotTest : MenuScreensScreenshotTest(prefix = "") {
                 SettingsScreen(settings = settings, onSettingsChange = { settings = it }, onBack = { back = true })
             }
         }
+        // 句の表示は歴史的仮名遣いが選ばれている
+        composeRule.onNodeWithText(VerseStyle.KANA.label).assertIsSelected()
+        composeRule.onNodeWithText(VerseStyle.KANA.settingsDescription).assertExists()
         composeRule.onNodeWithText(ScreenOrientation.LANDSCAPE.label).performClick()
         composeRule.onNodeWithText(ScreenOrientation.LANDSCAPE.description).assertExists()
-        composeRule.onNodeWithText("敵陣の札を逆さに表示").performClick()
-        assertEquals(AppSettings(orientation = ScreenOrientation.LANDSCAPE, flipOpponentCards = false), settings)
+        composeRule.onNodeWithText(VerseStyle.READING.label).performScrollTo().performClick()
+        composeRule.onNodeWithText(VerseStyle.READING.label).assertIsSelected()
+        composeRule.onNodeWithText(VerseStyle.READING.settingsDescription).assertExists()
+        composeRule.onNodeWithText("敵陣の札を逆さに表示").performScrollTo().performClick()
+        assertEquals(
+            AppSettings(
+                orientation = ScreenOrientation.LANDSCAPE,
+                flipOpponentCards = false,
+                verseStyle = VerseStyle.READING,
+            ),
+            settings,
+        )
         composeRule.onNodeWithContentDescription("戻る").performClick()
         assertEquals(true, back)
+    }
+
+    @Test
+    fun settingsWithTheReadingVerseStyle() {
+        composeRule.setContent {
+            HyakuninTheme {
+                SettingsScreen(
+                    settings = AppSettings(verseStyle = VerseStyle.READING, flipOpponentCards = false),
+                    onSettingsChange = {},
+                    onBack = {},
+                )
+            }
+        }
+        composeRule.onNodeWithText(VerseStyle.READING.settingsDescription).assertExists()
+        composeRule.captureScreenshot("settings_reading")
     }
 }

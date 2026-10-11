@@ -5,7 +5,10 @@ import android.content.pm.ActivityInfo
 import androidx.core.content.edit
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import io.github.abonsan.hyakunin.game.GameConfig
+import io.github.abonsan.hyakunin.game.VerseStyle
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
@@ -27,16 +30,27 @@ class AppSettingsTest {
 
     @Test
     fun defaultsWhenNothingIsSaved() {
-        assertEquals(AppSettings(ScreenOrientation.AUTO, flipOpponentCards = true), AppSettingsStore(context).load())
+        // 初めて起動したときの句の表示は歴史的仮名遣い（対戦設定の既定と同じ）
+        assertEquals(
+            AppSettings(ScreenOrientation.AUTO, flipOpponentCards = true, verseStyle = VerseStyle.KANA),
+            AppSettingsStore(context).load(),
+        )
+        assertEquals(GameConfig().verseStyle, AppSettings().verseStyle)
     }
 
     @Test
     fun savedSettingsAreRestored() {
         for (orientation in ScreenOrientation.entries) {
-            val settings = AppSettings(orientation = orientation, flipOpponentCards = orientation != ScreenOrientation.AUTO)
-            AppSettingsStore(context).save(settings)
-            // 別のインスタンス（アプリの再起動に相当）でも読める
-            assertEquals(settings, AppSettingsStore(context).load())
+            for (verseStyle in VerseStyle.entries) {
+                val settings = AppSettings(
+                    orientation = orientation,
+                    flipOpponentCards = orientation != ScreenOrientation.AUTO,
+                    verseStyle = verseStyle,
+                )
+                AppSettingsStore(context).save(settings)
+                // 別のインスタンス（アプリの再起動に相当）でも読める
+                assertEquals(settings, AppSettingsStore(context).load())
+            }
         }
     }
 
@@ -47,11 +61,37 @@ class AppSettingsTest {
     }
 
     @Test
+    fun settingsSavedByTheOlderVersionGetHistoricalKana() {
+        // 句の表示が無かった版で保存した設定は、そのまま引き継いで句の表示だけ既定の歴史的仮名遣いにする
+        prefs.edit {
+            putString("screen_orientation", ScreenOrientation.LANDSCAPE.name)
+            putBoolean("flip_opponent_cards", false)
+        }
+        assertEquals(
+            AppSettings(ScreenOrientation.LANDSCAPE, flipOpponentCards = false, verseStyle = VerseStyle.KANA),
+            AppSettingsStore(prefs).load(),
+        )
+    }
+
+    @Test
+    fun theVerseStyleIsSavedWithItsName() {
+        AppSettingsStore(prefs).save(AppSettings(verseStyle = VerseStyle.READING))
+        assertEquals("READING", prefs.getString("verse_style", null))
+        // 他の設定と同じ保存先（対戦設定とも共用）に、別のキーで保存する
+        assertTrue(prefs.contains("screen_orientation"))
+        assertTrue(prefs.contains("flip_opponent_cards"))
+    }
+
+    @Test
     fun brokenValuesFallBackToDefaults() {
         prefs.edit {
             putString("screen_orientation", "SIDEWAYS")
             putString("flip_opponent_cards", "yes")
+            putString("verse_style", "KATAKANA")
         }
         assertEquals(AppSettings(), AppSettingsStore(prefs).load())
+        // 型の違う値も読めない値として扱う
+        prefs.edit { putInt("verse_style", 1) }
+        assertEquals(VerseStyle.KANA, AppSettingsStore(prefs).load().verseStyle)
     }
 }

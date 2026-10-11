@@ -81,6 +81,8 @@ abstract class MatchScenesScreenshotTest(
     fun reading() {
         show(Scenes.reading())
         composeRule.onNodeWithText("第 4 首 ／ 全 20 首").assertExists()
+        // 読み（現代仮名遣い）で、読んだ9文字まで見せる
+        composeRule.onNodeWithContentDescription("いにしえのならのみ").assertExists()
         capture("reading")
     }
 
@@ -91,11 +93,29 @@ abstract class MatchScenesScreenshotTest(
     }
 
     @Test
+    fun readingInHistoricalKana() {
+        show(Scenes.kanaReading())
+        // 「ころもほすち」まで読んだところで、歴史的仮名遣いの「ころもほすてふ」まで見せる
+        composeRule.onNodeWithContentDescription("はるすぎてなつきにけらししろたへのころもほすてふ").assertExists()
+        capture("reading_kana")
+    }
+
+    @Test
+    fun resultInHistoricalKana() {
+        show(Scenes.kanaResult())
+        // 読みの21文字目（きょうこ）は、歴史的仮名遣いの20文字目（けふこ）
+        composeRule.onNodeWithText("決まり字「いに」").assertExists()
+        composeRule.onNodeWithText(OVER_READ_LABEL).assertExists()
+        composeRule.onNodeWithText(takeSummary(TakeMarks(kimariji = 2, taken = 20))).assertExists()
+        capture("result_kana")
+    }
+
+    @Test
     fun resultWithKimarijiAndOverRead() {
         val actions = RecordingActions()
         show(Scenes.result(), actions)
         composeRule.onNodeWithText(OVER_READ_LABEL).assertExists()
-        composeRule.onNodeWithText("決まり字は 3 字・7 字目で取りました").assertExists()
+        composeRule.onNodeWithText(takeSummary(TakeMarks(kimariji = 3, taken = 7))).assertExists()
         capture("result")
         composeRule.onNodeWithText("次へ").performClick()
         assertEquals(1, actions.nextCount)

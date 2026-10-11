@@ -15,13 +15,13 @@ private const val SETTINGS_PREFS_NAME = "game_config"
 /**
  * 対戦設定をルールのモードごとに SharedPreferences に保存・復元する。読めない値は既定値に戻す。
  * そのモードでまだ保存していない項目は、モード共通だった以前の保存値（旧キー）を引き継ぐ。
- * [GameConfig.flipOpponentCards] は画面の設定（AppSettingsStore）で持つので、ここでは扱わない。
+ * [GameConfig.flipOpponentCards] と [GameConfig.verseStyle] は画面の設定（AppSettingsStore）で持つので、ここでは扱わない。
  */
 class GameConfigStore(private val prefs: SharedPreferences) {
 
     constructor(context: Context) : this(settingsPreferences(context))
 
-    /** [mode] の対戦設定。[GameConfig.flipOpponentCards] は既定値のまま返す。 */
+    /** [mode] の対戦設定。[GameConfig.flipOpponentCards] と [GameConfig.verseStyle] は既定値のまま返す。 */
     fun load(mode: RuleMode): GameConfig {
         val default = GameConfig(ruleMode = mode)
         val keys = ModeKeys(mode)

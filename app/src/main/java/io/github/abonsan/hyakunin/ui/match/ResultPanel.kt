@@ -43,6 +43,7 @@ import io.github.abonsan.hyakunin.game.ReadingState
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.Side
 import io.github.abonsan.hyakunin.game.Transfer
+import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.ui.components.PrimaryButton
 import io.github.abonsan.hyakunin.ui.components.fadingBottomEdge
 import io.github.abonsan.hyakunin.ui.theme.Gofun
@@ -59,38 +60,39 @@ import io.github.abonsan.hyakunin.ui.theme.WashiDeep
 import io.github.abonsan.hyakunin.ui.theme.WashiLight
 import io.github.abonsan.hyakunin.ui.theme.noLineBreak
 
-/** 結果表示の読みの大きさの上限と下限。読み上げ中より一回り小さくする。 */
+/** 結果表示の句の大きさの上限と下限。読み上げ中より一回り小さくする。 */
 private val ResultFontMax = 24.dp
 private val ResultFontMin = 18.dp
 
-/** 結果表示で、読み以外（見出し・説明・凡例・ボタン）に使う高さの目安。 */
+/** 結果表示で、句以外（見出し・説明・凡例・ボタン）に使う高さの目安。 */
 private val ResultChromeHeight = 300.dp
 
-/** これより低い欄では、見出しを1行にまとめ、読みを句ごとに詰めて並べる。 */
+/** これより低い欄では、見出しを1行にまとめ、句を詰めて並べる。 */
 private val CompactPanelHeight = 380.dp
 
 /** これより低い欄では、「次へ」を見出しの横に置く。 */
 private val TightPanelHeight = 240.dp
 
-/** 詰めて並べるときの読みの大きさ。 */
+/** 詰めて並べるときの句の大きさ。 */
 private val CompactFontSize = 19.dp
 
-/** 読みと内訳を左右に並べられる欄の幅。 */
+/** 句と内訳を左右に並べられる欄の幅。 */
 private val WideResultMinWidth = 340.dp
 
-/** 左右に並べるときの読みの大きさの上限と下限。 */
+/** 左右に並べるときの句の大きさの上限と下限。 */
 private val WideFontMax = 28.dp
 private val WideFontMin = 16.dp
 
-/** 大きな欄（タブレットなど）で左右に並べるときの、読みの大きさの上限。 */
+/** 大きな欄（タブレットなど）で左右に並べるときの、句の大きさの上限。 */
 private val LargeWideFontMax = 40.dp
 
 /**
- * 1回の読みの結果。読みを全文表示し、決まり字を緑、取った時点で決まり字を超えて読まれていた部分を赤で示す。
- * 何が起きたかの説明と色分けした読みを先に、お手つき・送り札の内訳、歌の表記と作者を後に置く。
+ * 1回の読みの結果。句を [verseStyle] の仮名遣いで全文表示し、決まり字を緑、取った時点で決まり字を超えて
+ * 読まれていた部分を赤で示す（エンジンの読みの仮名の数は、表示の文字数に直して色分けする）。
+ * 何が起きたかの説明と色分けした句を先に、お手つき・送り札の内訳、歌の表記と作者を後に置く。
  * 入り切らないときは中だけ動かせる（ボタンや案内は常に見える）。
  *
- * 横に広い画面で欄に幅があるときは、左に色分けした読み、右に内訳と歌の表記を並べる。
+ * 横に広い画面で欄に幅があるときは、左に色分けした句、右に内訳と歌の表記を並べる。
  *
  * @param pendingSends 自陣から送る札をあと何枚選ぶか。0 より大きい間は「次へ」の代わりに案内を出す。
  * @param onNext 「次へ」。null なら出さない（試合終了後など）。
@@ -101,27 +103,32 @@ internal fun ResultPanel(
     result: ReadResult,
     reading: ReadingState?,
     ruleMode: RuleMode,
+    verseStyle: VerseStyle,
     pendingSends: Int,
     onNext: (() -> Unit)?,
     modifier: Modifier = Modifier,
     fieldsAside: Boolean = false,
 ) {
+    val verse = rememberVerse(result.poem, verseStyle)
+    val marks = takeMarks(result, verse)
     CenterPanel(modifier, shadowElevation = 3.dp) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             if (fieldsAside && maxWidth >= WideResultMinWidth) {
                 val large = maxWidth >= LargePanelSize && maxHeight >= LargePanelSize
-                WideResult(result, ruleMode, pendingSends, onNext, large)
+                WideResult(result, verse, marks, ruleMode, pendingSends, onNext, large)
             } else {
-                StackedResult(result, reading, ruleMode, pendingSends, onNext, fieldsAside, maxWidth, maxHeight)
+                StackedResult(result, verse, marks, reading, ruleMode, pendingSends, onNext, fieldsAside, maxWidth, maxHeight)
             }
         }
     }
 }
 
-/** 縦に積んだ結果。低い欄では見出しを1行にまとめ、読みを句ごとに詰めて並べる。 */
+/** 縦に積んだ結果。低い欄では見出しを1行にまとめ、句を詰めて並べる。 */
 @Composable
 private fun StackedResult(
     result: ReadResult,
+    verse: Verse,
+    marks: TakeMarks,
     reading: ReadingState?,
     ruleMode: RuleMode,
     pendingSends: Int,
@@ -131,7 +138,7 @@ private fun StackedResult(
     maxHeight: Dp,
 ) {
     val compact = maxHeight < CompactPanelHeight
-    // とても低い欄（分割画面など）では「次へ」を見出しの横に置き、色分けした読みに高さを回す
+    // とても低い欄（分割画面など）では「次へ」を見出しの横に置き、色分けした句に高さを回す
     val nextInHeader = onNext.takeIf { maxHeight < TightPanelHeight && pendingSends == 0 }
     val fontSize = if (compact) {
         CompactFontSize
@@ -143,8 +150,7 @@ private fun StackedResult(
             min = ResultFontMin,
         )
     }
-    val verse = rememberVerse(result.poem)
-    val spanFor = { index: Int -> kanaTone(index, result.kimarijiLength, result.revealedAtTake).spanStyle() }
+    val spanFor = { index: Int -> marks.toneOf(index).spanStyle() }
     val message = splitResultMessage(result.message)
     val scroll = rememberScrollState()
     Column(Modifier.fillMaxSize()) {
@@ -181,7 +187,7 @@ private fun StackedResult(
                 VerseText(verse, verseTextStyle(fontSize), spanFor, Modifier.fillMaxWidth())
             }
             Spacer(Modifier.height(10.dp))
-            KimarijiLegend(result, Modifier.fillMaxWidth())
+            KimarijiLegend(verse, marks, Modifier.fillMaxWidth())
             val notes = resultNotes(result, ruleMode)
             if (notes.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
@@ -197,19 +203,20 @@ private fun StackedResult(
 }
 
 /**
- * 横に広い欄の結果。上に印と説明と内訳（お手つき・送り札）、左に色分けした読み、
- * 右に凡例と歌の表記、下に「次へ」（または送る札の案内）。[large] なら（タブレットなど）読みを大きくする。
+ * 横に広い欄の結果。上に印と説明と内訳（お手つき・送り札）、左に色分けした句、
+ * 右に凡例と歌の表記、下に「次へ」（または送る札の案内）。[large] なら（タブレットなど）句を大きくする。
  */
 @Composable
 private fun WideResult(
     result: ReadResult,
+    verse: Verse,
+    marks: TakeMarks,
     ruleMode: RuleMode,
     pendingSends: Int,
     onNext: (() -> Unit)?,
     large: Boolean,
 ) {
-    val verse = rememberVerse(result.poem)
-    val spanFor = { index: Int -> kanaTone(index, result.kimarijiLength, result.revealedAtTake).spanStyle() }
+    val spanFor = { index: Int -> marks.toneOf(index).spanStyle() }
     val message = splitResultMessage(result.message)
     Column(Modifier.fillMaxSize()) {
         // 何枚目の読みかは成績の帯に出ているので、見出しは印と説明だけにする
@@ -267,7 +274,7 @@ private fun WideResult(
                     .verticalScroll(scroll)
                     .padding(vertical = 4.dp),
             ) {
-                KimarijiLegend(result, Modifier.fillMaxWidth(), stacked = true)
+                KimarijiLegend(verse, marks, Modifier.fillMaxWidth(), stacked = true)
                 Spacer(Modifier.height(10.dp))
                 HorizontalDivider(color = Kincha.copy(alpha = 0.35f))
                 Spacer(Modifier.height(8.dp))
@@ -361,18 +368,18 @@ internal fun splitResultMessage(message: String): ResultMessageParts {
 internal const val OVER_READ_LABEL = "読み過ぎた部分"
 
 /**
- * 凡例と、決まり字・取った位置のまとめ。
+ * 凡例と、決まり字・取った位置のまとめ。決まり字と文字数は表示している句（[verse]）の文字で示す。
  * [stacked] なら（狭い列）凡例を縦に並べて左にそろえる。
  */
 @Composable
-private fun KimarijiLegend(result: ReadResult, modifier: Modifier = Modifier, stacked: Boolean = false) {
-    val taken = result.revealedAtTake
-    val early = taken != null && taken < result.kimarijiLength
-    val overRead = taken != null && taken > result.kimarijiLength
+private fun KimarijiLegend(verse: Verse, marks: TakeMarks, modifier: Modifier = Modifier, stacked: Boolean = false) {
+    val taken = marks.taken
+    val early = taken != null && taken < marks.kimariji
+    val overRead = taken != null && taken > marks.kimariji
     val items: @Composable () -> Unit = {
         LegendItem(
             color = KimarijiGreen,
-            text = "決まり字「${kimarijiOf(result.poem, result.kimarijiLength)}」",
+            text = "決まり字「${kimarijiText(verse, marks)}」",
             underline = true,
         )
         if (overRead) LegendItem(color = OverReadRed, text = OVER_READ_LABEL)
@@ -388,7 +395,7 @@ private fun KimarijiLegend(result: ReadResult, modifier: Modifier = Modifier, st
         }
         Spacer(Modifier.height(if (stacked) 6.dp else 4.dp))
         Text(
-            text = takeSummary(result),
+            text = takeSummary(marks),
             style = MaterialTheme.typography.bodySmall,
             fontWeight = if (early) FontWeight.Bold else null,
             color = if (early) Kon else UsuzumiText,
@@ -397,13 +404,17 @@ private fun KimarijiLegend(result: ReadResult, modifier: Modifier = Modifier, st
     }
 }
 
-/** 決まり字の長さと、取ったのが何文字目だったか。 */
-internal fun takeSummary(result: ReadResult): String {
-    val taken = result.revealedAtTake
+/**
+ * 決まり字の長さと、取ったのが何文字目だったか（どちらも表示している句の文字で数える）。
+ * 数と「字」「字目」は行をまたいで分けない。
+ */
+internal fun takeSummary(marks: TakeMarks): String {
+    val taken = marks.taken
+    val kimariji = noLineBreak("${marks.kimariji} 字")
     return when {
-        taken == null -> "決まり字は ${result.kimarijiLength} 字"
-        taken < result.kimarijiLength -> "決まり字が出る前に取りました（$taken 字目）"
-        else -> "決まり字は ${result.kimarijiLength} 字・$taken 字目で取りました"
+        taken == null -> "決まり字は $kimariji"
+        taken < marks.kimariji -> "決まり字が出る前に取りました（" + noLineBreak("$taken 字目") + "）"
+        else -> "決まり字は $kimariji・" + noLineBreak("$taken 字目") + "で取りました"
     }
 }
 

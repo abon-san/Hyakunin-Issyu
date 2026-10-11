@@ -94,11 +94,15 @@ internal fun remainingText(millis: Long): String {
     return if (seconds >= 60L) "${seconds / 60}分${(seconds % 60).toString().padStart(2, '0')}秒" else "${seconds}秒"
 }
 
-/** 送り札で動いた札（金の縁）の案内。動いた札が無ければ null。枚数の部分は行をまたいで分けない。 */
+/**
+ * 送り札で動いた札（金の縁）の案内。動いた札が無ければ null。枚数の部分は行をまたいで分けない。
+ * 相手から送られてきた札は、2枚以上のときだけ枚数を添える。
+ */
 internal fun movedCardsNote(toPlayer: Int, toCpu: Int): String? = when {
     toPlayer > 0 && toCpu > 0 ->
         "金の縁は送り札で動いた札です（" + noLineBreak("自陣へ${toPlayer}枚") + "・" + noLineBreak("敵陣へ${toCpu}枚") + "）"
-    toPlayer > 0 -> "金の縁は相手から送られてきた札です" + noLineBreak("（${toPlayer}枚）")
+    toPlayer > 1 -> "金の縁は相手から送られてきた札です" + noLineBreak("（${toPlayer}枚）")
+    toPlayer > 0 -> "金の縁は相手から送られてきた札です"
     toCpu > 0 -> "金の縁は相手へ送った札です" + noLineBreak("（${toCpu}枚）")
     else -> null
 }

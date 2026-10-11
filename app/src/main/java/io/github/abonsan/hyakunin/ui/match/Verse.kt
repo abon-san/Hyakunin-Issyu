@@ -21,35 +21,81 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.em
 import io.github.abonsan.hyakunin.data.Poem
+import io.github.abonsan.hyakunin.game.ReadResult
+import io.github.abonsan.hyakunin.game.VerseStyle
+import io.github.abonsan.hyakunin.game.verseBoundaries
 import io.github.abonsan.hyakunin.ui.theme.KimarijiGreen
 import io.github.abonsan.hyakunin.ui.theme.OverReadRed
 import io.github.abonsan.hyakunin.ui.theme.ShipporiMincho
 import io.github.abonsan.hyakunin.ui.theme.Sumi
 import io.github.abonsan.hyakunin.ui.theme.Usuzumi
 
-/** 読みの1句。[firstKana] は句の先頭の仮名の通し番号（空白を除き、上の句の先頭を0として数える）。 */
+/** 表示する1句。[firstKana] は句の先頭の文字の通し番号（空白を除き、上の句の先頭を0として数える）。 */
 internal data class VerseLine(val text: String, val firstKana: Int)
 
-/** 句ごとに分けた読み。 */
-internal data class Verse(val kami: List<VerseLine>, val shimo: List<VerseLine>)
+/**
+ * 句ごとに分けた、表示する仮名（[VerseStyle] の仮名遣い）。文字の通し番号は表示する文字で数える。
+ * エンジンの仮名の数（読みの仮名で数える）は [displayCount] で表示の文字数に直す。
+ *
+ * @param boundaries `boundaries[i]` は、読みの先頭 i 文字に対応する表示の文字数（`verseBoundaries` と同じ形）。
+ */
+internal class Verse(
+    val kami: List<VerseLine>,
+    val shimo: List<VerseLine>,
+    private val boundaries: IntArray,
+) {
+    /** 空白を除き、上の句から下の句まで通した表示の文字。 */
+    val text: String = (kami + shimo).joinToString("") { it.text }
 
-/** 上の句・下の句の読みを句ごとに分け、仮名の通し番号を付ける。 */
-internal fun verseOf(poem: Poem): Verse {
-    var next = 0
-    fun lines(yomi: String): List<VerseLine> =
-        yomi.split(' ', '　')
-            .filter { it.isNotEmpty() }
-            .map { phrase -> VerseLine(phrase, next).also { next += phrase.length } }
-    val kami = lines(poem.kamiYomi)
-    val shimo = lines(poem.shimoYomi)
-    return Verse(kami, shimo)
+    /** 読みの先頭から [kana] 文字（エンジンの数）に対応する、表示の文字数。 */
+    fun displayCount(kana: Int): Int = boundaries[kana.coerceIn(0, boundaries.lastIndex)]
 }
 
-/** 上の句の読みの先頭から [length] 文字（決まり字）。 */
-internal fun kimarijiOf(poem: Poem, length: Int): String =
-    (poem.kamiYomi + poem.shimoYomi).filterNot { it.isWhitespace() }.take(length)
+/**
+ * [poem] の上の句・下の句を、[style] の仮名遣いで句ごとに分けて文字の通し番号を付ける。
+ * 歴史的仮名遣いでは、読みとの文字位置の対応を `verseBoundaries` で求める。
+ */
+internal fun verseOf(poem: Poem, style: VerseStyle): Verse {
+    val kanaBoundaries = if (style == VerseStyle.KANA) {
+        // 読みと対応づけできない歌（データの誤り）は、表示が崩れないよう読みで表示する
+        try {
+            verseBoundaries(poem)
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+    } else {
+        null
+    }
+    var next = 0
+    fun lines(text: String): List<VerseLine> =
+        text.split(' ', '　')
+            .filter { it.isNotEmpty() }
+            .map { phrase -> VerseLine(phrase, next).also { next += phrase.length } }
+    if (kanaBoundaries != null) return Verse(lines(poem.kamiKana), lines(poem.shimoKana), kanaBoundaries)
+    val kami = lines(poem.kamiYomi)
+    val shimo = lines(poem.shimoYomi)
+    // 読みで表示するときは、エンジンの数がそのまま表示の文字数になる
+    return Verse(kami, shimo, IntArray(next + 1) { it })
+}
 
-/** 結果表示での仮名の区分。 */
+/** 結果の色分けに使う、表示の文字数で数えた決まり字の長さと取った位置。 */
+internal data class TakeMarks(
+    /** 決まり字の文字数。 */
+    val kimariji: Int,
+    /** 札が取られた時点で読まれていた文字数。取られなかった場合は null。 */
+    val taken: Int?,
+)
+
+/** [result] の決まり字の長さと取った位置（エンジンの仮名の数）を、[verse] の表示の文字数に直す。 */
+internal fun takeMarks(result: ReadResult, verse: Verse) = TakeMarks(
+    kimariji = verse.displayCount(result.kimarijiLength),
+    taken = result.revealedAtTake?.let(verse::displayCount),
+)
+
+/** 表示している句の先頭から、決まり字の部分。 */
+internal fun kimarijiText(verse: Verse, marks: TakeMarks): String = verse.text.take(marks.kimariji)
+
+/** 結果表示での文字の区分。 */
 internal enum class KanaTone {
     /** 決まり字（緑）。 */
     Kimariji,
@@ -64,13 +110,16 @@ internal enum class KanaTone {
     Plain,
 }
 
-/** 通し番号 [index] の仮名の区分。 */
+/** 通し番号 [index] の文字の区分。[kimarijiLength] と [revealedAtTake] は表示の文字数。 */
 internal fun kanaTone(index: Int, kimarijiLength: Int, revealedAtTake: Int?): KanaTone = when {
     index < kimarijiLength -> KanaTone.Kimariji
     revealedAtTake == null -> KanaTone.Plain
     index < revealedAtTake -> KanaTone.OverRead
     else -> KanaTone.Unread
 }
+
+/** 通し番号 [index] の文字の区分。 */
+internal fun TakeMarks.toneOf(index: Int): KanaTone = kanaTone(index, kimariji, taken)
 
 internal fun KanaTone.spanStyle(): SpanStyle = when (this) {
     // 色だけに頼らないよう、決まり字には下線も付ける
@@ -84,10 +133,10 @@ internal fun KanaTone.spanStyle(): SpanStyle = when (this) {
     KanaTone.Plain -> SpanStyle(color = Sumi)
 }
 
-/** 1句の仮名の数の上限（100首の読みで最も長い句は8文字）。 */
+/** 1句の文字数の上限（100首で最も長い句は、読みでも歴史的仮名遣いでも8文字）。 */
 internal const val MAX_PHRASE_KANA = 8
 
-/** 読みの行数（上の句3句・下の句2句）。 */
+/** 句の行数（上の句3句・下の句2句）。 */
 private const val VERSE_LINES = 5
 
 private const val VERSE_LETTER_SPACING = 0.04f
@@ -97,7 +146,7 @@ private const val VERSE_LINE_HEIGHT = 1.42f
 private const val VERSE_GAP = 0.36f
 
 /**
- * 読み（5行）が幅 [width]・高さ [height] に収まる文字の大きさ。[min]〜[max] の範囲にする。
+ * 句（5行）が幅 [width]・高さ [height] に収まる文字の大きさ。[min]〜[max] の範囲にする。
  * 歌によって大きさが変わらないよう、句の長さは最長の [MAX_PHRASE_KANA] 文字で見積もる。
  */
 internal fun fittingVerseFontSize(width: Dp, height: Dp, max: Dp, min: Dp): Dp {
@@ -106,13 +155,13 @@ internal fun fittingVerseFontSize(width: Dp, height: Dp, max: Dp, min: Dp): Dp {
     return minOf(byWidth, byHeight, max).coerceAtLeast(min)
 }
 
-/** 文字の大きさ [fontSize] で、読みを1句1行（5行）に書いたときの高さ。 */
+/** 文字の大きさ [fontSize] で、句を1句1行（5行）に書いたときの高さ。 */
 internal fun verseHeight(fontSize: Dp): Dp = fontSize * (VERSE_LINES * VERSE_LINE_HEIGHT + VERSE_GAP)
 
-/** 文字の大きさ [fontSize] で、句を横に並べた読み（上の句・下の句をそれぞれ1行）の高さ。 */
+/** 文字の大きさ [fontSize] で、句を横に並べたとき（上の句・下の句をそれぞれ1行）の高さ。 */
 internal fun flowedVerseHeight(fontSize: Dp): Dp = fontSize * (2 * VERSE_LINE_HEIGHT)
 
-/** 上の句・下の句の読みの仮名の数の上限（100首の読みで最も長いものは19文字と16文字）。 */
+/** 上の句・下の句の文字数の上限（100首で最も長いものは、読みでも歴史的仮名遣いでも19文字と16文字）。 */
 internal const val MAX_KAMI_KANA = 19
 internal const val MAX_SHIMO_KANA = 16
 
@@ -120,7 +169,7 @@ internal const val MAX_SHIMO_KANA = 16
 private const val FLOW_PHRASE_GAP = 0.6f
 
 /**
- * 句を横に並べた読み（[CompactVerseText]。上の句・下の句をそれぞれ1行）が幅 [width]・高さ [height] に
+ * 句を横に並べたとき（[CompactVerseText]。上の句・下の句をそれぞれ1行）に幅 [width]・高さ [height] に
  * 収まる文字の大きさ。[min]〜[max] の範囲にする。句の長さは最長の歌で見積もる。
  */
 internal fun fittingFlowedVerseFontSize(width: Dp, height: Dp, max: Dp, min: Dp): Dp {
@@ -130,7 +179,7 @@ internal fun fittingFlowedVerseFontSize(width: Dp, height: Dp, max: Dp, min: Dp)
 }
 
 /**
- * 読みの明朝体。大きさは画面の広さから決めるので、端末の文字の大きさの設定には左右されない。
+ * 句の明朝体。大きさは画面の広さから決めるので、端末の文字の大きさの設定には左右されない。
  */
 @Composable
 internal fun verseTextStyle(fontSize: Dp): TextStyle = with(LocalDensity.current) {
@@ -144,7 +193,7 @@ internal fun verseTextStyle(fontSize: Dp): TextStyle = with(LocalDensity.current
 }
 
 /**
- * 読みを1句1行で中央にそろえて書く。仮名ごとの見た目は [spanFor]（引数は仮名の通し番号）で決める。
+ * 句を1句1行で中央にそろえて書く。文字ごとの見た目は [spanFor]（引数は文字の通し番号）で決める。
  * 上の句と下の句の間は文字の大きさに合わせて空ける。
  */
 @Composable
@@ -167,7 +216,7 @@ internal fun VerseText(
 }
 
 /**
- * 読みを詰めて書く。上の句・下の句をそれぞれ句ごとに横へ並べ、入り切らなければ句の切れ目で折り返す。
+ * 句を詰めて書く。上の句・下の句をそれぞれ句ごとに横へ並べ、入り切らなければ句の切れ目で折り返す。
  * 狭い欄で [VerseText] の代わりに使う。
  */
 @Composable
@@ -198,6 +247,6 @@ private fun VerseLineText(line: VerseLine, style: TextStyle, spanFor: (Int) -> S
     Text(text = text, style = style, textAlign = TextAlign.Center, softWrap = false, maxLines = 1)
 }
 
-/** 句ごとの読みを覚えておく。 */
+/** [style] の仮名遣いで句ごとに分けた歌を覚えておく。 */
 @Composable
-internal fun rememberVerse(poem: Poem): Verse = remember(poem) { verseOf(poem) }
+internal fun rememberVerse(poem: Poem, style: VerseStyle): Verse = remember(poem, style) { verseOf(poem, style) }
