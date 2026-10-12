@@ -13,6 +13,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.abonsan.hyakunin.game.MatchPhase
 import io.github.abonsan.hyakunin.game.MatchViewModel
 import io.github.abonsan.hyakunin.ui.activeMatchViewModel
+import io.github.abonsan.hyakunin.ui.activeVoicePlayer
 import io.github.abonsan.hyakunin.ui.advanceMainLooper
 import io.github.abonsan.hyakunin.ui.captureWholeScreen
 import io.github.abonsan.hyakunin.ui.settings.AppSettings
@@ -22,6 +23,7 @@ import io.github.abonsan.hyakunin.ui.startFirstRead
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -121,6 +123,8 @@ class MainActivityTest {
         val viewModel = scenario.matchViewModel()
         composeRule.startFirstRead { scenario.matchViewModel() }
         composeRule.advanceMainLooper(1_500L)
+        val voicePlayer = scenario.activity().activeVoicePlayer()
+        assertNotNull(voicePlayer)
 
         composeRule.onNodeWithContentDescription("一時停止").performClick()
         composeRule.onNodeWithText("一時停止中").assertExists()
@@ -129,8 +133,9 @@ class MainActivityTest {
         composeRule.captureWholeScreen("app_rotate_portrait")
 
         scenario.rotateTo("w891dp-h411dp-land-xxhdpi")
-        // 同じ対戦がそのまま続き、一時停止のダイアログも残る
+        // 同じ対戦がそのまま続き、一時停止のダイアログも残る。読み上げの再生器も同じもの（2つ目は作らない）
         assertSame(viewModel, scenario.matchViewModel())
+        assertSame(voicePlayer, scenario.activity().activeVoicePlayer())
         composeRule.onNodeWithText("一時停止中").assertExists()
         val after = viewModel.uiState.value
         assertTrue(after.isPaused)
@@ -151,6 +156,7 @@ class MainActivityTest {
         // 縦に戻しても同じ対戦
         scenario.rotateTo("w411dp-h891dp-xxhdpi")
         assertSame(viewModel, scenario.matchViewModel())
+        assertSame(voicePlayer, scenario.activity().activeVoicePlayer())
     }
 
     @Test
