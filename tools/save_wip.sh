@@ -9,6 +9,8 @@ for w in "$REPO"/.claude/worktrees/*; do
   git -C "$w" add -A
   mb=$(git -C "$w" merge-base HEAD "$BRANCH")
   git -C "$w" diff --cached --binary "$mb" > "$REPO/wip/$(basename "$w").patch"
+  # 変更のない作業ツリー（マージ済みなど）は空のパッチを残さない
+  [ -s "$REPO/wip/$(basename "$w").patch" ] || { rm "$REPO/wip/$(basename "$w").patch"; continue; }
   echo "$(basename "$w"): $(git -C "$w" diff --cached --stat "$mb" | tail -1) (base $mb)"
 done
 cd "$REPO"
