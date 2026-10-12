@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.abonsan.hyakunin"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.3.3"
+        versionCode = 7
+        versionName = "0.4.0"
     }
 
     buildTypes {
@@ -56,6 +56,7 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.media3.exoplayer)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 

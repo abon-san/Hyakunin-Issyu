@@ -2,6 +2,7 @@ package io.github.abonsan.hyakunin.ui
 
 import android.content.Context
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -10,20 +11,31 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import io.github.abonsan.hyakunin.data.Poems
 import io.github.abonsan.hyakunin.game.CpuLevel
 import io.github.abonsan.hyakunin.game.GameConfig
+import io.github.abonsan.hyakunin.game.LeadInKind
 import io.github.abonsan.hyakunin.game.MemorizeTime
 import io.github.abonsan.hyakunin.game.ReadStartMode
+import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.VerseStyle
+import io.github.abonsan.hyakunin.game.voice.VoiceBankSource
+import io.github.abonsan.hyakunin.game.voice.VoiceBankState
+import io.github.abonsan.hyakunin.game.voice.fakeVoiceBank
 import io.github.abonsan.hyakunin.ui.home.GameConfigStore
+import io.github.abonsan.hyakunin.ui.match.LocalVoicePlayerFactory
 import io.github.abonsan.hyakunin.ui.settings.AppSettings
 import io.github.abonsan.hyakunin.ui.settings.AppSettingsStore
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
 import io.github.abonsan.hyakunin.ui.theme.HyakuninTheme
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -42,11 +54,22 @@ class HyakuninAppTest {
     private val configStore = GameConfigStore(context)
     private val settingsStore = AppSettingsStore(context)
     private val orientations = mutableListOf<ScreenOrientation>()
+    private val players = RecordingVoicePlayerFactory()
 
-    private fun showApp() {
+    /**
+     * アプリを表示する。読み上げ音声は [voiceBanks]（既定は音声なし）で、再生器は記録するだけの偽物にする。
+     */
+    private fun showApp(voiceBanks: VoiceBankSource = VoiceBankSource.ready(null)) {
         composeRule.setContent {
-            HyakuninTheme {
-                HyakuninApp(configStore, settingsStore, onOrientationChange = { orientations += it })
+            CompositionLocalProvider(LocalVoicePlayerFactory provides players) {
+                HyakuninTheme {
+                    HyakuninApp(
+                        configStore,
+                        settingsStore,
+                        onOrientationChange = { orientations += it },
+                        voiceBanks = voiceBanks,
+                    )
+                }
             }
         }
     }
@@ -151,8 +174,15 @@ class HyakuninAppTest {
 
     @Test
     fun theMatchIsStartedWithTheModeSettingsAndTheDisplaySettings() {
-        configStore.save(GameConfig(ruleMode = RuleMode.SIMPLE, emptyCardCount = 30, cpuLevel = CpuLevel.BEGINNER))
-        settingsStore.save(AppSettings(flipOpponentCards = false, verseStyle = VerseStyle.READING))
+        configStore.save(
+            GameConfig(
+                ruleMode = RuleMode.SIMPLE,
+                emptyCardCount = 30,
+                cpuLevel = CpuLevel.BEGINNER,
+                readingStyle = ReadingStyle.COMPETITIVE,
+            ),
+        )
+        settingsStore.save(AppSettings(flipOpponentCards = false, verseStyle = VerseStyle.READING, voiceEnabled = false))
         showApp()
         composeRule.onNodeWithText("簡易モード").performClick()
         composeRule.onNodeWithText("対戦開始").performClick()
@@ -165,10 +195,147 @@ class HyakuninAppTest {
                 cpuLevel = CpuLevel.BEGINNER,
                 flipOpponentCards = false,
                 verseStyle = VerseStyle.READING,
+                readingStyle = ReadingStyle.COMPETITIVE,
+                voiceEnabled = false,
             ),
             config,
         )
         composeRule.onNodeWithText("相手（初級）").assertExists()
+    }
+
+    @Test
+    fun eachModeStartsWithItsOwnReadingStyle() {
+        showApp()
+        composeRule.onNodeWithText("簡易モード").performClick()
+        composeRule.onNodeWithText(ReadingStyle.SIMPLE.label).performScrollTo().assertIsSelected()
+        composeRule.onNodeWithText("対戦開始").performClick()
+        assertEquals(ReadingStyle.SIMPLE, activeMatch()!!.uiState.value.config.readingStyle)
+        pressBack()
+        composeRule.onNodeWithText("やめる").performClick()
+        pressBack()
+
+        composeRule.onNodeWithText("競技モード").performClick()
+        composeRule.onNodeWithText(ReadingStyle.COMPETITIVE.label).performScrollTo().assertIsSelected()
+        composeRule.onNodeWithText("対戦開始").performClick()
+        val config = activeMatch()!!.uiState.value.config
+        assertEquals(ReadingStyle.COMPETITIVE, config.readingStyle)
+        // 読み上げ音声の既定はオン
+        assertEquals(true, config.voiceEnabled)
+    }
+
+    @Test
+    fun aCompetitiveMatchWithoutVoiceStillReadsTheJokaAsText() {
+        // 音声がなくても、競技かるた式なら序歌を文字で出してから最初の札を読む
+        showApp(voiceBanks = VoiceBankSource.ready(null))
+        composeRule.onNodeWithText("競技モード").performClick()
+        composeRule.onNodeWithText("対戦開始").performClick()
+        composeRule.onNodeWithText("すぐ読む").performClick()
+        composeRule.onNodeWithText("序歌").assertExists()
+        val state = activeMatch()!!.uiState.value
+        assertEquals(LeadInKind.JOKA, state.leadIn!!.kind)
+        // 音声はない
+        assertNull(state.audio)
+        assertTrue(players.players.single().cues.isEmpty())
+    }
+
+    @Test
+    fun theVoiceFollowsTheMatchAndIsReleasedWhenTheMatchEnds() {
+        showApp(voiceBanks = VoiceBankSource.ready(fakeVoiceBank(poems = Poems.all)))
+        composeRule.onNodeWithText("競技モード").performClick()
+        composeRule.onNodeWithText("対戦開始").performClick()
+        composeRule.waitForIdle()
+        val player = players.players.single()
+        // 音声で読むときは、最初の音が遅れないよう先に用意しておく
+        assertTrue(player.warmedUp)
+
+        // 札を覚える時間を飛ばすと、序歌の上の句が鳴る
+        composeRule.onNodeWithText("すぐ読む").performClick()
+        composeRule.advanceMainLooper(500L)
+        val state = activeMatch()!!.uiState.value
+        assertEquals(LeadInKind.JOKA, state.leadIn!!.kind)
+        assertEquals("voice/joka_kami.ogg", state.audio!!.asset)
+        composeRule.onNodeWithText("序歌").assertExists()
+        // 再生器には、対戦の最新の状態（音声・エンジンの時計・一時停止）がそのまま渡っている
+        val latest = activeMatch()!!.uiState.value
+        val (cue, time, paused) = player.updates.last()
+        assertEquals(latest.audio, cue)
+        assertEquals(latest.engineTimeMillis, time)
+        assertFalse(paused)
+
+        // 一時停止すると、再生器にも一時停止が渡る
+        composeRule.onNodeWithContentDescription("一時停止").performClick()
+        composeRule.waitForIdle()
+        assertTrue(player.updates.last().third)
+        composeRule.onNodeWithText("再開").performClick()
+        composeRule.waitForIdle()
+        assertFalse(player.updates.last().third)
+
+        // 対戦をやめると再生器を手放す
+        pressBack()
+        composeRule.onNodeWithText("やめる").performClick()
+        composeRule.waitForIdle()
+        assertTrue(player.released)
+    }
+
+    @Test
+    fun losingTheAudioFocusPausesTheMatch() {
+        showApp(voiceBanks = VoiceBankSource.ready(fakeVoiceBank(poems = Poems.all)))
+        composeRule.onNodeWithText("競技モード").performClick()
+        composeRule.onNodeWithText("対戦開始").performClick()
+        composeRule.onNodeWithText("すぐ読む").performClick()
+        composeRule.advanceMainLooper(500L)
+        val match = activeMatch()!!
+        assertFalse(match.uiState.value.isPaused)
+
+        // 電話などで音を止められた: アプリが裏に回ったときと同じく対戦を止め、一時停止のダイアログを出す
+        composeRule.runOnUiThread { players.players.single().onInterrupted() }
+        composeRule.waitForIdle()
+        assertTrue(match.uiState.value.isPaused)
+        composeRule.onNodeWithText("一時停止中").assertExists()
+        val frozen = match.uiState.value.engineTimeMillis
+        composeRule.advanceMainLooper(2_000L)
+        assertEquals(frozen, match.uiState.value.engineTimeMillis)
+        composeRule.onNodeWithText("再開").performClick()
+        assertFalse(match.uiState.value.isPaused)
+    }
+
+    @Test
+    fun theMatchWaitsUntilTheVoiceIsLoaded() {
+        val loading = MutableStateFlow<VoiceBankState>(VoiceBankState.Loading)
+        var requests = 0
+        val source = object : VoiceBankSource {
+            override val state: StateFlow<VoiceBankState> = loading
+
+            override fun request() {
+                requests++
+            }
+        }
+        showApp(voiceBanks = source)
+        // 対戦設定を開いたら読み込み始める
+        composeRule.onNodeWithText("競技モード").performClick()
+        composeRule.waitForIdle()
+        assertTrue(requests > 0)
+        // 読み込み中に対戦を始めると、読み終えるまで待つ
+        composeRule.onNodeWithText("対戦開始").performClick()
+        composeRule.onNodeWithText("札を覚える時間").assertDoesNotExist()
+        loading.value = VoiceBankState.Ready(fakeVoiceBank(poems = Poems.all))
+        composeRule.onNodeWithText("札を覚える時間").assertExists()
+        assertTrue(players.players.single().warmedUp)
+    }
+
+    @Test
+    fun withTheVoiceTurnedOffTheMatchDoesNotWaitForIt() {
+        settingsStore.save(AppSettings(voiceEnabled = false))
+        val source = object : VoiceBankSource {
+            override val state: StateFlow<VoiceBankState> = MutableStateFlow(VoiceBankState.Loading)
+
+            override fun request() = error("読み上げ音声を使わないなら読み込まない")
+        }
+        showApp(voiceBanks = source)
+        composeRule.onNodeWithText("競技モード").performClick()
+        composeRule.onNodeWithText("対戦開始").performClick()
+        composeRule.onNodeWithText("札を覚える時間").assertExists()
+        assertEquals(false, activeMatch()!!.uiState.value.config.voiceEnabled)
     }
 
     @Test

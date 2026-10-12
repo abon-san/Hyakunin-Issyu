@@ -1,6 +1,8 @@
 package io.github.abonsan.hyakunin.ui.home
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -10,12 +12,15 @@ import io.github.abonsan.hyakunin.game.MemorizeTime
 import io.github.abonsan.hyakunin.game.ReadInterval
 import io.github.abonsan.hyakunin.game.ReadStartMode
 import io.github.abonsan.hyakunin.game.ReadingSpeed
+import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.ui.captureScreenshot
 import io.github.abonsan.hyakunin.ui.settings.AppSettings
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
 import io.github.abonsan.hyakunin.ui.settings.SettingsScreen
+import io.github.abonsan.hyakunin.ui.settings.VOICE_CREDIT
+import io.github.abonsan.hyakunin.ui.settings.VOICE_CREDIT_NOTE
 import io.github.abonsan.hyakunin.ui.settings.settingsDescription
 import io.github.abonsan.hyakunin.ui.theme.HyakuninTheme
 import org.junit.Rule
@@ -43,6 +48,8 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
         composeRule.onNodeWithText("競技モード").assertExists()
         composeRule.onNodeWithText(RuleMode.SIMPLE.description).assertExists()
         composeRule.onNodeWithText("設定").assertExists()
+        // 読み上げ音声のクレジットを小さく添える
+        composeRule.onNodeWithText(VOICE_CREDIT).assertExists()
         capture("top")
     }
 
@@ -55,6 +62,10 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
         }
         composeRule.onNodeWithText(MATCH_SETUP_CAPTION).assertExists()
         composeRule.onNodeWithText("対戦開始").assertExists()
+        // 読み方。競技モードの既定は競技かるた式
+        composeRule.onNodeWithText("読み方").assertExists()
+        composeRule.onNodeWithText(ReadingStyle.COMPETITIVE.label).assertIsSelected()
+        composeRule.onNodeWithText(ReadingStyle.COMPETITIVE.setupDescription).assertExists()
         capture("setup")
     }
 
@@ -68,6 +79,7 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
             readStartMode = ReadStartMode.TAP,
             memorizeTime = MemorizeTime.MIN_2,
             readInterval = ReadInterval.SEC_10,
+            readingStyle = ReadingStyle.SIMPLE,
         )
         composeRule.setContent {
             HyakuninTheme {
@@ -75,6 +87,7 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
             }
         }
         composeRule.onNodeWithText("簡易モード").assertExists()
+        composeRule.onNodeWithText(ReadingStyle.SIMPLE.setupDescription).assertExists()
         capture("setup_simple_tap")
     }
 
@@ -94,6 +107,10 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
         composeRule.onNodeWithText("句の表示").assertExists()
         composeRule.onNodeWithText(VerseStyle.KANA.settingsDescription).assertExists()
         composeRule.onNodeWithText(VerseStyle.READING.settingsDescription).assertDoesNotExist()
+        // 読み上げ音声（既定はオン）とクレジット
+        composeRule.onNodeWithText("読み上げ音声").assertIsOn()
+        composeRule.onNodeWithText(VOICE_CREDIT).assertExists()
+        composeRule.onNodeWithText(VOICE_CREDIT_NOTE).assertExists()
         capture("settings")
     }
 }

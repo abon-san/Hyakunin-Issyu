@@ -78,6 +78,27 @@ abstract class MatchScenesScreenshotTest(
     }
 
     @Test
+    fun leadInWithTheJoka() {
+        show(Scenes.jokaLeadIn())
+        composeRule.onNodeWithText("序歌").assertExists()
+        // 上の句をすべてと、下の句の7文字目まで（歴史的仮名遣い）
+        composeRule.onNodeWithContentDescription("なにはづにさくやこのはなふゆごもりいまをはるべと").assertExists()
+        // 前置きの間は、待ちの表示（カウントダウン・すぐ読む）を出さない
+        composeRule.onNodeWithText("すぐ読む").assertDoesNotExist()
+        composeRule.onNodeWithText("次の札まで").assertDoesNotExist()
+        capture("lead_in_joka")
+    }
+
+    @Test
+    fun leadInWithThePreviousShimo() {
+        show(Scenes.previousShimoLeadIn())
+        composeRule.onNodeWithText("前の歌の下の句（61番）").assertExists()
+        // 下の句だけを、読んだ6文字（きょうここの）まで。歴史的仮名遣いでは「けふここの」
+        composeRule.onNodeWithContentDescription("けふここの").assertExists()
+        capture("lead_in_previous")
+    }
+
+    @Test
     fun reading() {
         show(Scenes.reading())
         composeRule.onNodeWithText("第 4 首 ／ 全 20 首").assertExists()

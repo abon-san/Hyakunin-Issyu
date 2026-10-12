@@ -50,6 +50,7 @@ import io.github.abonsan.hyakunin.game.MemorizeTime
 import io.github.abonsan.hyakunin.game.ReadInterval
 import io.github.abonsan.hyakunin.game.ReadStartMode
 import io.github.abonsan.hyakunin.game.ReadingSpeed
+import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.ui.components.ChoiceRow
 import io.github.abonsan.hyakunin.ui.components.PanelDivider
@@ -76,7 +77,7 @@ import kotlin.math.roundToInt
 internal const val MATCH_SETUP_CAPTION = "対戦設定"
 
 /**
- * 対戦設定の画面。[config] のモードで、空札・CPU・読み上げ・読み始めの設定を変えて対戦を始める。
+ * 対戦設定の画面。[config] のモードで、空札・CPU・読み上げ・読み方・読み始めの設定を変えて対戦を始める。
  * 設定の保存は呼び出し側が [onConfigChange] で行う。
  * 横に広い画面では設定を2列で並べ、十分に広ければ左に見出しと「対戦開始」を置く
  * （広さが足りなければ、見出しと「対戦開始」を上の帯にまとめる）。
@@ -302,23 +303,32 @@ private fun MatchSettings(config: GameConfig, onConfigChange: (GameConfig) -> Un
     )
 }
 
-/** 読み始め方と、自動のときの待ち時間。タップで読み始めるときは待ち時間を選べなくする。 */
+/**
+ * 読み方（序歌・前の歌の下の句を読むか）、読み始め方と、自動のときの待ち時間。
+ * タップで読み始めるときは待ち時間を選べなくする。
+ */
 @Composable
 private fun ReadStartSettings(config: GameConfig, onConfigChange: (GameConfig) -> Unit, spacing: SettingSpacing) {
     val auto = config.readStartMode == ReadStartMode.AUTO
-    SettingBlock(spacing = spacing) {
-        SectionLabel("読み始め方")
-        Spacer(Modifier.height(spacing.label))
-        ChoiceRow(
-            options = ReadStartMode.entries,
-            selected = config.readStartMode,
-            label = { it.label },
-            onSelect = { onConfigChange(config.copy(readStartMode = it)) },
-            height = spacing.row,
-        )
-        Spacer(Modifier.height(if (spacing == SettingSpacing.Compact) 6.dp else 8.dp))
-        SelectedDescription(ReadStartMode.entries, config.readStartMode, { it.setupDescription })
-    }
+    DescribedChoiceSetting(
+        title = "読み方",
+        options = ReadingStyle.entries,
+        selected = config.readingStyle,
+        label = { it.label },
+        description = { it.setupDescription },
+        onSelect = { onConfigChange(config.copy(readingStyle = it)) },
+        spacing = spacing,
+    )
+    PanelDivider()
+    DescribedChoiceSetting(
+        title = "読み始め方",
+        options = ReadStartMode.entries,
+        selected = config.readStartMode,
+        label = { it.label },
+        description = { it.setupDescription },
+        onSelect = { onConfigChange(config.copy(readStartMode = it)) },
+        spacing = spacing,
+    )
     PanelDivider()
     ChoiceSetting(
         title = "開始前の時間",
@@ -349,6 +359,40 @@ internal val ReadStartMode.setupDescription: String
         ReadStartMode.AUTO -> "下の時間がたつと、自動で次の札を読みます"
         ReadStartMode.TAP -> "毎回「読み始める」を押すまで待ちます"
     }
+
+/** 対戦設定での読み方の説明。句の名前の途中や文の終わりの短い部分では行を分けない。 */
+internal val ReadingStyle.setupDescription: String
+    get() = when (this) {
+        ReadingStyle.COMPETITIVE ->
+            "序歌から始め、" + noLineBreak("前の札の下の句") + "を読んでから" + noLineBreak("次の上の句を読みます")
+        ReadingStyle.SIMPLE -> "上の句と下の句だけを読みます"
+    }
+
+/** 見出しと選択肢の列と、選んでいる項目の説明。 */
+@Composable
+private fun <T> DescribedChoiceSetting(
+    title: String,
+    options: List<T>,
+    selected: T,
+    label: (T) -> String,
+    description: (T) -> String,
+    onSelect: (T) -> Unit,
+    spacing: SettingSpacing,
+) {
+    SettingBlock(spacing = spacing) {
+        SectionLabel(title)
+        Spacer(Modifier.height(spacing.label))
+        ChoiceRow(
+            options = options,
+            selected = selected,
+            label = label,
+            onSelect = onSelect,
+            height = spacing.row,
+        )
+        Spacer(Modifier.height(if (spacing == SettingSpacing.Compact) 6.dp else 8.dp))
+        SelectedDescription(options, selected, description)
+    }
+}
 
 /** 見出しと選択肢の列。[caption] は見出しの右に小さく添える。 */
 @Composable

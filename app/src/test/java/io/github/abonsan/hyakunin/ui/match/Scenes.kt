@@ -1,7 +1,11 @@
 package io.github.abonsan.hyakunin.ui.match
 
+import io.github.abonsan.hyakunin.data.Joka
 import io.github.abonsan.hyakunin.game.CpuLevel
 import io.github.abonsan.hyakunin.game.GameConfig
+import io.github.abonsan.hyakunin.game.LeadInKind
+import io.github.abonsan.hyakunin.game.LeadInState
+import io.github.abonsan.hyakunin.game.LeadInVerse
 import io.github.abonsan.hyakunin.game.MatchPhase
 import io.github.abonsan.hyakunin.game.MatchUiState
 import io.github.abonsan.hyakunin.game.ReadStartMode
@@ -9,6 +13,7 @@ import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.Side
 import io.github.abonsan.hyakunin.game.Transfer
 import io.github.abonsan.hyakunin.game.VerseStyle
+import io.github.abonsan.hyakunin.game.kanaCount
 import io.github.abonsan.hyakunin.ui.Fixtures
 import io.github.abonsan.hyakunin.ui.Fixtures.card
 import io.github.abonsan.hyakunin.ui.Fixtures.cards
@@ -76,6 +81,61 @@ internal object Scenes {
         phase = MatchPhase.Waiting,
         isMemorizing = true,
     )
+
+    /**
+     * 競技かるた式の前置き: 最初の札の前の序歌。上の句を読み終え、下の句（1回目）を7文字目まで読んだところ。
+     * 句の表示はアプリの既定の歴史的仮名遣い。
+     */
+    fun jokaLeadIn(
+        verse: LeadInVerse = LeadInVerse.SHIMO,
+        pass: Int = 1,
+        revealed: Int = 7,
+        inMa: Boolean = false,
+        readStartMode: ReadStartMode = ReadStartMode.AUTO,
+    ): MatchUiState = Fixtures.state(
+        config = GameConfig(verseStyle = VerseStyle.KANA, readStartMode = readStartMode),
+        phase = MatchPhase.Waiting,
+        leadIn = LeadInState(
+            kind = LeadInKind.JOKA,
+            poem = Joka.poem,
+            verse = verse,
+            pass = pass,
+            revealedKana = revealed,
+            verseKanaCount = kanaCount(if (verse == LeadInVerse.KAMI) Joka.kamiYomi else Joka.shimoYomi),
+            remainingMillis = 11_000L,
+            totalMillis = 18_200L,
+            inMa = inMa,
+        ),
+    )
+
+    /**
+     * 競技かるた式の前置き: 4枚目の前に、3枚目に読んだ61番「いにしえの」の下の句を6文字目まで読んだところ。
+     * 句の表示はアプリの既定の歴史的仮名遣い。
+     */
+    fun previousShimoLeadIn(revealed: Int = 6, inMa: Boolean = false): MatchUiState {
+        val poem = Fixtures.poem(61)
+        return Fixtures.state(
+            config = KanaConfig,
+            phase = MatchPhase.Waiting,
+            player = cards(1, 17, 33, 87),
+            reading = Fixtures.reading(no = 61, readNumber = 3, totalReads = 20, revealed = 8),
+            readsDone = 3,
+            playerTaken = 1,
+            cpuTaken = 1,
+            cpuFaults = 1,
+            leadIn = LeadInState(
+                kind = LeadInKind.PREVIOUS_SHIMO,
+                poem = poem,
+                verse = LeadInVerse.SHIMO,
+                pass = 1,
+                revealedKana = revealed,
+                verseKanaCount = kanaCount(poem.shimoYomi),
+                remainingMillis = 5_000L,
+                totalMillis = 7_100L,
+                inMa = inMa,
+            ),
+        )
+    }
 
     /** 自陣の61番「いにしえの」を読んでいる途中。 */
     fun reading(revealed: Int = 9): MatchUiState = Fixtures.state(

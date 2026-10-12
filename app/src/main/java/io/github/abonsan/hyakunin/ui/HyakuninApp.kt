@@ -2,9 +2,14 @@ package io.github.abonsan.hyakunin.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.annotation.VisibleForTesting
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -14,6 +19,7 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
@@ -25,15 +31,20 @@ import io.github.abonsan.hyakunin.game.MemorizeTime
 import io.github.abonsan.hyakunin.game.ReadInterval
 import io.github.abonsan.hyakunin.game.ReadStartMode
 import io.github.abonsan.hyakunin.game.ReadingSpeed
+import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.VerseStyle
+import io.github.abonsan.hyakunin.game.voice.VoiceBankSource
+import io.github.abonsan.hyakunin.game.voice.VoiceBankState
 import io.github.abonsan.hyakunin.ui.home.GameConfigStore
 import io.github.abonsan.hyakunin.ui.home.MatchSetupScreen
 import io.github.abonsan.hyakunin.ui.home.TopScreen
+import io.github.abonsan.hyakunin.ui.home.defaultReadingStyle
 import io.github.abonsan.hyakunin.ui.match.MatchRoute
 import io.github.abonsan.hyakunin.ui.settings.AppSettingsStore
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
 import io.github.abonsan.hyakunin.ui.settings.SettingsScreen
+import io.github.abonsan.hyakunin.ui.theme.Washi
 
 /** アプリの画面。 */
 internal enum class Screen {
@@ -55,12 +66,14 @@ internal enum class Screen {
  * 表示中の画面と対戦の設定は画面の回転などでも保つ。設定は変えるたびに保存する。
  *
  * @param onOrientationChange 画面の向きの設定が変わったときに呼ぶ（Activity に向きを指定する）。
+ * @param voiceBanks 読み上げ音声の読み込み。読み上げ音声を使う設定なら、対戦設定を開いたときに裏で読み込み始める。
  */
 @Composable
 fun HyakuninApp(
     configStore: GameConfigStore,
     settingsStore: AppSettingsStore,
     onOrientationChange: (ScreenOrientation) -> Unit = {},
+    voiceBanks: VoiceBankSource = rememberAssetVoiceBanks(),
 ) {
     var screen by rememberSaveable { mutableStateOf(Screen.TOP) }
     var mode by rememberSaveable { mutableStateOf(RuleMode.COMPETITIVE) }
@@ -71,6 +84,10 @@ fun HyakuninApp(
     var setupConfig by remember(mode) { mutableStateOf(configStore.load(mode)) }
 
     BackHandler(enabled = screen == Screen.SETUP || screen == Screen.SETTINGS) { screen = Screen.TOP }
+    // 対戦を始めるまでに読み終えるよう、対戦設定を開いたら読み込み始める
+    LaunchedEffect(screen, settings.voiceEnabled) {
+        if (settings.voiceEnabled && (screen == Screen.SETUP || screen == Screen.MATCH)) voiceBanks.request()
+    }
 
     when (screen) {
         Screen.TOP -> TopScreen(
@@ -87,10 +104,11 @@ fun HyakuninApp(
                 configStore.save(it)
             },
             onStart = {
-                // 画面の設定（敵陣の札の向き・句の表示）は、対戦を始めるときに対戦設定へ移す
+                // 画面の設定（敵陣の札の向き・句の表示・読み上げ音声）は、対戦を始めるときに対戦設定へ移す
                 matchConfig = setupConfig.copy(
                     flipOpponentCards = settings.flipOpponentCards,
                     verseStyle = settings.verseStyle,
+                    voiceEnabled = settings.voiceEnabled,
                 )
                 matchId++
                 screen = Screen.MATCH
@@ -108,8 +126,26 @@ fun HyakuninApp(
             onBack = { screen = Screen.TOP },
         )
         Screen.MATCH -> MatchScope(matchId = matchId, isActive = { screen == Screen.MATCH }) {
-            MatchRoute(config = matchConfig, onExit = { screen = Screen.SETUP })
+            VoicedMatch(config = matchConfig, voiceBanks = voiceBanks, onExit = { screen = Screen.SETUP })
         }
+    }
+}
+
+/**
+ * 対戦。読み上げ音声を使うなら、読み込み終えてから始める（ふつうは対戦設定の間に読み終えている。
+ * 読み込み中は和紙の地だけを出す）。音声がない（読めなかった）ときは文字だけで読む。
+ */
+@Composable
+private fun VoicedMatch(config: GameConfig, voiceBanks: VoiceBankSource, onExit: () -> Unit) {
+    if (!config.voiceEnabled) {
+        MatchRoute(config = config, onExit = onExit)
+        return
+    }
+    LaunchedEffect(voiceBanks) { voiceBanks.request() }
+    val voice by voiceBanks.state.collectAsState()
+    when (val loaded = voice) {
+        VoiceBankState.Loading -> Box(Modifier.fillMaxSize().background(Washi))
+        is VoiceBankState.Ready -> MatchRoute(config = config, onExit = onExit, voiceBank = loaded.bank)
     }
 }
 
@@ -126,11 +162,14 @@ internal val GameConfigSaver: Saver<GameConfig, Any> = listSaver(
             it.readStartMode.name,
             it.memorizeTime.name,
             it.readInterval.name,
+            it.readingStyle.name,
+            it.voiceEnabled,
         )
     },
     restore = {
+        val ruleMode = RuleMode.valueOf(it[0] as String)
         GameConfig(
-            ruleMode = RuleMode.valueOf(it[0] as String),
+            ruleMode = ruleMode,
             emptyCardCount = it[1] as Int,
             cpuLevel = CpuLevel.valueOf(it[2] as String),
             readingSpeed = ReadingSpeed.valueOf(it[3] as String),
@@ -139,6 +178,9 @@ internal val GameConfigSaver: Saver<GameConfig, Any> = listSaver(
             readStartMode = ReadStartMode.valueOf(it[6] as String),
             memorizeTime = MemorizeTime.valueOf(it[7] as String),
             readInterval = ReadInterval.valueOf(it[8] as String),
+            // 後から足した項目。足す前に保存した状態から戻すときは既定値
+            readingStyle = (it.getOrNull(9) as String?)?.let(ReadingStyle::valueOf) ?: ruleMode.defaultReadingStyle,
+            voiceEnabled = it.getOrNull(10) as Boolean? ?: true,
         )
     },
 )

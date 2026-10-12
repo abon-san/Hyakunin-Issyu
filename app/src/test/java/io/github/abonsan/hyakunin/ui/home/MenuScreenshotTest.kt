@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -17,6 +18,7 @@ import io.github.abonsan.hyakunin.game.MemorizeTime
 import io.github.abonsan.hyakunin.game.ReadInterval
 import io.github.abonsan.hyakunin.game.ReadStartMode
 import io.github.abonsan.hyakunin.game.ReadingSpeed
+import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.ui.captureScreenshot
@@ -95,6 +97,13 @@ class MenuScreenshotTest : MenuScreensScreenshotTest(prefix = "") {
         composeRule.onNodeWithText(ReadStartMode.AUTO.label).performClick()
         composeRule.onNodeWithText(MemorizeTime.SEC_30.label).assertIsEnabled()
 
+        // 読み方を簡易式にすると、説明も変わる
+        composeRule.onNodeWithText(ReadingStyle.SIMPLE.label).performScrollTo().performClick()
+        assertEquals(ReadingStyle.SIMPLE, config.readingStyle)
+        composeRule.onNodeWithText(ReadingStyle.SIMPLE.label).assertIsSelected()
+        composeRule.onNodeWithText(ReadingStyle.SIMPLE.setupDescription).assertExists()
+        composeRule.onNodeWithText(ReadingStyle.COMPETITIVE.setupDescription).assertDoesNotExist()
+
         composeRule.onNodeWithText("対戦開始").performClick()
         composeRule.onNodeWithContentDescription("戻る").performClick()
         assertEquals(true, started)
@@ -119,11 +128,14 @@ class MenuScreenshotTest : MenuScreensScreenshotTest(prefix = "") {
         composeRule.onNodeWithText(VerseStyle.READING.label).assertIsSelected()
         composeRule.onNodeWithText(VerseStyle.READING.settingsDescription).assertExists()
         composeRule.onNodeWithText("敵陣の札を逆さに表示").performScrollTo().performClick()
+        composeRule.onNodeWithText("読み上げ音声").performScrollTo().performClick()
+        composeRule.onNodeWithText("読み上げ音声").assertIsOff()
         assertEquals(
             AppSettings(
                 orientation = ScreenOrientation.LANDSCAPE,
                 flipOpponentCards = false,
                 verseStyle = VerseStyle.READING,
+                voiceEnabled = false,
             ),
             settings,
         )

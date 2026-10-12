@@ -1,0 +1,26 @@
+音声：VOICEVOX:冥鳴ひまり
+
+このアプリの読み上げ音声（assets/voice/himari）は、音声合成ソフトウェア VOICEVOX で
+冥鳴ひまりの音声ライブラリを使って作成したものです。VOICEVOX の利用規約と、
+冥鳴ひまりの利用規約に従って使用しています。
+
+  VOICEVOX 利用規約: https://voicevox.hiroshiba.jp/term/
+  冥鳴ひまり 利用規約: https://meimeihimari.wixsite.com/himari/terms-of-use
+
+この音声をアプリの外で使うときも、上の利用規約に従い、「VOICEVOX:冥鳴ひまり」と
+クレジットを記載してください。
+
+
+-----------------------------------------------------------
+Voice: VOICEVOX:冥鳴ひまり (Meimei Himari)
+-----------------------------------------------------------
+
+The reading voice in this app (assets/voice/himari) was generated with the speech
+synthesis software VOICEVOX using the 冥鳴ひまり voice library. It is used under the
+VOICEVOX terms of use and the 冥鳴ひまり terms of use:
+
+  VOICEVOX: https://voicevox.hiroshiba.jp/term/
+  冥鳴ひまり: https://meimeihimari.wixsite.com/himari/terms-of-use
+
+Any use of this audio outside the app must also follow these terms and credit
+"VOICEVOX:冥鳴ひまり".

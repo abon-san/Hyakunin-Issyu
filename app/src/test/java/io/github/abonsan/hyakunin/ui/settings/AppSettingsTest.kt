@@ -32,10 +32,12 @@ class AppSettingsTest {
     fun defaultsWhenNothingIsSaved() {
         // 初めて起動したときの句の表示は歴史的仮名遣い（対戦設定の既定と同じ）
         assertEquals(
-            AppSettings(ScreenOrientation.AUTO, flipOpponentCards = true, verseStyle = VerseStyle.KANA),
+            AppSettings(ScreenOrientation.AUTO, flipOpponentCards = true, verseStyle = VerseStyle.KANA, voiceEnabled = true),
             AppSettingsStore(context).load(),
         )
         assertEquals(GameConfig().verseStyle, AppSettings().verseStyle)
+        // 読み上げ音声は初めからオン（対戦設定の既定と同じ）
+        assertEquals(GameConfig().voiceEnabled, AppSettings().voiceEnabled)
     }
 
     @Test
@@ -46,6 +48,7 @@ class AppSettingsTest {
                     orientation = orientation,
                     flipOpponentCards = orientation != ScreenOrientation.AUTO,
                     verseStyle = verseStyle,
+                    voiceEnabled = verseStyle == VerseStyle.KANA,
                 )
                 AppSettingsStore(context).save(settings)
                 // 別のインスタンス（アプリの再起動に相当）でも読める
@@ -74,6 +77,29 @@ class AppSettingsTest {
     }
 
     @Test
+    fun theVoiceSettingIsSavedUnderItsOwnKey() {
+        AppSettingsStore(prefs).save(AppSettings(voiceEnabled = false))
+        assertEquals(false, prefs.getBoolean("voice_enabled", true))
+        assertEquals(false, AppSettingsStore(prefs).load().voiceEnabled)
+        AppSettingsStore(prefs).save(AppSettings(voiceEnabled = true))
+        assertEquals(true, AppSettingsStore(prefs).load().voiceEnabled)
+    }
+
+    @Test
+    fun settingsSavedBeforeTheVoiceSettingTurnTheVoiceOn() {
+        // 読み上げ音声が無かった版で保存した設定は、そのまま引き継いで読み上げ音声をオンにする
+        prefs.edit {
+            putString("screen_orientation", ScreenOrientation.PORTRAIT.name)
+            putBoolean("flip_opponent_cards", false)
+            putString("verse_style", VerseStyle.READING.name)
+        }
+        assertEquals(
+            AppSettings(ScreenOrientation.PORTRAIT, flipOpponentCards = false, verseStyle = VerseStyle.READING, voiceEnabled = true),
+            AppSettingsStore(prefs).load(),
+        )
+    }
+
+    @Test
     fun theVerseStyleIsSavedWithItsName() {
         AppSettingsStore(prefs).save(AppSettings(verseStyle = VerseStyle.READING))
         assertEquals("READING", prefs.getString("verse_style", null))
@@ -88,6 +114,7 @@ class AppSettingsTest {
             putString("screen_orientation", "SIDEWAYS")
             putString("flip_opponent_cards", "yes")
             putString("verse_style", "KATAKANA")
+            putString("voice_enabled", "off")
         }
         assertEquals(AppSettings(), AppSettingsStore(prefs).load())
         // 型の違う値も読めない値として扱う

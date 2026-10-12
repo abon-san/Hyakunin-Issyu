@@ -32,8 +32,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -50,6 +52,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.abonsan.hyakunin.R
 import io.github.abonsan.hyakunin.game.FieldCard
+import io.github.abonsan.hyakunin.game.LeadInState
 import io.github.abonsan.hyakunin.game.MatchActions
 import io.github.abonsan.hyakunin.game.MatchPhase
 import io.github.abonsan.hyakunin.game.MatchUiState
@@ -305,6 +308,10 @@ private fun LandscapeBoard(
     }
 }
 
+/**
+ * 中央の欄。待ち・前置き・読み上げ・結果を切り替える（切り替わりは重ねて薄くする）。
+ * 前置きの間（[MatchUiState.leadIn] があるとき）は待ちの表示（カウントダウン・「読み始める」）を出さない。
+ */
 @Composable
 private fun CenterArea(
     state: MatchUiState,
@@ -315,15 +322,20 @@ private fun CenterArea(
     modifier: Modifier = Modifier,
 ) {
     val content = when (state.phase) {
-        MatchPhase.Waiting -> CenterContent.Waiting
+        MatchPhase.Waiting -> if (state.leadIn != null) CenterContent.LeadIn else CenterContent.Waiting
         MatchPhase.Reading -> if (state.reading != null) CenterContent.Reading else CenterContent.Waiting
         MatchPhase.Result, is MatchPhase.Finished ->
             if (state.lastResult != null) CenterContent.Result else CenterContent.Waiting
     }
+    // 前置きが終わって上の句に切り替わる間も、消えていく前置きの欄には最後の前置きを出す
+    val lastLeadIn = remember { mutableStateOf<LeadInState?>(null) }
+    SideEffect { if (state.leadIn != null) lastLeadIn.value = state.leadIn }
     Crossfade(targetState = content, modifier = modifier, animationSpec = tween(220), label = "center") {
         val reading = state.reading
         val result = state.lastResult
+        val leadIn = if (it == CenterContent.LeadIn) state.leadIn ?: lastLeadIn.value else null
         when {
+            leadIn != null -> LeadInPanel(leadIn, state.config.verseStyle)
             it == CenterContent.Reading && reading != null -> ReadingPanel(reading, state.config.verseStyle, notice)
             it == CenterContent.Result && result != null -> ResultPanel(
                 result = result,
@@ -343,7 +355,7 @@ private fun CenterArea(
     }
 }
 
-private enum class CenterContent { Waiting, Reading, Result }
+private enum class CenterContent { Waiting, LeadIn, Reading, Result }
 
 /**
  * 上部の成績。左から一時停止、自分、相手、読みの数。
