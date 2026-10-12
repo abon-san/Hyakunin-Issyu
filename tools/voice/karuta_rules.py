@@ -27,6 +27,8 @@
       "world"   : きれいに出る短い母音（vowel_length 0.25）の安定部を WORLD で持続させ（yoin.py）、
                   遅めに始まる指数的な減衰で消す。
       "short"   : 短い母音（vowel_length 0.25）をそのまま自然に減衰させて無音で埋める（持続音なし）。
+                  yoin_short_tail_s > 0 なら、その母音を WORLD で延ばし、平らな部分なしで自然に減衰させて、
+                  聞こえている長さ（ピークより 40 dB 以内）を yoin_short_tail_s 秒にする（yoin.short_tail）。
   * 上の句・下の句は別々のクリップ（それぞれ前後に余白を持つ）。間はアプリ側で入れる。
   * 全クリップの有音区間 RMS を -22 dBFS にそろえ、ピークは -1 dBFS 以下。
     "world" / "short" では、余韻の持続音を除いた部分（最後の母音の終わりまで）でゲインを決める。
@@ -101,6 +103,10 @@ class KarutaRules:
     yoin_jitter_cents: float = 3.0
     yoin_tremolo_db: float = 0.6
     yoin_ap_floor: float = 0.07       # 非周期性の下駄（持続音の HNR を元の母音に合わせる。実測 21.5 dB 相当）
+    # yoin_mode == "short" の延長（0 なら 新2 のまま = 短い母音が自然に消えるだけ）
+    yoin_short_tail_s: float = 0.0    # 最後の母音の開始から「聞こえている」長さ（ピークより 40 dB 以内）
+    yoin_short_power: float = 1.25    # 減衰の曲線: dB ∝ 時間 ** power（1 = 指数的。>1 は穏やかに始まりだんだん速く）
+    yoin_short_plateau_s: float = 0.0  # 切り替えの後の平らな部分（0.1 秒まで。既定は無し）
     # 音量
     target_db: float = -22.0
     peak_db: float = -1.0
@@ -310,12 +316,15 @@ class Clip:
     yoin_info: dict = field(default_factory=dict)   # 余韻の作り方の記録（検査用）
 
 
-def _normalize(x: np.ndarray, rules: KarutaRules, ref_end: int | None = None) -> tuple[np.ndarray, float]:
+def _normalize(x: np.ndarray, rules: KarutaRules, ref_end: int | None = None,
+               gain_src: np.ndarray | None = None) -> tuple[np.ndarray, float]:
     """有音区間 RMS を target_db に合わせる。ref_end があれば x[:ref_end] でゲインを決める
-    （余韻の持続音を数えない）。ピークが peak_db を超える分は vk.normalize_loudness と同じ tanh で丸める。"""
+    （余韻の持続音を数えない）。gain_src があれば、ゲインはそちらの [:ref_end] で決める（余韻を延ばしても
+    ほかの部分の音量が変わらないように）。ピークが peak_db を超える分は vk.normalize_loudness と同じ tanh で丸める。"""
     if ref_end is None:
         return vk.normalize_loudness(x, rules.target_db, rules.peak_db)
-    _, gain_db = vk.normalize_loudness(x[:ref_end].copy(), rules.target_db, rules.peak_db)
+    src = x if gain_src is None else gain_src
+    _, gain_db = vk.normalize_loudness(src[:ref_end].copy(), rules.target_db, rules.peak_db)
     y = x * 10 ** (gain_db / 20)
     ceil = 10 ** (rules.peak_db / 20)
     if np.abs(y).max() > ceil:
@@ -335,6 +344,7 @@ def render_clip(engine: vk.Engine, qr: vk.QueryResult, plan: VersePlan, style_id
     assert abs(err) <= vk.SAMPLES_PER_FRAME, f"timeline と実際の長さが合わない: {err} サンプル"
     sr = vk.SAMPLE_RATE
     ref_end = None
+    gain_src = None
     info: dict = {}
     if plan.kind == "shimo":
         v0 = int(round(tl.vowel_starts[-1] * sr))
@@ -344,6 +354,16 @@ def render_clip(engine: vk.Engine, qr: vk.QueryResult, plan: VersePlan, style_id
             vk._fade_out(x, v0 + int(rules.yoin_fade_delay_s * sr), v1)
         elif rules.yoin_mode == "short":
             ref_end = v1
+            if rules.yoin_short_tail_s > 0:
+                gain_src = x.copy()         # 音量は、延ばす前の自然な母音で決める（新2 と同じゲイン）
+                lvl = {"L": rules.level_L, "M": rules.level_M, "H": rules.level_H}[plan.levels[-1]]
+                x, sinfo = yoin.short_tail(
+                    x, tl.vowel_starts[-1], tl.ends[-1], lvl, rules.yoin_short_tail_s,
+                    power=rules.yoin_short_power, plateau_s=rules.yoin_short_plateau_s,
+                    drift_ln=rules.yoin_drift_ln, vibrato_cents=rules.yoin_vibrato_cents,
+                    vibrato_hz=rules.yoin_vibrato_hz, jitter_cents=rules.yoin_jitter_cents,
+                    tremolo_db=rules.yoin_tremolo_db, ap_floor=rules.yoin_ap_floor)
+                info = sinfo
         elif rules.yoin_mode == "world":
             lvl = {"L": rules.level_L, "M": rules.level_M, "H": rules.level_H}[plan.levels[-1]]
             y, n_valid, sinfo = yoin.sustain_vowel(
@@ -370,7 +390,7 @@ def render_clip(engine: vk.Engine, qr: vk.QueryResult, plan: VersePlan, style_id
     else:
         verse_s = tl.ends[-1] - tl.starts[0]
         yoin_s = 0.0
-    y, gain = _normalize(x, rules, ref_end)
+    y, gain = _normalize(x, rules, ref_end, gain_src)
     return Clip(y, q, plan, qr, vk._kana_times(qr, tl, 0.0), verse_s, yoin_s, gain,
                 list(zip(tl.starts, tl.vowel_starts, tl.ends)), info)
 
@@ -465,6 +485,17 @@ def check_yoin(clip: Clip, rules: KarutaRules) -> dict:
     if rules.yoin_mode == "short":
         k = int(np.argmax(e))
         assert (np.diff(e[k:][e[k:] > -100]) <= 6).all(), "短い余韻の減衰が単調でない"
+        if rules.yoin_short_tail_s > 0:
+            m = yoin.tail_metrics(x, i0, clip.yoin_info["f0"], clip.yoin_info["splice_s"] - v0,
+                                  clip.yoin_info["splice_end_s"] - v0)
+            out.update(m)
+            assert abs(m["audible_s"] - rules.yoin_short_tail_s) <= 0.02, f"聞こえている長さ {m['audible_s']:.3f}"
+            assert abs(m["audible_fine_s"] - rules.yoin_short_tail_s) <= 0.04, f"聞こえている長さ(細) {m['audible_fine_s']:.3f}"
+            assert m["max_rise_db"] <= 0.5, f"減衰の途中で音が戻る: +{m['max_rise_db']:.2f} dB / 20 ms"
+            assert m["hnr_deep_min"] >= 12.0, f"尾に雑音: HNR {m['hnr_deep_min']:.1f} dB"
+            assert m["click_splice"] <= 1.5 * m["click_body"] + 1.0, \
+                f"切り替えにクリック: {m['click_splice']:.1f} vs {m['click_body']:.1f}"
+            assert m["n_clip"] == 0, "クリッピング"
         return out
     # --- world: 持続音
     f0 = clip.yoin_info["f0"]       # 持続音の実際の基本周波数（クエリの高さから 数 % ずれる）

@@ -17,6 +17,7 @@
     --no-alt          別読みを作らない
     --codec vorbis|opus   --quality Q（vorbis の既定 3）
     --yoin-mode world|short|voicevox   下の句の余韻の作り方（既定 world。voicevox は v1 の再現）
+    --yoin-short-tail-s S   --yoin-mode short のとき、最後の母音の聞こえている長さ（秒）を S に延ばす（既定 0 = 新2）
     --version-label v2    timings.json の version（既定: voicevox なら v1、それ以外は v2）
 """
 from __future__ import annotations
@@ -127,7 +128,7 @@ def first_ku(reading: str) -> str:
     return vk.split_reading(reading)[0]
 
 
-def build_trials(clips: dict, poems, rules: kr.KarutaRules, trial_dir: Path) -> list[str]:
+def build_trials(clips: dict, poems, rules: kr.KarutaRules, trial_dir: Path, trial_poems=TRIAL_POEMS) -> list[str]:
     trial_dir.mkdir(parents=True, exist_ok=True)
     for old in trial_dir.glob("*.wav"):
         old.unlink()
@@ -142,7 +143,7 @@ def build_trials(clips: dict, poems, rules: kr.KarutaRules, trial_dir: Path) -> 
 
     joka = np.concatenate([X("joka_kami"), gap, X("joka_shimo"), X("joka_shimo"), ma])
     save("01_序歌.wav", joka)
-    for n in TRIAL_POEMS:
+    for n in trial_poems:
         x = np.concatenate([X(f"{n:03d}_kami"), gap, X(f"{n:03d}_shimo")])
         save(f"{n:02d}_{first_ku(poems[n]['kamiYomi'])}.wav", x)
     for n in TRIAL_ALT:
@@ -175,12 +176,14 @@ def main():
     ap.add_argument("--codec", choices=["vorbis", "opus"], default="vorbis")
     ap.add_argument("--quality", type=float, default=3)
     ap.add_argument("--yoin-mode", choices=["world", "short", "voicevox"], default="world")
+    ap.add_argument("--yoin-short-tail-s", type=float, default=0.0)
     ap.add_argument("--version-label")
     ap.add_argument("--character", default="冥鳴ひまり")
     ap.add_argument("--style", default="ノーマル")
     args = ap.parse_args()
     t0 = time.time()
-    rules = dataclasses.replace(kr.PACE_REF, yoin_mode=args.yoin_mode)
+    rules = dataclasses.replace(kr.PACE_REF, yoin_mode=args.yoin_mode, yoin_short_tail_s=args.yoin_short_tail_s)
+    assert args.yoin_short_tail_s == 0 or args.yoin_mode == "short", "--yoin-short-tail-s は --yoin-mode short 用"
     version = args.version_label or ("v1" if args.yoin_mode == "voicevox" else "v2")
     poems, nobashi = kr.load_poems(), kr.load_nobashi()
     only = [int(x) for x in args.poems.split(",")] if args.poems else list(range(1, 101))
@@ -277,11 +280,12 @@ def main():
     print("\n".join(rep))
 
     if args.trial_dir:
-        need = [f"{n:03d}_{p}" for n in TRIAL_POEMS for p in ("kami", "shimo")]
+        trial_poems = [n for n in TRIAL_POEMS if n in only]
+        need = [f"{n:03d}_{p}" for n in trial_poems for p in ("kami", "shimo")]
         missing = [s for s in ["joka_kami", "joka_shimo", "001_kami", "001_shimo", "002_kami"] + need
                    if s not in clips]
         assert not missing, f"試聴用に必要なクリップが無い: {missing}"
-        for line in build_trials(clips, poems, rules, args.trial_dir):
+        for line in build_trials(clips, poems, rules, args.trial_dir, trial_poems):
             print("trial:", line)
     print(f"done in {time.time() - t0:.1f}s; clips={len(entries)}; ogg total {total_bytes / 1e6:.2f} MB "
           f"(main {main_bytes / 1e6:.2f} MB)")
