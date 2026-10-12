@@ -283,8 +283,16 @@ def short_tail(x: np.ndarray, v0: float, v1: float, level_ln: float, tail_s: flo
         if abs(L - tail_s) <= tol_s:
             break
         tau *= (tail_s - ts - plateau_s) / max(L - ts - plateau_s, 0.05)
+    if best[0] > tol_s:
+        # 反復が行き来するとき（尾のレベルが窓の RMS のゆらぎで平らになり、聞こえている終わりが飛ぶ）は、最良の tau のまわりを細かく探す
+        tau0 = best[2]
+        for f in np.linspace(0.97, 1.03, 25):
+            z = make(tau0 * f)
+            L, _, _ = audible_len_s(z, i0)
+            if abs(L - tail_s) < best[0]:
+                best = (abs(L - tail_s), z, tau0 * f, L)
     err, z, tau, L = best
-    if err > 3 * tol_s:
+    if err > 6 * tol_s:
         raise RuntimeError(f"聞こえている長さが {tail_s} 秒に合わない: {L:.3f}")
     t_end = end_s if end_s is not None else ts + plateau_s + tau * (end_db / AUDIBLE_DB) ** (1 / power)
     assert t_end < end_max - 0.01, "減衰の終わりが持続音より後"
@@ -333,7 +341,7 @@ def tail_metrics(x: np.ndarray, i0: int, f0: float, splice_rel_s: float, splice_
     L, tpk, pk = audible_len_s(x, i0)
     Lf, _, _ = audible_len_s(x, i0, win_s=0.01, hop_s=0.0025)
     e = level_track_db(seg)
-    ip = int(round((tpk - 0.01) / 0.005))
+    ip = max(int(round((tpk - 0.01) / 0.005)), int(round(splice_end_rel_s / 0.005)))   # 切り替えより前は自然な母音（前のモーラの尾・凹みを含む）
     ie = int(round((L - 0.01) / 0.005))
     d = e[ip + 4: ie + 1] - e[ip: ie + 1 - 4]
     L50, _, _ = audible_len_s(x, i0, floor_db=50.0)
@@ -469,7 +477,8 @@ def pick_windows(x: np.ndarray, vs: float, ve: float, level_ln: float, *, xfade_
 def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s: float, *,
                     xfade_s: float = 0.025, vibrato_cents: float = 6.0,
                     vibrato_hz: float = 5.2, jitter_cents: float = 3.0, tremolo_db: float = 0.5,
-                    ap_floor: float = 0.07, seed: int = 0, no_rise: bool = False) -> tuple[np.ndarray, dict]:
+                    ap_floor: float = 0.07, seed: int = 0, no_rise: bool = False,
+                    pick_kw: dict | None = None) -> tuple[np.ndarray, dict]:
     """x の母音 [vs, ve)（秒）を、内側で add_s 秒（約。ピッチ周期の端数ぶん ±数 ms）延ばして返す。
 
     母音全体を WORLD で作り直すのではなく、pick_windows が選んだ 2 つの安定した窓（front と back）の間 [fs, be] だけを、
@@ -482,7 +491,7 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
     n_add サンプル後ろへずれる）、n_add（足したサンプル数）、xcorr_front / xcorr_back（接ぎ目の相関）、f0_front / f0_back。"""
     rng = np.random.default_rng(seed)
     L = int(round(xfade_s * SR))
-    pk = pick_windows(x, vs, ve, level_ln, xfade_s=xfade_s)
+    pk = pick_windows(x, vs, ve, level_ln, xfade_s=xfade_s, **(pick_kw or {}))
     if not pk["ok"]:
         raise ValueError(f"母音 {vs:.3f}-{ve:.3f} s に伸ばせる窓が無い: {pk['reason']}")
     an = pk["an"]

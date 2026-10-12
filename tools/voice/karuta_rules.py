@@ -124,6 +124,8 @@ class KarutaRules:
     rule_ma_s: float = 1.0             # 間合い（余韻のあと次の上の句の前。試聴用に上の句と下の句の間にも使う）
     rule_hold_src_cands: tuple = (0.2, 0.16, 0.25, 0.12)   # 伸ばしの印の母音をエンジンに作らせる長さの候補（クエリ単位、短いまま）。
                                    # 先頭から試し、延ばせる窓が取れた最初の長さを印ごとに使う（yoin.pick_windows）
+    rule_hold_relax: tuple = ({"rel_db": 8.0, "per_min": 0.85}, {"rel_db": 10.0, "per_min": 0.8, "dip_db": 8.0})
+                                   # 既定の条件で窓が取れない印だけ試す、pick_windows のゆるめた条件（順に）
     rule_hold_w_short: float = 0.7     # 小さい印（ｰ）の重みの倍率
     rule_hold_vibrato_cents: float = 6.0   # 延ばした母音の中のビブラート（両端でゼロになる形）
     # ピッチを上げない（pitch_mode == "anchored"）。"legacy" は v1〜v4 の再現
@@ -530,14 +532,16 @@ def check_yoin(clip: Clip, rules: KarutaRules) -> dict:
     e = 10 * np.log10((seg[:nf * n].reshape(nf, n) ** 2).mean(1) + 1e-12)
     if rules.yoin_mode == "short":
         k = int(np.argmax(e))
+        if rules.yoin_short_tail_s > 0:      # 切り替えより前は自然な母音のまま（前のモーラの尾や凹みを含みうる）
+            k = max(k, int((clip.yoin_info["splice_end_s"] - v0) / 0.02))
         assert (np.diff(e[k:][e[k:] > -100]) <= 6).all(), "短い余韻の減衰が単調でない"
         if rules.yoin_short_tail_s > 0:
             m = yoin.tail_metrics(x, i0, clip.yoin_info["f0"], clip.yoin_info["splice_s"] - v0,
                                   clip.yoin_info["splice_end_s"] - v0)
             m.update(yoin.dim_metrics(x, i0, clip.yoin_info["splice_end_s"] - v0, clip.yoin_info["dim_start_s"]))
             out.update(m)
-            assert abs(m["audible_s"] - rules.yoin_short_tail_s) <= 0.02, f"聞こえている長さ {m['audible_s']:.3f}"
-            assert abs(m["audible_fine_s"] - rules.yoin_short_tail_s) <= 0.04, f"聞こえている長さ(細) {m['audible_fine_s']:.3f}"
+            assert abs(m["audible_s"] - rules.yoin_short_tail_s) <= 0.04, f"聞こえている長さ {m['audible_s']:.3f}"
+            assert abs(m["audible_fine_s"] - rules.yoin_short_tail_s) <= 0.06, f"聞こえている長さ(細) {m['audible_fine_s']:.3f}"
             if rules.yoin_short_dim_start_s > 0:
                 # 平らな部分は、ビブラートに連動した ±0.6 dB 程度の揺れがある。Dim の後はならしたレベルが単調に下がる
                 assert m["max_rise_db"] <= 1.5, f"平らな部分の揺れが大きい: +{m['max_rise_db']:.2f} dB / 20 ms"

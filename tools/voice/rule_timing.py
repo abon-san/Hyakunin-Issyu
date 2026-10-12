@@ -40,11 +40,17 @@ def vowel_q_for_total(cons_len: float | None, speed: float, total_s: float) -> f
     nc = vk._frames(cons_len or 0.0, speed)
     target = int(round(total_s * vk.FRAME_RATE))
     nv = max(1, target - nc)
-    q = nv * speed / vk.FRAME_RATE
-    for d in (0.0, -0.002, 0.002, -0.004, 0.004, -0.006, 0.006):
-        if vk._frames(q + d, speed) == nv:
-            return q + d
-    return q
+    # q は「速度 1 のフレーム数 / FRAME_RATE」ちょうど（フレームの丸めが .5 の境目にならない。0.048 のような値だと、
+    # エンジンと timeline() で丸めが食い違い、音声が 2 フレーム短くなる: 96番）。nv フレームになる q が無ければ最も近いもの。
+    best = (99, None)
+    for n0 in range(1, 400):
+        q = n0 / vk.FRAME_RATE
+        d = abs(vk._frames(q, speed) - nv)
+        if d < best[0]:
+            best = (d, q)
+        if d == 0:
+            break
+    return best[1]
 
 
 def hold_weights(plan: kr.VersePlan, rules: kr.KarutaRules, short_ks: set[int]) -> dict[int, float]:
@@ -104,14 +110,17 @@ def render_rule_clip(engine: vk.Engine, qr: vk.QueryResult, plan: kr.VersePlan, 
 
     # ---- 印ごとに、延ばせる窓が取れる最初の長さの候補を選ぶ（短い母音のほうがきれい）
     src_q: dict[int, float] = {}
-    for cand in rules.rule_hold_src_cands:
-        todo = [i for i in w if i not in src_q]
-        if not todo:
-            break
-        _, t_c, x_c = render({i: cand for i in w})
-        for i in todo:
-            if yoin.pick_windows(x_c, t_c.vowel_starts[i], t_c.ends[i], lvl[plan.levels[i]])["ok"]:
-                src_q[i] = cand
+    pick_kw: dict[int, dict] = {}
+    for kw in (None, *rules.rule_hold_relax):      # 既定の条件で全候補を試し、だめな印だけ条件をゆるめる（お のように出だしが小さい母音）
+        for cand in rules.rule_hold_src_cands:
+            todo = [i for i in w if i not in src_q]
+            if not todo:
+                break
+            _, t_c, x_c = render({i: cand for i in w})
+            for i in todo:
+                if yoin.pick_windows(x_c, t_c.vowel_starts[i], t_c.ends[i], lvl[plan.levels[i]], **(kw or {}))["ok"]:
+                    src_q[i] = cand
+                    pick_kw[i] = dict(kw or {})
     missing = [units[i].text for i in w if i not in src_q]
     assert not missing, f"延ばせる母音が作れない印: {missing}"
     q, tl, x = render(src_q)
@@ -130,9 +139,17 @@ def render_rule_clip(engine: vk.Engine, qr: vk.QueryResult, plan: kr.VersePlan, 
     for i in sorted(w, reverse=True):
         if ext[i] <= 0:
             continue
-        y, inf = yoin.extend_interior(y, tl.vowel_starts[i], tl.ends[i], lvl[plan.levels[i]], ext[i],
-                                      vibrato_hz=rules.yoin_vibrato_hz, **kr.hold_pitch_kw(rules),
-                                      tremolo_db=rules.yoin_tremolo_db, ap_floor=rules.yoin_ap_floor, seed=i)
+        err = None
+        for kw in (pick_kw[i], *rules.rule_hold_relax):      # 窓の選びは周りの母音で数 ms 変わる。取れなければ条件をゆるめる
+            try:
+                y, inf = yoin.extend_interior(y, tl.vowel_starts[i], tl.ends[i], lvl[plan.levels[i]], ext[i],
+                                              vibrato_hz=rules.yoin_vibrato_hz, **kr.hold_pitch_kw(rules), pick_kw=kw,
+                                              tremolo_db=rules.yoin_tremolo_db, ap_floor=rules.yoin_ap_floor, seed=i)
+                break
+            except ValueError as e:
+                err = e
+        else:
+            raise err
         infos[i] = inf
     ins = sorted((inf["ins_at"], inf["n_add"]) for inf in infos.values())
 
