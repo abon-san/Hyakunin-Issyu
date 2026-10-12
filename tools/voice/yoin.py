@@ -181,37 +181,49 @@ def audible_len_s(x: np.ndarray, i0: int, *, floor_db: float = AUDIBLE_DB, win_s
 
 
 def short_tail_gain(t: np.ndarray, ts: float, tau40: float, power: float, plateau_s: float,
-                    end_db: float, taper_s: float) -> np.ndarray:
+                    end_db: float, taper_s: float, end_s: float | None = None) -> np.ndarray:
     """切り替えの終わり（時刻 ts）からの減衰の振幅（倍率）。plateau_s の間は 1、そのあと
     -AUDIBLE_DB * ((t-ts-plateau)/tau40) ** power [dB]。power>1 は、減衰が穏やかに始まり、だんだん速くなる
-    （自然な声の終わり方）。-end_db に達した所で 0 にする（その前 taper_s はコサインで 0 へ）。"""
+    （自然な声の終わり方）。-end_db に達した所で 0 にする（その前 taper_s はコサインで 0 へ）。
+    end_s を与えると、0 にする時刻をそこに固定する（end_db は無視。長い余韻を総尺ちょうどで消すため）。"""
     tau = np.maximum(t - ts - plateau_s, 0.0)
     d = -AUDIBLE_DB * (tau / tau40) ** power
     g = 10 ** (d / 20)
-    t_end = ts + plateau_s + tau40 * (end_db / AUDIBLE_DB) ** (1 / power)
+    t_end = (ts + plateau_s + tau40 * (end_db / AUDIBLE_DB) ** (1 / power)) if end_s is None else end_s
     tp = np.clip((t_end - t) / taper_s, 0, 1)
     g *= 0.5 * (1 - np.cos(np.pi * tp))
     g[t >= t_end] = 0.0
+    if end_s is not None:
+        g[t >= t_end - 1.5 / SR] = 0.0       # end_s が総尺のときも、最後のサンプルがちょうど 0 になるように
     return g
 
 
 def short_tail(x: np.ndarray, v0: float, v1: float, level_ln: float, tail_s: float, *,
-               power: float = 1.25, plateau_s: float = 0.0, end_db: float = 78.0, taper_s: float = 0.04,
+               power: float = 1.25, plateau_s: float = 0.0, dim_start_s: float | None = None,
+               end_s: float | None = None, end_db: float = 78.0, taper_s: float = 0.04,
                tol_s: float = 0.008, **sustain_kw) -> tuple[np.ndarray, dict]:
     """x の最後の母音の「聞こえている長さ」を tail_s 秒（母音の開始から。AUDIBLE_DB 以内）にして返す。
 
     きれいな短い母音 x を、安定部のスペクトル・非周期性を持つ WORLD の持続音に切り替え点で接ぎ（sustain_vowel）、
-    接いだ所から（plateau_s ≤ 0.1 秒の平らな部分のあと）穏やかに始まる指数的な減衰をかける。減衰の速さ
+    接いだ所から（plateau_s の平らな部分のあと）穏やかに始まる指数的な減衰をかける。減衰の速さ
     (tau40) は、測った聞こえている長さが tail_s に合うまで繰り返して決める（ビブラートの揺れで窓の測定が
     数 ms 動くので、tol_s 以内、無ければ最良）。戻り値: (y, info)。
-    y の長さは母音の開始 + 1.8 * tail_s + 0.1 秒（呼び出し側が総尺に合わせる）。"""
-    assert 0.0 <= plateau_s <= 0.1, "平らな部分は 0.1 秒まで"
-    sustain_s = 1.8 * tail_s + 0.3
+    dim_start_s: 減衰の開始を「母音の開始から」この秒数にする（plateau_s = dim_start_s - 切り替えの終わり。
+        None なら plateau_s をそのまま使う）。「遅めの Dim」= 平らに保ってから落とす。
+    end_s: 減衰が 0 になる時刻（母音の開始から）。None なら -end_db に達した所。長い余韻は end_s を総尺に合わせる。
+    y の長さは母音の開始 + (end_s があればそれ、無ければ 1.8 * tail_s) + 0.1 秒（呼び出し側が総尺に合わせる）。"""
+    assert 0.0 <= plateau_s <= 2.0, "平らな部分は 2 秒まで"
+    sustain_s = (end_s + 0.3) if end_s is not None else 1.8 * tail_s + 0.3
     y, n_valid, sinfo = sustain_vowel(x, v0, v1, level_ln, sustain_s, match_level=True, **sustain_kw)
     i0 = int(round(v0 * SR))
     ts = n_valid / SR - v0
-    assert tail_s > ts + plateau_s + 0.05, f"目標の長さ {tail_s} 秒が、切り替えの終わり {ts:.3f} 秒より短い"
-    end_max = 1.8 * tail_s + 0.1
+    if dim_start_s is not None:
+        plateau_s = dim_start_s - ts
+        assert plateau_s >= 0.0, f"減衰の開始 {dim_start_s} 秒が、切り替えの終わり {ts:.3f} 秒より早い"
+    assert tail_s > ts + plateau_s + 0.05, f"目標の長さ {tail_s} 秒が、減衰の開始 {ts + plateau_s:.3f} 秒より短い"
+    if end_s is not None:
+        assert end_s > tail_s, "end_s は tail_s より後"
+    end_max = (end_s + 0.1) if end_s is not None else 1.8 * tail_s + 0.1
     n_out = i0 + int(round(end_max * SR))
     y = y[:n_out] if len(y) >= n_out else np.pad(y, (0, n_out - len(y)))
     t = np.arange(len(y) - i0) / SR
@@ -219,7 +231,7 @@ def short_tail(x: np.ndarray, v0: float, v1: float, level_ln: float, tail_s: flo
 
     def make(tau40: float) -> np.ndarray:
         z = y.copy()
-        z[i0:] = base * short_tail_gain(t, ts, tau40, power, plateau_s, end_db, taper_s)
+        z[i0:] = base * short_tail_gain(t, ts, tau40, power, plateau_s, end_db, taper_s, end_s)
         return z
 
     tau = tail_s - ts - plateau_s
@@ -235,10 +247,11 @@ def short_tail(x: np.ndarray, v0: float, v1: float, level_ln: float, tail_s: flo
     err, z, tau, L = best
     if err > 3 * tol_s:
         raise RuntimeError(f"聞こえている長さが {tail_s} 秒に合わない: {L:.3f}")
-    t_end = ts + plateau_s + tau * (end_db / AUDIBLE_DB) ** (1 / power)
+    t_end = end_s if end_s is not None else ts + plateau_s + tau * (end_db / AUDIBLE_DB) ** (1 / power)
     assert t_end < end_max - 0.01, "減衰の終わりが持続音より後"
     info = dict(sinfo, v0_s=v0, splice_end_s=n_valid / SR, tail_target_s=tail_s, tail_measured_s=L,
-                tau40_s=tau, plateau_s=plateau_s, power=power, decay_end_s=t_end, sound_s=t_end)
+                tau40_s=tau, plateau_s=plateau_s, dim_start_s=ts + plateau_s, power=power,
+                decay_end_s=t_end, sound_s=t_end)
     return z, info
 
 
@@ -301,3 +314,199 @@ def tail_metrics(x: np.ndarray, i0: int, f0: float, splice_rel_s: float, splice_
                 click_splice=float(cr[spl].max()), click_body=float(cr[mask].max()),
                 peak_dbfs=float(20 * np.log10(np.abs(x).max() + 1e-12)),
                 n_clip=int((np.abs(np.round(x * 32767)) >= 32767).sum()))
+
+
+def dim_metrics(x: np.ndarray, i0: int, ts_rel: float, dim_rel: float, *, smooth_s: float = 0.19) -> dict:
+    """遅めの Dim の実測。x[i0:] は最後の母音の開始から。ts_rel: 切り替えの終わり、dim_rel: 設計上の減衰の開始（どちらも母音の開始から）。
+    level は 20 ms RMS（dB）を、ビブラートの 1 周期（smooth_s）の移動平均でならしたもの。
+    ref_db: 切り替えの終わりから減衰の開始までの最大レベル（平らな部分の高さ）。
+    plateau_range_db: 同じ区間の（ならす前の）最大 - 最小。
+    t_minus{N}: ref より N dB 下がり、以後戻らない最初の時刻（母音の開始から）。
+    smooth_max_rise_db: 減衰の開始（dim_rel）から聞こえている終わりまでの、ならしたレベルの 5 ms ごとの上昇の最大
+    （0 に近ければ、平らな部分のあとは単調に下がっている）。"""
+    seg = x[i0:]
+    e = level_track_db(seg)
+    k = max(1, int(round(smooth_s / 0.005)))
+    p = 10 ** (e / 10)
+    ps = np.convolve(p, np.ones(k) / k, mode="same")
+    es = 10 * np.log10(ps + 1e-12)
+    tc = np.arange(len(e)) * 0.005 + 0.01
+    sel = (tc >= ts_rel) & (tc <= dim_rel)
+    out: dict = {}
+    if not sel.any():
+        sel = (tc >= ts_rel) & (tc <= ts_rel + 0.05)
+    ref = float(es[sel].max())
+    out["ref_db"] = ref
+    out["plateau_range_db"] = float(e[sel].max() - e[sel].min())
+    half = k // 2
+    i1 = int(np.searchsorted(tc, dim_rel))
+    i2 = int(np.nonzero(es[: len(es) - half] >= ref - 40)[0][-1])
+    out["smooth_max_rise_db"] = float(np.diff(es[i1:i2 + 1]).max()) if i2 > i1 + 1 else 0.0
+    for n in (1, 3, 10, 20, 30):
+        below = es <= ref - n
+        below[:half] = False
+        idx = None
+        for i in range(len(es) - half):
+            if below[i] and below[i:len(es) - half].all():
+                idx = i
+                break
+        out[f"t_minus{n}"] = float(tc[idx]) if idx is not None else float("nan")
+    return out
+
+
+# ---------------------------------------------------------------- 句の途中・句末の伸ばし（母音の内側に WORLD の持続音をはさむ）
+
+
+def _fill_f0(f0: np.ndarray, default: float) -> np.ndarray:
+    """無声（0）のフレームを、近くの有声の値で埋める（なければ default）。"""
+    out = f0.copy()
+    v = np.nonzero(out > 0)[0]
+    if len(v) == 0:
+        return np.full_like(out, default)
+    idx = np.arange(len(out))
+    out[out <= 0] = np.interp(idx[out <= 0], v, out[v])
+    return out
+
+
+def _xcorr(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
+
+
+def _analyze_vowel(x: np.ndarray, vs: float, ve: float, level_ln: float) -> dict:
+    """母音 [vs, ve) とその前後 60 ms を WORLD で分析する（F0・スペクトル包絡・非周期性）。"""
+    A, B = max(0, int((vs - 0.06) * SR)), min(len(x), int((ve + 0.06) * SR))
+    seg = x[A:B].astype(np.float64)
+    f0, t = pw.harvest(seg, SR, f0_floor=100, f0_ceil=500, frame_period=FRAME_MS)
+    f0f = _fill_f0(f0, float(np.exp(level_ln)))
+    sp = pw.cheaptrick(seg, f0f, t, SR)
+    ap = pw.d4c(seg, f0f, t, SR)
+    return dict(A=A, t=t, f0=f0f, lsp=np.log(sp + 1e-20), ap=ap)
+
+
+def pick_windows(x: np.ndarray, vs: float, ve: float, level_ln: float, *, xfade_s: float = 0.025,
+                 per_min: float = 0.9, rel_db: float = 4.0, min_replace_s: float = 0.07,
+                 dip_db: float = 5.0, an: dict | None = None) -> dict:
+    """母音 [vs, ve) の中で、周期的で大きい（ピークの窓より rel_db 以内の）窓のうち、一番前（front）と一番後ろ（back）を選ぶ。
+    VOICEVOX の 0.2〜0.3 秒の母音は、母音の頭から約 0.1 秒の所に 10〜15 dB の凹み（穴）が出ることがある。
+    置き換える範囲は [front の開始, back の終わり] なので、凹みがその間にあれば取り除かれる。
+    ok = front と back があり、間が min_replace_s 以上で、front より前（vs + 0.03 から）に凹み（front より dip_db 以上低い所）が無い。
+    戻り値: dict(ok, reason, fs（front の開始サンプル）, be（back の終わりのサンプル）, per_front, per_back, an)。"""
+    an = an or _analyze_vowel(x, vs, ve, level_ln)
+    A, t, f0f = an["A"], an["t"], an["f0"]
+    L = int(round(xfade_s * SR))
+    lo, hi = int((vs + 0.02) * SR), int((ve - 0.04) * SR) - L
+    rows = []
+    for s in range(lo, hi + 1, int(0.0025 * SR)):
+        m = (t >= (s - A) / SR) & (t < (s + L - A) / SR)
+        if m.sum() < 2:
+            continue
+        T = int(round(SR / float(np.median(f0f[m]))))
+        rows.append((s, _rms_db(x[s: s + L]), _periodicity(x[s: s + L + T + 8], T)))
+    res: dict = dict(ok=False, reason="", an=an)
+    if not rows:
+        res["reason"] = "母音が短すぎる"
+        return res
+    c = np.array(rows)
+    mx = c[c[:, 2] > 0.85, 1].max() if (c[:, 2] > 0.85).any() else c[:, 1].max()
+    good = np.nonzero((c[:, 2] >= per_min) & (c[:, 1] >= mx - rel_db))[0]
+    if len(good) < 2:
+        res["reason"] = "周期的で大きい窓が少ない"
+        return res
+    f, b = int(c[good[0], 0]), int(c[good[-1], 0])
+    res.update(fs=f, be=b + L, per_front=float(c[good[0], 2]), per_back=float(c[good[-1], 2]))
+    if (b + L - f) / SR < min_replace_s:
+        res["reason"] = "置き換える範囲が短い"
+        return res
+    e = level_track_db(x[int((vs + 0.03) * SR): f + L], 0.01, 0.005)
+    lvl_f = _rms_db(x[f: f + L])
+    res["pre_min_db"] = float(e.min() - lvl_f) if len(e) else 0.0
+    if len(e) and e.min() < lvl_f - dip_db:
+        res["reason"] = f"front の前に凹み {e.min() - lvl_f:.1f} dB"
+        return res
+    res["ok"] = True
+    return res
+
+
+def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s: float, *,
+                    xfade_s: float = 0.025, vibrato_cents: float = 6.0,
+                    vibrato_hz: float = 5.2, jitter_cents: float = 3.0, tremolo_db: float = 0.5,
+                    ap_floor: float = 0.07, seed: int = 0) -> tuple[np.ndarray, dict]:
+    """x の母音 [vs, ve)（秒）を、内側で add_s 秒（約。ピッチ周期の端数ぶん ±数 ms）延ばして返す。
+
+    母音全体を WORLD で作り直すのではなく、pick_windows が選んだ 2 つの安定した窓（front と back）の間 [fs, be] だけを、
+    両方の窓から取ったスペクトル包絡（front → back へ連続的に変える）・非周期性の WORLD 合成音に置き換え、
+    前後 xfade_s のクロスフェードで位相をそろえて接ぐ。母音の立ち上がり・次の子音への渡りは元の波形のまま。
+    F0 は両端の窓で測った値の間を結び、ゆるいビブラート・ジッタ・小さなトレモロを両端でゼロになる形で加える。
+    戻り値: (y, info)。info: s0（置き換え範囲の開始サンプル）、w（その長さ）、ins_at（= s0 + w。これ以降の元の波形は
+    n_add サンプル後ろへずれる）、n_add（足したサンプル数）、xcorr_front / xcorr_back（接ぎ目の相関）、f0_front / f0_back。"""
+    rng = np.random.default_rng(seed)
+    L = int(round(xfade_s * SR))
+    pk = pick_windows(x, vs, ve, level_ln, xfade_s=xfade_s)
+    if not pk["ok"]:
+        raise ValueError(f"母音 {vs:.3f}-{ve:.3f} s に伸ばせる窓が無い: {pk['reason']}")
+    an = pk["an"]
+    A, t, f0f, lsp, ap = an["A"], an["t"], an["f0"], an["lsp"], an["ap"]
+    s0, be = pk["fs"], pk["be"]
+    w = be - s0
+    m_f = (t >= (s0 - A) / SR) & (t < (s0 + L - A) / SR)
+    m_b = (t >= (be - L - A) / SR) & (t < (be - A) / SR)
+    lf = float(np.log(np.median(f0f[m_f])))
+    lb = float(np.log(np.median(f0f[m_b])))
+    spf = lsp[m_f].mean(0)
+    spb = lsp[m_b].mean(0)
+    apm = np.clip(ap[m_f | m_b].mean(0) + ap_floor, 1e-3, 0.999)
+
+    add = int(round(add_s * SR))
+    lead = int(0.06 * SR)
+    total = lead + w + add + int(0.06 * SR)
+    n = int(round(total / SR * 1000 / FRAME_MS)) + 2
+    tt = np.arange(n) * FRAME_MS / 1000
+    u_f = (lead + L / 2) / SR
+    u_b = (lead + w + add - L / 2) / SR
+    r = np.clip((tt - u_f) / max(u_b - u_f, 1e-3), 0, 1)
+    lnf = lf + (lb - lf) * r
+    ramp = min(0.12, max(u_b - u_f, 0.0) / 2.5)
+    mask = np.clip((tt - u_f - 0.03) / ramp, 0, 1) * np.clip((u_b - 0.03 - tt) / ramp, 0, 1)
+    mask = 0.5 - 0.5 * np.cos(np.pi * mask)
+    vib = np.sin(2 * np.pi * vibrato_hz * tt + rng.uniform(0, 2 * np.pi))
+    walk = np.cumsum(rng.normal(0, 1, n))
+    walk -= np.linspace(walk[0], walk[-1], n)
+    walk = walk / (walk.std() + 1e-9)
+    cents = np.log(2) / 1200
+    lnf = lnf + (vibrato_cents * cents) * vib * mask + (jitter_cents * cents) * walk * mask
+    lsp_t = spf[None, :] * (1 - r[:, None]) + spb[None, :] * r[:, None]
+    y = pw.synthesize(np.exp(lnf), np.exp(lsp_t), np.tile(apm, (n, 1)), SR, FRAME_MS)
+    y = y * 10 ** (tremolo_db * np.interp(np.arange(len(y)) / SR, tt, vib * mask) / 20)
+    # --- 位相合わせ（前）
+    T = int(round(SR / float(np.exp(0.5 * (lf + lb)))))
+    tgt_f = x[s0: s0 + L]
+    best, shf = -9.0, lead
+    for sh in range(max(0, lead - 3 * T), lead + 3 * T):
+        cc = _xcorr(tgt_f, y[sh: sh + L])
+        if cc > best:
+            best, shf = cc, sh
+    yy = y[shf:]
+    # --- 位相合わせ（後ろ）: yy[e-L:e] が x[be-L : be] に一番合う e
+    tgt_b = x[be - L: be]
+    bestb, e = -9.0, w + add
+    for ee in range(w + add - 2 * T, w + add + 2 * T + 1):
+        if ee - L < L or ee > len(yy):
+            continue
+        cc = _xcorr(tgt_b, yy[ee - L: ee])
+        if cc > bestb:
+            bestb, e = cc, ee
+    yy = yy[:e].copy()
+    # --- 音量: 前の端と後ろの端を元の波形に合わせる（dB で直線的に）
+    gf = np.sqrt((tgt_f ** 2).mean() / ((yy[:L] ** 2).mean() + 1e-20))
+    gb = np.sqrt((tgt_b ** 2).mean() / ((yy[e - L:] ** 2).mean() + 1e-20))
+    gf, gb = float(np.clip(gf, 0.5, 2.0)), float(np.clip(gb, 0.5, 2.0))
+    yy *= np.exp(np.interp(np.arange(e), [L / 2, e - L / 2], [np.log(gf), np.log(gb)]))
+    ramp_in = np.linspace(0.0, 1.0, L)
+    out = np.concatenate([x[:s0], yy, x[be:]])
+    out[s0: s0 + L] = x[s0: s0 + L] * (1 - ramp_in) + yy[:L] * ramp_in
+    out[s0 + e - L: s0 + e] = yy[e - L:] * (1 - ramp_in) + x[be - L: be] * ramp_in
+    info = dict(s0=s0, w=w, ins_at=be, n_add=e - w, xcorr_front=best, xcorr_back=bestb,
+                f0_front=float(np.exp(lf)), f0_back=float(np.exp(lb)), anchor_s=s0 / SR,
+                xfade_front=(s0, s0 + L), xfade_back=(s0 + e - L, s0 + e),
+                per_front=pk["per_front"], per_back=pk["per_back"])
+    return out, info

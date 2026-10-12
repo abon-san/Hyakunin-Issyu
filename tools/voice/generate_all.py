@@ -18,6 +18,11 @@
     --codec vorbis|opus   --quality Q（vorbis の既定 3）
     --yoin-mode world|short|voicevox   下の句の余韻の作り方（既定 world。voicevox は v1 の再現）
     --yoin-short-tail-s S   --yoin-mode short のとき、最後の母音の聞こえている長さ（秒）を S に延ばす（既定 0 = 新2）
+    --yoin-short-dim-start-s S   減衰（Dim）の開始を、最後の母音の開始から S 秒にする（それまでは平ら。遅めの Dim。既定 0 = 従来）
+    --yoin-short-end-s S    減衰が 0 になる時刻（最後の母音の開始から）。長い余韻（3 秒）向け。既定 0 = 従来
+    --yoin-drift-ln-short D   --yoin-mode short の持続中の ln F0 の下降（既定は yoin_drift_ln = -0.05）
+    --timing default|rule   rule: 競技かるたの規則どおりの時間配分（上の句 6 秒 / 下の句 5 秒 / 余韻 3 秒。rule_timing.py）。
+                            --yoin-mode short と --yoin-short-tail-s が必要。既定 default は従来どおり。
     --version-label v2    timings.json の version（既定: voicevox なら v1、それ以外は v2）
 """
 from __future__ import annotations
@@ -45,9 +50,10 @@ TRIAL_ALT = (8, 22, 45, 63, 76)
 
 
 class Job:
-    def __init__(self, key, part, kanji, reading, marks, oyama, alt=False):
+    def __init__(self, key, part, kanji, reading, marks, oyama, alt=False, short=()):
         self.key, self.part, self.kanji, self.reading = key, part, kanji, reading
         self.marks, self.oyama, self.alt = marks, oyama, alt
+        self.short = frozenset(short)       # 小さい印（ｰ）の位置（nobashi.json の short）
 
     @property
     def stem(self) -> str:
@@ -60,11 +66,13 @@ def build_jobs(poems, nobashi, only, with_joka, with_alt) -> list[Job]:
     if with_joka:
         nb = nobashi["joka"]
         for i, part in enumerate(("kami", "shimo")):
-            jobs.append(Job("joka", part, kr.JOKA_KANJI[i], kr.JOKA_YOMI[i], nb[part], False))
+            jobs.append(Job("joka", part, kr.JOKA_KANJI[i], kr.JOKA_YOMI[i], nb[part], False,
+                            short=nb.get("short", {}).get(part, [])))
     for n in only:
         p, nb = poems[n], nobashi[str(n)]
         for part in ("kami", "shimo"):
-            jobs.append(Job(n, part, p[part], p[part + "Yomi"], nb[part], n in kr.OYAMA_FUDA))
+            jobs.append(Job(n, part, p[part], p[part + "Yomi"], nb[part], n in kr.OYAMA_FUDA,
+                            short=nb.get("short", {}).get(part, [])))
     if with_alt:
         for (n, part), (old, new) in kr.ALT_REPLACE.items():
             if n not in only:
@@ -74,7 +82,8 @@ def build_jobs(poems, nobashi, only, with_joka, with_alt) -> list[Job]:
             assert rd.count(old) == 1, f"{n} {part}: 『{old}』が読み {rd} に 1 回だけ出てこない"
             alt = rd.replace(old, new)
             assert len("".join(vk.split_reading(alt))) == len("".join(vk.split_reading(rd)))
-            jobs.append(Job(n, part, p[part], alt, nb[part], n in kr.OYAMA_FUDA, alt=True))
+            jobs.append(Job(n, part, p[part], alt, nb[part], n in kr.OYAMA_FUDA, alt=True,
+                            short=nb.get("short", {}).get(part, [])))
     return jobs
 
 
@@ -177,13 +186,24 @@ def main():
     ap.add_argument("--quality", type=float, default=3)
     ap.add_argument("--yoin-mode", choices=["world", "short", "voicevox"], default="world")
     ap.add_argument("--yoin-short-tail-s", type=float, default=0.0)
+    ap.add_argument("--yoin-short-dim-start-s", type=float, default=0.0)
+    ap.add_argument("--yoin-short-end-s", type=float, default=0.0)
+    ap.add_argument("--yoin-drift-ln-short", type=float, default=None)
+    ap.add_argument("--timing", choices=["default", "rule"], default="default")
     ap.add_argument("--version-label")
     ap.add_argument("--character", default="冥鳴ひまり")
     ap.add_argument("--style", default="ノーマル")
     args = ap.parse_args()
     t0 = time.time()
-    rules = dataclasses.replace(kr.PACE_REF, yoin_mode=args.yoin_mode, yoin_short_tail_s=args.yoin_short_tail_s)
+    rules = dataclasses.replace(
+        kr.PACE_REF, yoin_mode=args.yoin_mode, yoin_short_tail_s=args.yoin_short_tail_s,
+        yoin_short_dim_start_s=args.yoin_short_dim_start_s, yoin_short_end_s=args.yoin_short_end_s,
+        yoin_drift_ln_short=args.yoin_drift_ln_short, timing=args.timing)
     assert args.yoin_short_tail_s == 0 or args.yoin_mode == "short", "--yoin-short-tail-s は --yoin-mode short 用"
+    assert (args.yoin_short_dim_start_s == 0 and args.yoin_short_end_s == 0) or args.yoin_short_tail_s > 0, \
+        "--yoin-short-dim-start-s / --yoin-short-end-s は --yoin-short-tail-s が必要"
+    assert args.timing == "default" or (args.yoin_mode == "short" and args.yoin_short_tail_s > 0), \
+        "--timing rule は --yoin-mode short と --yoin-short-tail-s が必要"
     version = args.version_label or ("v1" if args.yoin_mode == "voicevox" else "v2")
     poems, nobashi = kr.load_poems(), kr.load_nobashi()
     only = [int(x) for x in args.poems.split(",")] if args.poems else list(range(1, 101))
@@ -211,8 +231,12 @@ def main():
             qcache[key] = eng.build_query(jb.kanji, jb.reading, st.id)
         qr = qcache[key]
         plan = kr.plan_verse(qr, jb.part, jb.reading, jb.marks, jb.oyama, rules)
-        clip = kr.render_clip(eng, qr, plan, st.id, rules)
-        kr.check_plan_vs_query(clip, qr.query, rules)
+        clip = kr.render_clip(eng, qr, plan, st.id, rules, jb.short)
+        if rules.timing == "default":
+            kr.check_plan_vs_query(clip, qr.query, rules)
+        else:
+            import rule_timing
+            rule_timing.check_rule_clip(clip, rules)
         yoin_chk = kr.check_yoin(clip, rules)
         if yoin_chk:
             yoin_checks[jb.stem] = yoin_chk

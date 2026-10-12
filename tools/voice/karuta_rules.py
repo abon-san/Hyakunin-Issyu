@@ -29,6 +29,10 @@
       "short"   : 短い母音（vowel_length 0.25）をそのまま自然に減衰させて無音で埋める（持続音なし）。
                   yoin_short_tail_s > 0 なら、その母音を WORLD で延ばし、平らな部分なしで自然に減衰させて、
                   聞こえている長さ（ピークより 40 dB 以内）を yoin_short_tail_s 秒にする（yoin.short_tail）。
+                  yoin_short_dim_start_s > 0 なら、減衰の開始をその時刻（母音の開始から）まで遅らせる（それまでは平ら）。
+                  yoin_short_end_s > 0 なら、減衰が 0 になる時刻をそこに固定する（長い余韻向け）。
+  * timing="rule"（既定は "default" = 上記どおり）: 競技かるたの規則の時間配分（上の句 6 秒 / 下の句 5 秒 / 余韻 3 秒 / 間合い 1.0 秒、
+    初句は 1 字 0.2 秒）に合わせる。伸ばしの母音の内側を WORLD で延ばして合わせる（rule_timing.py。yoin_mode="short" が必要）。
   * 上の句・下の句は別々のクリップ（それぞれ前後に余白を持つ）。間はアプリ側で入れる。
   * 全クリップの有音区間 RMS を -22 dBFS にそろえ、ピークは -1 dBFS 以下。
     "world" / "short" では、余韻の持続音を除いた部分（最後の母音の終わりまで）でゲインを決める。
@@ -106,7 +110,22 @@ class KarutaRules:
     # yoin_mode == "short" の延長（0 なら 新2 のまま = 短い母音が自然に消えるだけ）
     yoin_short_tail_s: float = 0.0    # 最後の母音の開始から「聞こえている」長さ（ピークより 40 dB 以内）
     yoin_short_power: float = 1.25    # 減衰の曲線: dB ∝ 時間 ** power（1 = 指数的。>1 は穏やかに始まりだんだん速く）
-    yoin_short_plateau_s: float = 0.0  # 切り替えの後の平らな部分（0.1 秒まで。既定は無し）
+    yoin_short_plateau_s: float = 0.0  # 切り替えの後の平らな部分（秒。既定は無し）
+    yoin_short_dim_start_s: float = 0.0  # > 0: 減衰（Dim）の開始を、最後の母音の開始からこの秒数にする（plateau_s より優先。
+                                         # それまでは（ほぼ）平らに保つ = 「遅めの Dim」）
+    yoin_short_end_s: float = 0.0     # > 0: 減衰が 0 になる時刻（最後の母音の開始から。長い余韻を総尺ちょうどで消すとき）
+    yoin_drift_ln_short: float | None = None   # "short" の持続中の ln F0 の下降（None なら yoin_drift_ln）
+    # 競技かるたの規則どおりの時間配分（timing == "rule"。rule_timing.py）。既定の "default" は従来どおり。
+    timing: str = "default"            # "default" / "rule"
+    rule_kami_s: float = 6.0           # 上の句（最初のモーラの開始 ～ 最後のモーラの終わり）
+    rule_shimo_s: float = 5.0          # 下の句（最初のモーラの開始 ～ 最後の母音の開始。余韻を除く）
+    rule_first_mora_s: float = 0.2     # 上の句の初句は 1 字これだけ（切らずに読む）
+    rule_ku_pause_s: float = 0.40      # 句の間のポーズ（実時間の秒）
+    rule_ma_s: float = 1.0             # 間合い（余韻のあと次の上の句の前。試聴用に上の句と下の句の間にも使う）
+    rule_hold_src_cands: tuple = (0.2, 0.16, 0.25, 0.12)   # 伸ばしの印の母音をエンジンに作らせる長さの候補（クエリ単位、短いまま）。
+                                   # 先頭から試し、延ばせる窓が取れた最初の長さを印ごとに使う（yoin.pick_windows）
+    rule_hold_w_short: float = 0.7     # 小さい印（ｰ）の重みの倍率
+    rule_hold_vibrato_cents: float = 6.0   # 延ばした母音の中のビブラート（両端でゼロになる形）
     # 音量
     target_db: float = -22.0
     peak_db: float = -1.0
@@ -314,6 +333,7 @@ class Clip:
     gain_db: float
     spans: list[tuple[float, float, float]]   # モーラの (開始, 母音の開始, 終わり) 秒
     yoin_info: dict = field(default_factory=dict)   # 余韻の作り方の記録（検査用）
+    holds: list = field(default_factory=list)       # timing == "rule": 延ばした母音の記録（rule_timing.py）
 
 
 def _normalize(x: np.ndarray, rules: KarutaRules, ref_end: int | None = None,
@@ -336,7 +356,11 @@ def _normalize(x: np.ndarray, rules: KarutaRules, ref_end: int | None = None,
 
 
 def render_clip(engine: vk.Engine, qr: vk.QueryResult, plan: VersePlan, style_id: int,
-                rules: KarutaRules) -> Clip:
+                rules: KarutaRules, short_ks=frozenset()) -> Clip:
+    if rules.timing == "rule":
+        import rule_timing          # 循環 import を避けて、必要なときだけ読む
+        return rule_timing.render_rule_clip(engine, qr, plan, style_id, rules, short_ks)
+    assert rules.timing == "default", rules.timing
     q = shape_ref(qr, plan, rules)
     tl = vk.timeline(q)
     x = vk._wav_to_float(engine.synth.synthesis(q, style_id, enable_interrogative_upspeak=False))
@@ -360,7 +384,9 @@ def render_clip(engine: vk.Engine, qr: vk.QueryResult, plan: VersePlan, style_id
                 x, sinfo = yoin.short_tail(
                     x, tl.vowel_starts[-1], tl.ends[-1], lvl, rules.yoin_short_tail_s,
                     power=rules.yoin_short_power, plateau_s=rules.yoin_short_plateau_s,
-                    drift_ln=rules.yoin_drift_ln, vibrato_cents=rules.yoin_vibrato_cents,
+                    dim_start_s=rules.yoin_short_dim_start_s or None, end_s=rules.yoin_short_end_s or None,
+                    drift_ln=(rules.yoin_drift_ln if rules.yoin_drift_ln_short is None
+                              else rules.yoin_drift_ln_short), vibrato_cents=rules.yoin_vibrato_cents,
                     vibrato_hz=rules.yoin_vibrato_hz, jitter_cents=rules.yoin_jitter_cents,
                     tremolo_db=rules.yoin_tremolo_db, ap_floor=rules.yoin_ap_floor)
                 info = sinfo
@@ -488,10 +514,16 @@ def check_yoin(clip: Clip, rules: KarutaRules) -> dict:
         if rules.yoin_short_tail_s > 0:
             m = yoin.tail_metrics(x, i0, clip.yoin_info["f0"], clip.yoin_info["splice_s"] - v0,
                                   clip.yoin_info["splice_end_s"] - v0)
+            m.update(yoin.dim_metrics(x, i0, clip.yoin_info["splice_end_s"] - v0, clip.yoin_info["dim_start_s"]))
             out.update(m)
             assert abs(m["audible_s"] - rules.yoin_short_tail_s) <= 0.02, f"聞こえている長さ {m['audible_s']:.3f}"
             assert abs(m["audible_fine_s"] - rules.yoin_short_tail_s) <= 0.04, f"聞こえている長さ(細) {m['audible_fine_s']:.3f}"
-            assert m["max_rise_db"] <= 0.5, f"減衰の途中で音が戻る: +{m['max_rise_db']:.2f} dB / 20 ms"
+            if rules.yoin_short_dim_start_s > 0:
+                # 平らな部分は、ビブラートに連動した ±0.6 dB 程度の揺れがある。Dim の後はならしたレベルが単調に下がる
+                assert m["max_rise_db"] <= 1.5, f"平らな部分の揺れが大きい: +{m['max_rise_db']:.2f} dB / 20 ms"
+                assert m["smooth_max_rise_db"] <= 0.1, f"Dim の後で音が戻る: +{m['smooth_max_rise_db']:.2f} dB"
+            else:
+                assert m["max_rise_db"] <= 0.5, f"減衰の途中で音が戻る: +{m['max_rise_db']:.2f} dB / 20 ms"
             assert m["hnr_deep_min"] >= 12.0, f"尾に雑音: HNR {m['hnr_deep_min']:.1f} dB"
             assert m["click_splice"] <= 1.5 * m["click_body"] + 1.0, \
                 f"切り替えにクリック: {m['click_splice']:.1f} vs {m['click_body']:.1f}"
