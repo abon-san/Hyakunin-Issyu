@@ -2,6 +2,7 @@ package io.github.abonsan.hyakunin
 
 import android.content.Context
 import android.content.pm.ActivityInfo
+import android.media.AudioManager
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -55,9 +56,14 @@ class MainActivityTest {
         return activity!!
     }
 
-    /** 表示中の対戦の ViewModel。直前の操作による画面の切り替えを反映してから取り出す。 */
+    /**
+     * 表示中の対戦の ViewModel。直前の操作による画面の切り替えを反映してから取り出す。
+     * 読み上げ音声を使うときは、裏のスレッドで音声を読み終えてから対戦が始まるので、それを待つ。
+     */
     private fun ActivityScenario<MainActivity>.matchViewModel(): MatchViewModel {
-        composeRule.waitForIdle()
+        composeRule.waitUntil(timeoutMillis = 10_000L) {
+            runCatching { activity().activeMatchViewModel() }.getOrNull() != null
+        }
         return activity().activeMatchViewModel()!!
     }
 
@@ -75,6 +81,8 @@ class MainActivityTest {
         composeRule.onNodeWithText("競技モード").assertExists()
         composeRule.onNodeWithText("設定").assertExists()
         assertEquals(ActivityInfo.SCREEN_ORIENTATION_USER, scenario.activity().requestedOrientation)
+        // 音量ボタンは読み上げ音声（メディア）の音量を変える
+        assertEquals(AudioManager.STREAM_MUSIC, scenario.activity().volumeControlStream)
         composeRule.captureWholeScreen("app_top")
     }
 

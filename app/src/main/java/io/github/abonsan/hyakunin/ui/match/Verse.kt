@@ -49,6 +49,12 @@ internal class Verse(
 
     /** 読みの先頭から [kana] 文字（エンジンの数）に対応する、表示の文字数。 */
     fun displayCount(kana: Int): Int = boundaries[kana.coerceIn(0, boundaries.lastIndex)]
+
+    /** 上の句の表示の文字数（下の句の先頭の文字の通し番号）。 */
+    val kamiLength: Int get() = kami.sumOf { it.text.length }
+
+    /** 下の句だけの歌。文字の通し番号は元のまま（上の句の先頭を 0 として数える）。 */
+    fun shimoOnly(): Verse = Verse(emptyList(), shimo, boundaries)
 }
 
 /**
@@ -210,7 +216,8 @@ internal fun VerseText(
         verticalArrangement = Arrangement.Center,
     ) {
         verse.kami.forEach { VerseLineText(it, style, spanFor) }
-        Spacer(Modifier.height(gap))
+        // 下の句だけ（前置きの前の歌の下の句）のときは間を空けない
+        if (verse.kami.isNotEmpty() && verse.shimo.isNotEmpty()) Spacer(Modifier.height(gap))
         verse.shimo.forEach { VerseLineText(it, style, spanFor) }
     }
 }

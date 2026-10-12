@@ -43,8 +43,11 @@ import io.github.abonsan.hyakunin.ui.theme.ShuDeep
 import io.github.abonsan.hyakunin.ui.theme.ShuPale
 import io.github.abonsan.hyakunin.ui.theme.Sumi
 
-private val Revealed = SpanStyle(color = Sumi)
-private val Hidden = SpanStyle(color = Color.Transparent)
+/** 読み上げた文字。 */
+internal val Revealed = SpanStyle(color = Sumi)
+
+/** まだ読んでいない文字（場所だけ取る）。 */
+internal val Hidden = SpanStyle(color = Color.Transparent)
 
 /** 読み上げ中の文字の大きさの上限と下限。 */
 private val ReadingFontMax = 34.dp
@@ -73,8 +76,7 @@ internal fun readCounterText(readNumber: Int, totalReads: Int) = "第 $readNumbe
 /**
  * 読み上げ中の表示。句を [verseStyle] の仮名遣いで書き、[ReadingState.revealedKana]（読みの仮名の数）に
  * 対応する文字まで見せる。まだ読んでいない文字は透明で描き、文字が増えても配置が動かないようにする。
- * 下にはお手つきの知らせの欄を空けておき、残りの高さに収まる範囲で文字をなるべく大きくする。
- * 1句1行では収まらない低い欄（分割画面など）では、句を横に並べて詰める。
+ * 配置は [VersePanel]。
  */
 @Composable
 internal fun ReadingPanel(
@@ -85,6 +87,37 @@ internal fun ReadingPanel(
 ) {
     val verse = rememberVerse(reading.poem, verseStyle)
     val revealed = verse.displayCount(reading.revealedKana)
+    VersePanel(
+        title = readCounterText(reading.readNumber, reading.totalReads),
+        verse = verse,
+        spanFor = { index -> if (index < revealed) Revealed else Hidden },
+        // 読み上げ済みの部分（表示している文字）だけを読み上げ機能に渡す
+        description = verse.text.take(revealed),
+        notice = notice,
+        modifier = modifier,
+    )
+}
+
+/**
+ * 見出しと句（[verse]）の欄。文字ごとの見た目は [spanFor]（引数は文字の通し番号）で決める。
+ * 下にはお手つきの知らせの欄を空けておき、残りの高さに収まる範囲で文字をなるべく大きくする。
+ * 1句1行では収まらない低い欄（分割画面など）では、句を横に並べて詰める。
+ *
+ * @param title 句の上の飾り罫つきの見出し
+ * @param description 読み上げ機能に渡す句の文字（表示している部分）
+ * @param titleRequired 見出しを省けない（低い欄でも出す）なら true。省ける見出しは、句を横に並べても
+ *   入り切らない低い欄では省く
+ */
+@Composable
+internal fun VersePanel(
+    title: String,
+    verse: Verse,
+    spanFor: (Int) -> SpanStyle,
+    description: String,
+    notice: LockoutNotice?,
+    modifier: Modifier = Modifier,
+    titleRequired: Boolean = false,
+) {
     CenterPanel(modifier) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val narrowNotice = maxWidth < WideNoticeMinWidth
@@ -93,17 +126,15 @@ internal fun ReadingPanel(
             val roomBelowHeader = maxHeight - slotHeight - ReadingHeaderHeight - 24.dp
             val flowed = roomBelowHeader < verseHeight(ReadingFontMin)
             // 句を横に並べても見出しまでは入らない低い欄では、何首目かの見出しを省く（成績の欄にも出ている）
-            val showCounter = !flowed || roomBelowHeader >= flowedVerseHeight(ReadingFontMin)
-            val verseRoom = if (showCounter) roomBelowHeader else maxHeight - slotHeight - 24.dp
+            val showTitle = titleRequired || !flowed || roomBelowHeader >= flowedVerseHeight(ReadingFontMin)
+            val verseRoom = if (showTitle) roomBelowHeader else maxHeight - slotHeight - 24.dp
             val fontMax = if (maxWidth >= LargePanelSize && maxHeight >= LargePanelSize) LargeReadingFontMax else ReadingFontMax
             val fontSize = if (flowed) {
                 fittingFlowedVerseFontSize(verseWidth, verseRoom, max = fontMax, min = ReadingFontMin)
             } else {
                 fittingVerseFontSize(verseWidth, verseRoom, max = fontMax, min = ReadingFontMin)
             }
-            val spanFor = { index: Int -> if (index < revealed) Revealed else Hidden }
-            // 読み上げ済みの部分（表示している文字）だけを読み上げ機能に渡す
-            val verseSemantics = Modifier.clearAndSetSemantics { contentDescription = verse.text.take(revealed) }
+            val verseSemantics = Modifier.clearAndSetSemantics { contentDescription = description }
             Column(Modifier.fillMaxSize()) {
                 Box(
                     Modifier
@@ -113,11 +144,8 @@ internal fun ReadingPanel(
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        if (showCounter) {
-                            OrnamentTitle(
-                                text = readCounterText(reading.readNumber, reading.totalReads),
-                                modifier = Modifier.padding(horizontal = 16.dp),
-                            )
+                        if (showTitle) {
+                            OrnamentTitle(text = title, modifier = Modifier.padding(horizontal = 16.dp))
                             Spacer(Modifier.height(if (flowed) 8.dp else 14.dp))
                         }
                         if (flowed) {

@@ -67,6 +67,17 @@ abstract class WindowSizeScreenshotTest(private val prefix: String) {
     }
 
     @Test
+    fun leadIn() {
+        // 低い欄でも、何を読んでいるかの見出しは省かない
+        show(Scenes.jokaLeadIn())
+        composeRule.onNodeWithText("序歌").assertExists()
+        capture("lead_in_joka")
+        state = Scenes.previousShimoLeadIn()
+        composeRule.onNodeWithText("前の歌の下の句（61番）").assertExists()
+        capture("lead_in_previous")
+    }
+
+    @Test
     fun readingAndLockedOut() {
         show(Scenes.reading(revealed = 3))
         capture("reading")

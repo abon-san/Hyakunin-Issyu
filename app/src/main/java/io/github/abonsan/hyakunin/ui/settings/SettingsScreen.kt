@@ -36,6 +36,7 @@ import io.github.abonsan.hyakunin.ui.components.SettingsCard
 import io.github.abonsan.hyakunin.ui.components.SwitchSetting
 import io.github.abonsan.hyakunin.ui.components.fadingBottomEdge
 import io.github.abonsan.hyakunin.ui.components.isWideLayout
+import io.github.abonsan.hyakunin.ui.theme.Sumi
 import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
 import io.github.abonsan.hyakunin.ui.theme.Washi
 import io.github.abonsan.hyakunin.ui.theme.noLineBreak
@@ -47,8 +48,8 @@ private val NarrowCardMaxWidth = 560.dp
 private val WideCardsMaxWidth = 960.dp
 
 /**
- * 設定の画面。画面の向きの板と、対戦画面の表示（句の表示・敵陣の札の向き）の板を、
- * 縦長の画面では縦に積み、横に広い画面では左右に並べて上下に詰める。
+ * 設定の画面。画面の向きの板、対戦の板（句の表示・敵陣の札の向き・読み上げ音声）、クレジットの板を、
+ * 縦長の画面では縦に積み、横に広い画面では左右の列に分けて上下に詰める。
  * 変えた設定は [onSettingsChange] ですぐに渡す。
  */
 @Composable
@@ -82,13 +83,17 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 if (wide) {
+                    // 左に画面の向きとクレジット、右に対戦の設定（高さがほぼそろう）
                     Row(
                         Modifier
                             .widthIn(max = WideCardsMaxWidth)
                             .padding(horizontal = 20.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        SettingsCard(Modifier.weight(1f)) { OrientationSetting(settings, onSettingsChange, spacing) }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            SettingsCard { OrientationSetting(settings, onSettingsChange, spacing) }
+                            SettingsCard { Credits(spacing) }
+                        }
                         SettingsCard(Modifier.weight(1f)) { MatchDisplaySettings(settings, onSettingsChange, spacing) }
                     }
                 } else {
@@ -100,6 +105,8 @@ fun SettingsScreen(
                         SettingsCard { OrientationSetting(settings, onSettingsChange, spacing) }
                         Spacer(Modifier.height(14.dp))
                         SettingsCard { MatchDisplaySettings(settings, onSettingsChange, spacing) }
+                        Spacer(Modifier.height(14.dp))
+                        SettingsCard { Credits(spacing) }
                     }
                 }
             }
@@ -134,7 +141,7 @@ private fun OrientationSetting(
     }
 }
 
-/** 対戦画面の表示の設定（句の表示・敵陣の札の向き）。 */
+/** 対戦の設定（句の表示・敵陣の札の向き・読み上げ音声）。 */
 @Composable
 private fun MatchDisplaySettings(
     settings: AppSettings,
@@ -161,6 +168,36 @@ private fun MatchDisplaySettings(
         onCheckedChange = { onSettingsChange(settings.copy(flipOpponentCards = it)) },
         spacing = spacing,
     )
+    PanelDivider()
+    SwitchSetting(
+        title = "読み上げ音声",
+        description = "歌を声で読み上げます。" + noLineBreak("オフにすると") + noLineBreak("文字だけで進みます"),
+        checked = settings.voiceEnabled,
+        onCheckedChange = { onSettingsChange(settings.copy(voiceEnabled = it)) },
+        spacing = spacing,
+    )
+}
+
+/** 読み上げ音声の表記（VOICEVOX の利用規約で求められる形）。 */
+internal const val VOICE_CREDIT = "音声：VOICEVOX:冥鳴ひまり"
+
+/** 読み上げ音声の作り方と利用規約の説明。 */
+internal const val VOICE_CREDIT_NOTE = "読み上げの音声は、VOICEVOX と冥鳴ひまりの利用規約に従い、VOICEVOX で作成しています。"
+
+/** クレジット。読み上げ音声の作り方と利用規約。 */
+@Composable
+private fun Credits(spacing: SettingSpacing) {
+    SettingBlock(spacing = spacing) {
+        SectionLabel("クレジット")
+        Spacer(Modifier.height(spacing.label))
+        Text(text = VOICE_CREDIT, style = MaterialTheme.typography.bodyMedium, color = Sumi)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = VOICE_CREDIT_NOTE,
+            style = MaterialTheme.typography.bodySmall,
+            color = UsuzumiText,
+        )
+    }
 }
 
 /** 設定の画面での句の表示の説明。読み上げ中と結果の句に使う表記を、例を添えて示す（例は行をまたいで分けない）。 */

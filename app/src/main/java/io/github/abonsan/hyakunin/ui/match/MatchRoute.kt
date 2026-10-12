@@ -16,15 +16,21 @@ import io.github.abonsan.hyakunin.game.GameConfig
 import io.github.abonsan.hyakunin.game.MatchActions
 import io.github.abonsan.hyakunin.game.MatchPhase
 import io.github.abonsan.hyakunin.game.MatchViewModel
+import io.github.abonsan.hyakunin.game.ReadTiming
+import io.github.abonsan.hyakunin.game.ReadingStyle
+import io.github.abonsan.hyakunin.game.voice.VoiceBank
 import io.github.abonsan.hyakunin.ui.components.WafuDialog
 
 /**
  * 対戦画面の入口。ViewModel は呼び出し側が対戦ごとに用意した ViewModelStore に作る。
  * アプリが裏に回ると一時停止し、戻ると再開する（自分で一時停止していた場合は止めたまま）。
+ * 読み上げ音声は [MatchVoicePlayback] で鳴らし、一時停止の間は止める。
+ *
+ * @param voiceBank 読み上げ音声。null なら文字だけで読む（[GameConfig.voiceEnabled] が false のときも）
  */
 @Composable
-fun MatchRoute(config: GameConfig, onExit: () -> Unit) {
-    val viewModel = viewModel { MatchViewModel(config) }
+fun MatchRoute(config: GameConfig, onExit: () -> Unit, voiceBank: VoiceBank? = null) {
+    val viewModel = viewModel { MatchViewModel(config, timing = matchTiming(config, voiceBank)) }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     // 一時停止ボタンや確認ダイアログで止めているか（アプリが前に戻っても勝手に再開しない）
     var pausedByUser by rememberSaveable { mutableStateOf(false) }
@@ -38,6 +44,7 @@ fun MatchRoute(config: GameConfig, onExit: () -> Unit) {
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
         if (!pausedByUser && !confirmingExit) viewModel.setPaused(false)
     }
+    MatchVoicePlayback(viewModel, warmUp = config.voiceEnabled && voiceBank != null)
 
     val actions = remember(viewModel) {
         object : MatchActions by viewModel {
@@ -80,3 +87,10 @@ fun MatchRoute(config: GameConfig, onExit: () -> Unit) {
         )
     }
 }
+
+/**
+ * 対戦の読み上げのタイミング。[voice] があれば音声に合わせて読む。
+ * 競技かるた式なら、音声がなくても前置き（序歌・前の歌の下の句）を文字で出し、音声のあるときと同じ流れにする。
+ */
+internal fun matchTiming(config: GameConfig, voice: VoiceBank?): ReadTiming =
+    ReadTiming.of(config.readingSpeed, voice, textLeadIn = config.readingStyle == ReadingStyle.COMPETITIVE)

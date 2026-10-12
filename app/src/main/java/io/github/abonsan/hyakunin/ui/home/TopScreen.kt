@@ -55,6 +55,7 @@ import io.github.abonsan.hyakunin.ui.components.SecondaryButton
 import io.github.abonsan.hyakunin.ui.components.drawSeigaiha
 import io.github.abonsan.hyakunin.ui.components.fadingBottomEdge
 import io.github.abonsan.hyakunin.ui.components.isWideLayout
+import io.github.abonsan.hyakunin.ui.settings.VOICE_CREDIT
 import io.github.abonsan.hyakunin.ui.theme.Kincha
 import io.github.abonsan.hyakunin.ui.theme.Kon
 import io.github.abonsan.hyakunin.ui.theme.Shu
@@ -80,7 +81,7 @@ internal val RuleMode.accent: Color
 
 /**
  * トップ画面。モードを選ぶと [onSelectMode]、「設定」で [onOpenSettings] を呼ぶ。
- * 横に広い画面では、左に題字、右にモードの選択を並べる。
+ * 横に広い画面では、左に題字、右にモードの選択を並べる。読み上げ音声のクレジットは「設定」の下に小さく添える。
  */
 @Composable
 fun TopScreen(
@@ -151,7 +152,7 @@ fun TopScreen(
                     onOpenSettings = onOpenSettings,
                     modifier = Modifier
                         .widthIn(max = 520.dp)
-                        .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = if (compact) 16.dp else 28.dp),
+                        .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = if (compact) 10.dp else 16.dp),
                     compact = compact,
                 )
             }
@@ -244,7 +245,7 @@ private fun FannedCards(cardWidth: Dp, modifier: Modifier = Modifier) {
     }
 }
 
-/** モードの選択と「設定」への入口。 */
+/** モードの選択と「設定」への入口、読み上げ音声のクレジット。 */
 @Composable
 private fun ModeMenu(
     onSelectMode: (RuleMode) -> Unit,
@@ -266,6 +267,8 @@ private fun ModeMenu(
             icon = R.drawable.ic_settings,
             minHeight = if (compact) 44.dp else 48.dp,
         )
+        Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
+        Text(text = VOICE_CREDIT, style = MaterialTheme.typography.labelSmall, color = UsuzumiText)
     }
 }
 

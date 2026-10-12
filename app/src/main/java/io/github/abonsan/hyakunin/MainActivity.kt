@@ -1,6 +1,7 @@
 package io.github.abonsan.hyakunin
 
 import android.graphics.Color
+import android.media.AudioManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -18,6 +19,8 @@ class MainActivity : ComponentActivity() {
         // 和紙の明るい地に合わせ、端末のダークテーマでもシステムバーのアイコンは濃い色にする
         val barStyle = SystemBarStyle.light(Color.TRANSPARENT, DARK_SCRIM)
         enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+        // 読み上げ音声（ゲームの音声はメディアの音量）は読みの合間に途切れるので、音量ボタンはいつもメディアの音量を変える
+        volumeControlStream = AudioManager.STREAM_MUSIC
         val configStore = GameConfigStore(applicationContext)
         val settingsStore = AppSettingsStore(applicationContext)
         // 中身を描く前に、設定した画面の向きを指定する

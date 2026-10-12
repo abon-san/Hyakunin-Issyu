@@ -4,6 +4,7 @@ import io.github.abonsan.hyakunin.data.Poem
 import io.github.abonsan.hyakunin.data.Poems
 import io.github.abonsan.hyakunin.game.FieldCard
 import io.github.abonsan.hyakunin.game.GameConfig
+import io.github.abonsan.hyakunin.game.LeadInState
 import io.github.abonsan.hyakunin.game.MatchActions
 import io.github.abonsan.hyakunin.game.MatchPhase
 import io.github.abonsan.hyakunin.game.MatchUiState
@@ -81,6 +82,7 @@ internal object Fixtures {
         isPaused: Boolean = false,
         waitRemainingMillis: Long? = null,
         isMemorizing: Boolean = false,
+        leadIn: LeadInState? = null,
     ) = MatchUiState(
         config = config,
         phase = phase,
@@ -99,6 +101,7 @@ internal object Fixtures {
         isPaused = isPaused,
         waitRemainingMillis = waitRemainingMillis,
         isMemorizing = isMemorizing,
+        leadIn = leadIn,
     )
 }
 

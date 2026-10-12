@@ -1,20 +1,26 @@
 package io.github.abonsan.hyakunin.ui.match
 
 import androidx.compose.ui.unit.dp
+import io.github.abonsan.hyakunin.data.Joka
 import io.github.abonsan.hyakunin.data.Poems
 import io.github.abonsan.hyakunin.game.GameConfig
+import io.github.abonsan.hyakunin.game.LeadInVerse
 import io.github.abonsan.hyakunin.game.MatchPhase
+import io.github.abonsan.hyakunin.game.ReadingSpeed
+import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.Side
 import io.github.abonsan.hyakunin.game.Transfer
 import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.game.kanaCount
 import io.github.abonsan.hyakunin.game.kimarijiLength
+import io.github.abonsan.hyakunin.game.voice.fakeVoiceBank
 import io.github.abonsan.hyakunin.ui.Fixtures
 import io.github.abonsan.hyakunin.ui.card.TORIFUDA_ASPECT_RATIO
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -22,6 +28,64 @@ private fun String.withoutJoiners() = replace("\u2060", "")
 
 /** 対戦画面の表示用の計算（Compose を使わない部分）。 */
 class MatchUiLogicTest {
+    @Test
+    fun leadInTitlesNameWhatIsBeingRead() {
+        assertEquals("序歌", leadInTitle(Scenes.jokaLeadIn().leadIn!!))
+        assertEquals("前の歌の下の句（61番）", leadInTitle(Scenes.previousShimoLeadIn().leadIn!!))
+    }
+
+    @Test
+    fun theLeadInShowsTheVerseUpToTheKanaBeingRead() {
+        val jokaKami = kanaCount(Joka.kamiYomi)
+        val jokaShimo = kanaCount(Joka.shimoYomi)
+        // 序歌の上の句: 読んだところまで
+        assertEquals(9, leadInRevealedKana(Scenes.jokaLeadIn(verse = LeadInVerse.KAMI, revealed = 9).leadIn!!))
+        // 序歌の下の句: 上の句をすべてと、下の句の読んだところまで。2回目は下の句を初めから見せ直す
+        assertEquals(jokaKami + 7, leadInRevealedKana(Scenes.jokaLeadIn(revealed = 7).leadIn!!))
+        assertEquals(jokaKami + 3, leadInRevealedKana(Scenes.jokaLeadIn(pass = 2, revealed = 3).leadIn!!))
+        // 間合いではすべて
+        assertEquals(
+            jokaKami + jokaShimo,
+            leadInRevealedKana(Scenes.jokaLeadIn(pass = 2, revealed = jokaShimo, inMa = true).leadIn!!),
+        )
+        // 前の歌の下の句: 上の句の仮名の後ろから数える（上の句は書かない）
+        val previous = Scenes.previousShimoLeadIn(revealed = 6).leadIn!!
+        assertEquals(kanaCount(previous.poem.kamiYomi) + 6, leadInRevealedKana(previous))
+    }
+
+    @Test
+    fun theShimoOnlyVerseKeepsTheNumbering() {
+        val verse = verseOf(Poems.byNo(61), VerseStyle.KANA)
+        val shimo = verse.shimoOnly()
+        assertEquals(emptyList<VerseLine>(), shimo.kami)
+        assertEquals(verse.shimo, shimo.shimo)
+        assertEquals(17, verse.kamiLength)
+        assertEquals(17, shimo.shimo.first().firstKana)
+        assertEquals("けふここのへににほひぬるかな", shimo.text)
+        // 序歌も読みと歴史的仮名遣いを対応づけられる（なにわず → なにはづ）
+        val joka = verseOf(Joka.poem, VerseStyle.KANA)
+        assertEquals(listOf("なにはづに", "さくやこのはな", "ふゆごもり"), joka.kami.map { it.text })
+        assertEquals(5, joka.displayCount(5))
+    }
+
+    @Test
+    fun theMatchTimingUsesTheVoiceAndTheCompetitiveLeadIn() {
+        val bank = fakeVoiceBank(poems = Poems.all)
+        val competitive = matchTiming(
+            GameConfig(readingStyle = ReadingStyle.COMPETITIVE, readingSpeed = ReadingSpeed.FAST),
+            bank,
+        )
+        assertSame(bank, competitive.voice)
+        // 競技かるた式は、音声がないときも前置きを文字で出す
+        assertTrue(competitive.textLeadIn)
+        assertEquals(ReadingSpeed.FAST.playbackSpeed, competitive.playbackSpeed)
+        assertEquals(ReadingSpeed.FAST.charMillis, competitive.charMillis)
+        assertTrue(matchTiming(GameConfig(readingStyle = ReadingStyle.COMPETITIVE), null).textLeadIn)
+        val simple = matchTiming(GameConfig(readingStyle = ReadingStyle.SIMPLE), null)
+        assertNull(simple.voice)
+        assertFalse(simple.textLeadIn)
+    }
+
     @Test
     fun verseNumbersKanaThroughBothVerses() {
         val verse = verseOf(Poems.byNo(1), VerseStyle.READING)

@@ -9,7 +9,9 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import io.github.abonsan.hyakunin.game.LeadInVerse
 import io.github.abonsan.hyakunin.game.MatchActions
+import io.github.abonsan.hyakunin.game.ReadStartMode
 import io.github.abonsan.hyakunin.game.Side
 import io.github.abonsan.hyakunin.ui.Fixtures
 import io.github.abonsan.hyakunin.ui.NoopActions
@@ -30,6 +32,38 @@ class MatchScreenshotTest : MatchScenesScreenshotTest(prefix = "match", fieldsAs
         show(Scenes.tapToStartFirst())
         composeRule.onNodeWithText("札の位置を覚えたら押してください").assertExists()
         capture("waiting_tap_first")
+    }
+
+    @Test
+    fun leadInDuringTheMa() {
+        // 序歌の下の句を2回読み終えて間合いに入った: 句をすべて控えめな色で見せる
+        show(Scenes.jokaLeadIn(revealed = 14, pass = 2, inMa = true))
+        composeRule.onNodeWithContentDescription("なにはづにさくやこのはなふゆごもりいまをはるべとさくやこのはな").assertExists()
+        capture("lead_in_ma")
+    }
+
+    @Test
+    fun leadInOfThePreviousShimoDuringTheMa() {
+        show(Scenes.previousShimoLeadIn(revealed = 15, inMa = true))
+        composeRule.onNodeWithContentDescription("けふここのへににほひぬるかな").assertExists()
+        capture("lead_in_previous_ma")
+    }
+
+    @Test
+    fun theJokaRepeatsTheShimoFromTheTop() {
+        // 序歌の下の句の2回目は、下の句を初めから見せ直す
+        show(Scenes.jokaLeadIn(pass = 2, revealed = 3))
+        composeRule.onNodeWithContentDescription("なにはづにさくやこのはなふゆごもりいまを").assertExists()
+    }
+
+    @Test
+    fun leadInHidesTheStartButtonWhenStartingByTap() {
+        show(Scenes.jokaLeadIn(verse = LeadInVerse.KAMI, revealed = 9, readStartMode = ReadStartMode.TAP))
+        composeRule.onNodeWithText("序歌").assertExists()
+        composeRule.onNodeWithContentDescription("なにはづにさくやこ").assertExists()
+        composeRule.onNodeWithText("読み始める").assertDoesNotExist()
+        composeRule.onNodeWithText("札を確かめる時間").assertDoesNotExist()
+        capture("lead_in_tap")
     }
 
     @Test

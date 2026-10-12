@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 import io.github.abonsan.hyakunin.game.GameConfig
+import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 
 /** 設定を保存する SharedPreferences（対戦設定と画面の設定で共用する）。 */
@@ -15,15 +16,17 @@ private const val SETTINGS_PREFS_NAME = "game_config"
 /**
  * 対戦設定をルールのモードごとに SharedPreferences に保存・復元する。読めない値は既定値に戻す。
  * そのモードでまだ保存していない項目は、モード共通だった以前の保存値（旧キー）を引き継ぐ。
- * [GameConfig.flipOpponentCards] と [GameConfig.verseStyle] は画面の設定（AppSettingsStore）で持つので、ここでは扱わない。
+ * 読み方（[GameConfig.readingStyle]）の既定はモードで違う（[defaultReadingStyle]）。
+ * [GameConfig.flipOpponentCards]・[GameConfig.verseStyle]・[GameConfig.voiceEnabled] は画面の設定（AppSettingsStore）で
+ * 持つので、ここでは扱わない。
  */
 class GameConfigStore(private val prefs: SharedPreferences) {
 
     constructor(context: Context) : this(settingsPreferences(context))
 
-    /** [mode] の対戦設定。[GameConfig.flipOpponentCards] と [GameConfig.verseStyle] は既定値のまま返す。 */
+    /** [mode] の対戦設定。画面の設定で持つ項目（札の向き・句の表示・読み上げ音声）は既定値のまま返す。 */
     fun load(mode: RuleMode): GameConfig {
-        val default = GameConfig(ruleMode = mode)
+        val default = GameConfig(ruleMode = mode, readingStyle = mode.defaultReadingStyle)
         val keys = ModeKeys(mode)
         return GameConfig(
             ruleMode = mode,
@@ -34,6 +37,7 @@ class GameConfigStore(private val prefs: SharedPreferences) {
             readStartMode = enum(keys.readStartMode) ?: default.readStartMode,
             memorizeTime = enum(keys.memorizeTime) ?: default.memorizeTime,
             readInterval = enum(keys.readInterval) ?: default.readInterval,
+            readingStyle = enum(keys.readingStyle) ?: default.readingStyle,
         )
     }
 
@@ -47,6 +51,7 @@ class GameConfigStore(private val prefs: SharedPreferences) {
             putString(keys.readStartMode, config.readStartMode.name)
             putString(keys.memorizeTime, config.memorizeTime.name)
             putString(keys.readInterval, config.readInterval.name)
+            putString(keys.readingStyle, config.readingStyle.name)
         }
     }
 
@@ -68,6 +73,7 @@ class GameConfigStore(private val prefs: SharedPreferences) {
         val readStartMode = prefix + "read_start_mode"
         val memorizeTime = prefix + "memorize_time"
         val readInterval = prefix + "read_interval"
+        val readingStyle = prefix + "reading_style"
     }
 
     private companion object {
@@ -77,3 +83,10 @@ class GameConfigStore(private val prefs: SharedPreferences) {
         const val LEGACY_READING_SPEED = "reading_speed"
     }
 }
+
+/** モードごとの読み方の既定。競技モードは競技かるた式（序歌と前の歌の下の句を読む）、簡易モードは簡易式。 */
+internal val RuleMode.defaultReadingStyle: ReadingStyle
+    get() = when (this) {
+        RuleMode.COMPETITIVE -> ReadingStyle.COMPETITIVE
+        RuleMode.SIMPLE -> ReadingStyle.SIMPLE
+    }

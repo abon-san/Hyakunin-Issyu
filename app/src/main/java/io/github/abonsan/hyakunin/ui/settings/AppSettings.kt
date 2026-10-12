@@ -25,11 +25,13 @@ data class AppSettings(
     val flipOpponentCards: Boolean = true,
     /** 読み上げ中と結果の句の仮名遣い。対戦開始時に [GameConfig.verseStyle] へ渡す。 */
     val verseStyle: VerseStyle = VerseStyle.KANA,
+    /** 読み上げ音声を鳴らすか。対戦開始時に [GameConfig.voiceEnabled] へ渡す。 */
+    val voiceEnabled: Boolean = true,
 )
 
 /**
  * [AppSettings] を SharedPreferences に保存・復元する。読めない値は既定値に戻す。
- * まだ保存していない項目（以前の版から更新した場合の句の表示など）も既定値にする。
+ * まだ保存していない項目（以前の版から更新した場合の句の表示・読み上げ音声など）も既定値にする。
  */
 class AppSettingsStore(private val prefs: SharedPreferences) {
 
@@ -44,6 +46,8 @@ class AppSettingsStore(private val prefs: SharedPreferences) {
             flipOpponentCards = runCatching { prefs.getBoolean(KEY_FLIP_OPPONENT, default.flipOpponentCards) }
                 .getOrDefault(default.flipOpponentCards),
             verseStyle = VerseStyle.entries.firstOrNull { it.name == verseStyle } ?: default.verseStyle,
+            voiceEnabled = runCatching { prefs.getBoolean(KEY_VOICE_ENABLED, default.voiceEnabled) }
+                .getOrDefault(default.voiceEnabled),
         )
     }
 
@@ -52,6 +56,7 @@ class AppSettingsStore(private val prefs: SharedPreferences) {
             putString(KEY_ORIENTATION, settings.orientation.name)
             putBoolean(KEY_FLIP_OPPONENT, settings.flipOpponentCards)
             putString(KEY_VERSE_STYLE, settings.verseStyle.name)
+            putBoolean(KEY_VOICE_ENABLED, settings.voiceEnabled)
         }
     }
 
@@ -62,5 +67,7 @@ class AppSettingsStore(private val prefs: SharedPreferences) {
         const val KEY_FLIP_OPPONENT = "flip_opponent_cards"
 
         const val KEY_VERSE_STYLE = "verse_style"
+
+        const val KEY_VOICE_ENABLED = "voice_enabled"
     }
 }

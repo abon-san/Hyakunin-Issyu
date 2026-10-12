@@ -10,8 +10,10 @@ import io.github.abonsan.hyakunin.game.MemorizeTime
 import io.github.abonsan.hyakunin.game.ReadInterval
 import io.github.abonsan.hyakunin.game.ReadStartMode
 import io.github.abonsan.hyakunin.game.ReadingSpeed
+import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
@@ -25,8 +27,32 @@ class GameConfigStoreTest {
     @Test
     fun defaultsWhenNothingIsSaved() {
         val store = GameConfigStore(context)
-        assertEquals(GameConfig(ruleMode = RuleMode.COMPETITIVE), store.load(RuleMode.COMPETITIVE))
-        assertEquals(GameConfig(ruleMode = RuleMode.SIMPLE), store.load(RuleMode.SIMPLE))
+        // 読み方の既定は、競技モードは競技かるた式、簡易モードは簡易式
+        assertEquals(
+            GameConfig(ruleMode = RuleMode.COMPETITIVE, readingStyle = ReadingStyle.COMPETITIVE),
+            store.load(RuleMode.COMPETITIVE),
+        )
+        assertEquals(GameConfig(ruleMode = RuleMode.SIMPLE, readingStyle = ReadingStyle.SIMPLE), store.load(RuleMode.SIMPLE))
+    }
+
+    @Test
+    fun eachModeRemembersItsOwnReadingStyle() {
+        val store = GameConfigStore(prefs)
+        store.save(store.load(RuleMode.COMPETITIVE).copy(readingStyle = ReadingStyle.SIMPLE))
+        assertEquals(ReadingStyle.SIMPLE, GameConfigStore(prefs).load(RuleMode.COMPETITIVE).readingStyle)
+        assertEquals(ReadingStyle.SIMPLE, GameConfigStore(prefs).load(RuleMode.SIMPLE).readingStyle)
+        store.save(store.load(RuleMode.SIMPLE).copy(readingStyle = ReadingStyle.COMPETITIVE))
+        assertEquals(ReadingStyle.COMPETITIVE, GameConfigStore(prefs).load(RuleMode.SIMPLE).readingStyle)
+        assertEquals(ReadingStyle.SIMPLE, GameConfigStore(prefs).load(RuleMode.COMPETITIVE).readingStyle)
+        assertEquals("COMPETITIVE", prefs.getString("simple.reading_style", null))
+        assertEquals("SIMPLE", prefs.getString("competitive.reading_style", null))
+    }
+
+    @Test
+    fun theVoiceSettingIsNotPartOfTheModeSettings() {
+        GameConfigStore(context).save(GameConfig(voiceEnabled = false))
+        assertEquals(true, GameConfigStore(context).load(RuleMode.COMPETITIVE).voiceEnabled)
+        assertFalse(prefs.contains("competitive.voice_enabled"))
     }
 
     @Test
@@ -39,6 +65,7 @@ class GameConfigStoreTest {
             readStartMode = ReadStartMode.TAP,
             memorizeTime = MemorizeTime.MIN_2,
             readInterval = ReadInterval.SEC_10,
+            readingStyle = ReadingStyle.SIMPLE,
         )
         val simple = GameConfig(
             ruleMode = RuleMode.SIMPLE,
@@ -47,6 +74,7 @@ class GameConfigStoreTest {
             readingSpeed = ReadingSpeed.FAST,
             memorizeTime = MemorizeTime.SEC_10,
             readInterval = ReadInterval.SEC_2,
+            readingStyle = ReadingStyle.COMPETITIVE,
         )
         GameConfigStore(context).save(competitive)
         GameConfigStore(context).save(simple)
@@ -83,6 +111,7 @@ class GameConfigStoreTest {
             assertEquals(GameConfig().readStartMode, config.readStartMode)
             assertEquals(GameConfig().memorizeTime, config.memorizeTime)
             assertEquals(GameConfig().readInterval, config.readInterval)
+            assertEquals(mode.defaultReadingStyle, config.readingStyle)
         }
 
         // 片方のモードで変えて保存しても、もう片方は旧版の値のまま
@@ -103,6 +132,8 @@ class GameConfigStoreTest {
             putString("competitive.memorize_time", null)
             putString("simple.read_interval", "SEC_99")
             putString("empty_card_count", "many")
+            putString("competitive.reading_style", "FAST")
+            putInt("simple.reading_style", 2)
         }
         val competitive = GameConfigStore(prefs).load(RuleMode.COMPETITIVE)
         assertEquals(GameConfig().cpuLevel, competitive.cpuLevel)
@@ -114,5 +145,8 @@ class GameConfigStoreTest {
         assertEquals(GameConfig().readInterval, simple.readInterval)
         // 旧キーに型の違う値があっても既定値にする
         assertEquals(GameConfig().emptyCardCount, simple.emptyCardCount)
+        // 読めない読み方はモードの既定
+        assertEquals(ReadingStyle.COMPETITIVE, competitive.readingStyle)
+        assertEquals(ReadingStyle.SIMPLE, simple.readingStyle)
     }
 }
