@@ -126,11 +126,33 @@ class KarutaRules:
                                    # 先頭から試し、延ばせる窓が取れた最初の長さを印ごとに使う（yoin.pick_windows）
     rule_hold_w_short: float = 0.7     # 小さい印（ｰ）の重みの倍率
     rule_hold_vibrato_cents: float = 6.0   # 延ばした母音の中のビブラート（両端でゼロになる形）
+    # ピッチを上げない（pitch_mode == "anchored"）。"legacy" は v1〜v4 の再現
+    pitch_mode: str = "legacy"          # "legacy" / "anchored"
+    yoin_fall_cents: float = -60.0      # anchored: 余韻の F0 は減衰の開始まで平ら、減衰の終わり（余韻の総尺）までに cent だけ下がる
+    anchored_vibrato_cents: float = 3.0   # anchored: ビブラート（平均ゼロ。余韻の下降の間に 0 へ）
+    anchored_jitter_cents: float = 1.5    # anchored: ジッタ（ゆっくりした上昇を含まない）
     # 音量
     target_db: float = -22.0
     peak_db: float = -1.0
     # 上の句と下の句を 1 ファイルにつなぐとき（試聴用）の無音
     trial_gap_s: float = 0.86
+
+
+def tail_pitch_kw(rules: KarutaRules) -> dict:
+    """yoin.short_tail に渡すピッチ関係の引数（pitch_mode で切り替え）。"""
+    if rules.pitch_mode == "anchored":
+        return dict(fall_cents=rules.yoin_fall_cents, vibrato_cents=rules.anchored_vibrato_cents,
+                    jitter_cents=rules.anchored_jitter_cents)
+    assert rules.pitch_mode == "legacy", rules.pitch_mode
+    return dict(drift_ln=(rules.yoin_drift_ln if rules.yoin_drift_ln_short is None else rules.yoin_drift_ln_short),
+                vibrato_cents=rules.yoin_vibrato_cents, jitter_cents=rules.yoin_jitter_cents)
+
+
+def hold_pitch_kw(rules: KarutaRules) -> dict:
+    """yoin.extend_interior に渡すピッチ関係の引数。"""
+    if rules.pitch_mode == "anchored":
+        return dict(vibrato_cents=rules.anchored_vibrato_cents, jitter_cents=rules.anchored_jitter_cents, no_rise=True)
+    return dict(vibrato_cents=rules.rule_hold_vibrato_cents, jitter_cents=rules.yoin_jitter_cents)
 
 
 def yoin_last_mora_q(rules: KarutaRules) -> float:
@@ -385,9 +407,7 @@ def render_clip(engine: vk.Engine, qr: vk.QueryResult, plan: VersePlan, style_id
                     x, tl.vowel_starts[-1], tl.ends[-1], lvl, rules.yoin_short_tail_s,
                     power=rules.yoin_short_power, plateau_s=rules.yoin_short_plateau_s,
                     dim_start_s=rules.yoin_short_dim_start_s or None, end_s=rules.yoin_short_end_s or None,
-                    drift_ln=(rules.yoin_drift_ln if rules.yoin_drift_ln_short is None
-                              else rules.yoin_drift_ln_short), vibrato_cents=rules.yoin_vibrato_cents,
-                    vibrato_hz=rules.yoin_vibrato_hz, jitter_cents=rules.yoin_jitter_cents,
+                    vibrato_hz=rules.yoin_vibrato_hz, **tail_pitch_kw(rules),
                     tremolo_db=rules.yoin_tremolo_db, ap_floor=rules.yoin_ap_floor)
                 info = sinfo
         elif rules.yoin_mode == "world":
@@ -528,6 +548,15 @@ def check_yoin(clip: Clip, rules: KarutaRules) -> dict:
             assert m["click_splice"] <= 1.5 * m["click_body"] + 1.0, \
                 f"切り替えにクリック: {m['click_splice']:.1f} vs {m['click_body']:.1f}"
             assert m["n_clip"] == 0, "クリッピング"
+            if rules.pitch_mode == "anchored":
+                import pitch_check
+                tp = pitch_check.tail_pitch(x, i0, m["audible_s"], rules.yoin_short_dim_start_s or 1.0)
+                out.update({f"pitch_{k}": float(v) for k, v in tp.items() if isinstance(v, (int, float, np.floating))})
+                for nm in ("harvest", "acf"):
+                    assert tp[f"slope_cents_per_s_{nm}"] <= (0.0 if rules.yoin_fall_cents <= -10 else 1.5), f"余韻の F0 が上がっている ({nm}): {tp[f'slope_cents_per_s_{nm}']:+.1f} cent/s"
+                    assert tp[f"last0.5s_cents_{nm}"] <= 2.0, f"余韻の終わりの F0 が頭より高い ({nm}): {tp[f'last0.5s_cents_{nm}']:+.1f} cent"
+                    assert tp[f"max_above_hold_cents_{nm}"] <= 8.0, f"余韻の F0 が平らな部分より高い窓 ({nm}): {tp[f'max_above_hold_cents_{nm}']:+.1f} cent"
+                assert tp["centroid_slope_hz_per_s"] <= 5.0 and tp["hi_db_slope_per_s"] <= 0.5, "余韻の音色が明るくなっていく"
         return out
     # --- world: 持続音
     f0 = clip.yoin_info["f0"]       # 持続音の実際の基本周波数（クエリの高さから 数 % ずれる）

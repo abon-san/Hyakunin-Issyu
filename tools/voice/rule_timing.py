@@ -131,8 +131,7 @@ def render_rule_clip(engine: vk.Engine, qr: vk.QueryResult, plan: kr.VersePlan, 
         if ext[i] <= 0:
             continue
         y, inf = yoin.extend_interior(y, tl.vowel_starts[i], tl.ends[i], lvl[plan.levels[i]], ext[i],
-                                      vibrato_cents=rules.rule_hold_vibrato_cents,
-                                      vibrato_hz=rules.yoin_vibrato_hz, jitter_cents=rules.yoin_jitter_cents,
+                                      vibrato_hz=rules.yoin_vibrato_hz, **kr.hold_pitch_kw(rules),
                                       tremolo_db=rules.yoin_tremolo_db, ap_floor=rules.yoin_ap_floor, seed=i)
         infos[i] = inf
     ins = sorted((inf["ins_at"], inf["n_add"]) for inf in infos.values())
@@ -161,9 +160,7 @@ def render_rule_clip(engine: vk.Engine, qr: vk.QueryResult, plan: kr.VersePlan, 
             y, v0, v1, lvl[plan.levels[-1]], rules.yoin_short_tail_s,
             power=rules.yoin_short_power, plateau_s=rules.yoin_short_plateau_s,
             dim_start_s=rules.yoin_short_dim_start_s or None, end_s=rules.yoin_short_end_s or None,
-            drift_ln=(rules.yoin_drift_ln if rules.yoin_drift_ln_short is None else rules.yoin_drift_ln_short),
-            vibrato_cents=rules.yoin_vibrato_cents, vibrato_hz=rules.yoin_vibrato_hz,
-            jitter_cents=rules.yoin_jitter_cents, tremolo_db=rules.yoin_tremolo_db, ap_floor=rules.yoin_ap_floor)
+            vibrato_hz=rules.yoin_vibrato_hz, **kr.tail_pitch_kw(rules), tremolo_db=rules.yoin_tremolo_db, ap_floor=rules.yoin_ap_floor)
         n = int(round(v0 * sr)) + int(round(rules.yoin_total_s * sr))
         y = y[:n] if len(y) >= n else np.pad(y, (0, n - len(y)))
         verse_s = vstarts[-1] - starts[0]
@@ -196,7 +193,7 @@ def render_rule_clip(engine: vk.Engine, qr: vk.QueryResult, plan: kr.VersePlan, 
     return clip
 
 
-def check_rule_clip(clip: kr.Clip, rules: kr.KarutaRules, tol_s: float = 0.15) -> None:
+def check_rule_clip(clip: kr.Clip, rules: kr.KarutaRules, tol_s: float = 0.15) -> dict:
     """規則どおりの時間配分の 1 クリップを検査する（目標との差、タイミング表、クリッピング）。"""
     plan, qr = clip.plan, clip.qr
     target = rules.rule_kami_s if plan.kind == "kami" else rules.rule_shimo_s
@@ -218,6 +215,23 @@ def check_rule_clip(clip: kr.Clip, rules: kr.KarutaRules, tol_s: float = 0.15) -
     assert np.abs(clip.samples).max() < 10 ** (rules.peak_db / 20) + 1e-6, "ピークが -1 dBFS を超えた"
     for h in clip.holds:
         assert "n_add_s" not in h or h["xcorr_front"] > 0.5 and h["xcorr_back"] > 0.5, f"接ぎ目の相関が低い: {h}"
+    out: dict = {}
+    if rules.pitch_mode == "anchored" and clip.holds:
+        # 伸ばした母音の F0 が上がっていない（pitch_check.hold_pitch。後ろの窓へ合わせる最後の約 30 ms の上昇は含めない）
+        import pitch_check
+        ends, slopes, ups = [], [], []
+        for h in clip.holds:
+            if "ext_start_s" not in h:
+                continue
+            hp = pitch_check.hold_pitch(clip.samples, h["ext_start_s"], h["ext_end_s"])
+            for nm in ("harvest", "acf"):
+                assert hp[f"end_cents_{nm}"] <= 12.0, f"『{h['text']}』の伸ばしで F0 が上がっている ({nm}): {hp[f'end_cents_{nm}']:+.1f} cent"
+            ends.append(max(hp["end_cents_harvest"], hp["end_cents_acf"]))
+            slopes.append(max(hp["slope_cents_per_s_harvest"], hp["slope_cents_per_s_acf"]))
+            ups.append(max(hp["max_above_start_cents_harvest"], hp["max_above_start_cents_acf"]))
+        if ends:
+            out = dict(hold_end_cents_max=max(ends), hold_slope_cents_per_s_max=max(slopes), hold_above_start_cents_max=max(ups))
+    return out
 
 
 def measure_holds(wav: np.ndarray, clip: kr.Clip, offset_s: float = 0.0) -> list[dict]:

@@ -69,16 +69,33 @@ def find_anchor(x: np.ndarray, v0: float, v1: float, level_ln: float, win_s: flo
     return int(c[i, 0]), w
 
 
+def _jitter_ln(n: int, rng: np.random.Generator, cents: float, frame_ms: float = FRAME_MS) -> np.ndarray:
+    """平均ゼロのジッタ（ln F0）。25 ms の移動平均でなめらかにしたノイズから、0.3 秒の移動平均（= ゆっくりした
+    ゆらぎ・上昇）を引く。標準偏差は cents。"""
+    z = rng.normal(0, 1, n + 200)
+    k1, k2 = max(1, int(round(25 / frame_ms))), max(3, int(round(300 / frame_ms)))
+    z = np.convolve(z, np.ones(k1) / k1, "same") - np.convolve(z, np.ones(k2) / k2, "same")
+    z = z[100:100 + n]
+    return z / (z.std() + 1e-9) * (cents / 1200 * np.log(2))
+
+
 def sustain_vowel(x: np.ndarray, v0: float, v1: float, level_ln: float, sustain_s: float, *,
                   drift_ln: float = -0.05, vibrato_cents: float = 8.0, vibrato_hz: float = 5.2,
                   vibrato_delay_s: float = 0.3, jitter_cents: float = 3.0, tremolo_db: float = 0.6,
                   ap_gain: float = 1.0, ap_floor: float = 0.0, xfade_s: float = 0.03, seed: int = 0,
-                  match_level: bool = False) -> tuple[np.ndarray, int, dict]:
+                  match_level: bool = False, fall_cents: float | None = None, fall_start_s: float = 1.0,
+                  fall_end_s: float | None = None) -> tuple[np.ndarray, int, dict]:
     """x の最後の母音を WORLD で sustain_s 秒（母音の開始 v0 から数えて）まで持続させる。
 
     戻り値: (y, n_valid, info)。y は x の先頭から持続音の終わりまで（振幅は平らなまま。減衰は呼び出し側）。
     match_level=True なら、持続音の大きさを「切り替え窓の終わり 12 ms の x の RMS」に合わせる（基準窓の平均ではなく）。
     x がすでに減衰し始めている母音に接ぐとき、切り替えで音が大きくならないようにするため。
+
+    fall_cents が None でないとき（「ピッチを上げない」モード。従来の drift_ln は使わない）:
+      * F0 の基準は、切り替え窓の終わり 40 ms の、自然な母音の F0（harvest + stonemask）。切り替えで段差を作らない。
+      * 母音の開始から fall_start_s 秒までは完全に平ら、そこから fall_end_s 秒まで、コサインのなめらかな形で fall_cents
+        （負の値、cent）だけ下がる。決して上がらない。
+      * ビブラートは平均ゼロで、下降の間に 0 まで小さくする。ジッタは低い周波数のゆらぎ（ゆっくりした上昇）を含まない。
     """
     rng = np.random.default_rng(seed)
     s0, w = find_anchor(x, v0, v1, level_ln)
@@ -89,6 +106,12 @@ def sustain_vowel(x: np.ndarray, v0: float, v1: float, level_ln: float, sustain_
     sel = (t >= (s0 - A) / SR) & (t < (s0 + w - A) / SR)
     fv = f0[sel][f0[sel] > 0]
     f0c = float(np.median(fv)) if len(fv) else float(np.exp(level_ln))
+    if fall_cents is not None:
+        f0 = pw.stonemask(seg, f0, t, SR)
+        sel_end = (t >= (s0 + w - A) / SR - 0.04) & (t < (s0 + w - A) / SR)
+        fe = f0[sel_end][f0[sel_end] > 0]
+        if len(fe):
+            f0c = float(np.median(fe))
     f0_for = np.where(f0 > 0, f0, f0c)
     sp = pw.cheaptrick(seg, f0_for, t, SR)
     ap = pw.d4c(seg, f0_for, t, SR)
@@ -101,13 +124,23 @@ def sustain_vowel(x: np.ndarray, v0: float, v1: float, level_ln: float, sustain_
     n = int(round((n_sus + lead + 0.05) * 1000 / FRAME_MS)) + 1
     tt = np.arange(n) * FRAME_MS / 1000
     dur = max(n_sus, 1e-3)
-    lnf = np.log(f0c) + drift_ln * np.clip((tt - lead) / dur, 0, 1)
     vib = np.sin(2 * np.pi * vibrato_hz * tt + rng.uniform(0, 2 * np.pi))
     vib_ramp = np.clip((tt - lead + t_start - v0 - vibrato_delay_s) / 0.4, 0, 1)   # ビブラートは遅れて入る
-    lnf += (vibrato_cents / 1200 * np.log(2)) * vib * vib_ramp
-    walk = np.cumsum(rng.normal(0, 1, n))
-    walk -= np.linspace(walk[0], walk[-1], n)
-    lnf += walk / (walk.std() + 1e-9) * (jitter_cents / 1200 * np.log(2))
+    if fall_cents is None:
+        lnf = np.log(f0c) + drift_ln * np.clip((tt - lead) / dur, 0, 1)
+        lnf += (vibrato_cents / 1200 * np.log(2)) * vib * vib_ramp
+        walk = np.cumsum(rng.normal(0, 1, n))
+        walk -= np.linspace(walk[0], walk[-1], n)
+        lnf += walk / (walk.std() + 1e-9) * (jitter_cents / 1200 * np.log(2))
+    else:
+        assert fall_cents <= 0.0, "fall_cents は 0 以下（ピッチを上げない）"
+        tau = tt - lead + t_start - v0                    # 母音の開始からの時刻
+        fe_s = fall_end_s if fall_end_s is not None else sustain_s
+        u = np.clip((tau - fall_start_s) / max(fe_s - fall_start_s, 1e-3), 0, 1)
+        ease = 0.5 - 0.5 * np.cos(np.pi * u)              # 0 → 1、始まりも終わりも傾き 0
+        lnf = np.log(f0c) + (fall_cents / 1200 * np.log(2)) * ease
+        lnf += (vibrato_cents / 1200 * np.log(2)) * vib * vib_ramp * (1 - ease)
+        lnf += _jitter_ln(n, rng, jitter_cents) * (1 - ease)
     y = pw.synthesize(np.exp(lnf), np.tile(spm, (n, 1)), np.tile(apm, (n, 1)), SR, FRAME_MS)
     # 振幅の揺れ（ビブラートに連動した小さなトレモロ）
     trem = np.interp(np.arange(len(y)) / SR, tt, vib * vib_ramp)
@@ -137,7 +170,7 @@ def sustain_vowel(x: np.ndarray, v0: float, v1: float, level_ln: float, sustain_
     ramp = np.linspace(0.0, 1.0, L)
     out[sp_: sp_ + L] = x[sp_: sp_ + L] * (1 - ramp) + ys[:L] * ramp
     out[sp_ + L:] = ys[L:]
-    info = dict(anchor_s=s0 / SR, splice_s=sp_ / SR, f0=f0c, xcorr=best, splice_len_s=xfade_s)
+    info = dict(anchor_s=s0 / SR, splice_s=sp_ / SR, f0=f0c, xcorr=best, splice_len_s=xfade_s, fall_cents=fall_cents)
     return out, sp_ + L, info
 
 
@@ -201,7 +234,7 @@ def short_tail_gain(t: np.ndarray, ts: float, tau40: float, power: float, platea
 def short_tail(x: np.ndarray, v0: float, v1: float, level_ln: float, tail_s: float, *,
                power: float = 1.25, plateau_s: float = 0.0, dim_start_s: float | None = None,
                end_s: float | None = None, end_db: float = 78.0, taper_s: float = 0.04,
-               tol_s: float = 0.008, **sustain_kw) -> tuple[np.ndarray, dict]:
+               tol_s: float = 0.008, fall_cents: float | None = None, **sustain_kw) -> tuple[np.ndarray, dict]:
     """x の最後の母音の「聞こえている長さ」を tail_s 秒（母音の開始から。AUDIBLE_DB 以内）にして返す。
 
     きれいな短い母音 x を、安定部のスペクトル・非周期性を持つ WORLD の持続音に切り替え点で接ぎ（sustain_vowel）、
@@ -211,9 +244,15 @@ def short_tail(x: np.ndarray, v0: float, v1: float, level_ln: float, tail_s: flo
     dim_start_s: 減衰の開始を「母音の開始から」この秒数にする（plateau_s = dim_start_s - 切り替えの終わり。
         None なら plateau_s をそのまま使う）。「遅めの Dim」= 平らに保ってから落とす。
     end_s: 減衰が 0 になる時刻（母音の開始から）。None なら -end_db に達した所。長い余韻は end_s を総尺に合わせる。
+    fall_cents: None でなければ「ピッチを上げない」モード（sustain_vowel を参照）。F0 は切り替えの F0 から、減衰の開始
+        （dim_start_s。無ければ plateau_s + 0.2）まで平ら、そこから減衰の終わりまで fall_cents（負）だけ下がる。
     y の長さは母音の開始 + (end_s があればそれ、無ければ 1.8 * tail_s) + 0.1 秒（呼び出し側が総尺に合わせる）。"""
     assert 0.0 <= plateau_s <= 2.0, "平らな部分は 2 秒まで"
     sustain_s = (end_s + 0.3) if end_s is not None else 1.8 * tail_s + 0.3
+    if fall_cents is not None:
+        sustain_kw.update(fall_cents=fall_cents,
+                          fall_start_s=dim_start_s if dim_start_s is not None else plateau_s + 0.2,
+                          fall_end_s=end_s if end_s is not None else 1.8 * tail_s)
     y, n_valid, sinfo = sustain_vowel(x, v0, v1, level_ln, sustain_s, match_level=True, **sustain_kw)
     i0 = int(round(v0 * SR))
     ts = n_valid / SR - v0
@@ -430,13 +469,15 @@ def pick_windows(x: np.ndarray, vs: float, ve: float, level_ln: float, *, xfade_
 def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s: float, *,
                     xfade_s: float = 0.025, vibrato_cents: float = 6.0,
                     vibrato_hz: float = 5.2, jitter_cents: float = 3.0, tremolo_db: float = 0.5,
-                    ap_floor: float = 0.07, seed: int = 0) -> tuple[np.ndarray, dict]:
+                    ap_floor: float = 0.07, seed: int = 0, no_rise: bool = False) -> tuple[np.ndarray, dict]:
     """x の母音 [vs, ve)（秒）を、内側で add_s 秒（約。ピッチ周期の端数ぶん ±数 ms）延ばして返す。
 
     母音全体を WORLD で作り直すのではなく、pick_windows が選んだ 2 つの安定した窓（front と back）の間 [fs, be] だけを、
     両方の窓から取ったスペクトル包絡（front → back へ連続的に変える）・非周期性の WORLD 合成音に置き換え、
     前後 xfade_s のクロスフェードで位相をそろえて接ぐ。母音の立ち上がり・次の子音への渡りは元の波形のまま。
     F0 は両端の窓で測った値の間を結び、ゆるいビブラート・ジッタ・小さなトレモロを両端でゼロになる形で加える。
+    no_rise=True: F0 の中間の道筋を front の F0 で平らに保ち（back のほうが低ければ、そこへ向けてゆるやかに下げ）、
+    back のほうが高いときの上昇は、最後のクロスフェードの中（約 30 ms）だけで行う。伸ばした所で F0 は上がらない。
     戻り値: (y, info)。info: s0（置き換え範囲の開始サンプル）、w（その長さ）、ins_at（= s0 + w。これ以降の元の波形は
     n_add サンプル後ろへずれる）、n_add（足したサンプル数）、xcorr_front / xcorr_back（接ぎ目の相関）、f0_front / f0_back。"""
     rng = np.random.default_rng(seed)
@@ -465,6 +506,11 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
     u_b = (lead + w + add - L / 2) / SR
     r = np.clip((tt - u_f) / max(u_b - u_f, 1e-3), 0, 1)
     lnf = lf + (lb - lf) * r
+    if no_rise:
+        tgt = min(lb, lf)
+        lnf = lf + (tgt - lf) * r
+        if lb > tgt:
+            lnf = lnf + (lb - tgt) * np.clip((tt - (u_b - 0.020)) / 0.032, 0, 1)
     ramp = min(0.12, max(u_b - u_f, 0.0) / 2.5)
     mask = np.clip((tt - u_f - 0.03) / ramp, 0, 1) * np.clip((u_b - 0.03 - tt) / ramp, 0, 1)
     mask = 0.5 - 0.5 * np.cos(np.pi * mask)

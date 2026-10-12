@@ -23,6 +23,8 @@
     --yoin-drift-ln-short D   --yoin-mode short の持続中の ln F0 の下降（既定は yoin_drift_ln = -0.05）
     --timing default|rule   rule: 競技かるたの規則どおりの時間配分（上の句 6 秒 / 下の句 5 秒 / 余韻 3 秒。rule_timing.py）。
                             --yoin-mode short と --yoin-short-tail-s が必要。既定 default は従来どおり。
+    --pitch-mode legacy|anchored   anchored: 余韻・伸ばしのピッチを上げない（切り替えの F0 に合わせ、平ら → ゆるやかに下降。
+                            ビブラートは平均ゼロで小さく）。既定 legacy は v1〜v4 の再現。--yoin-fall-cents C（既定 -60）は余韻の下降量。
     --version-label v2    timings.json の version（既定: voicevox なら v1、それ以外は v2）
 """
 from __future__ import annotations
@@ -190,6 +192,8 @@ def main():
     ap.add_argument("--yoin-short-end-s", type=float, default=0.0)
     ap.add_argument("--yoin-drift-ln-short", type=float, default=None)
     ap.add_argument("--timing", choices=["default", "rule"], default="default")
+    ap.add_argument("--pitch-mode", choices=["legacy", "anchored"], default="legacy")
+    ap.add_argument("--yoin-fall-cents", type=float, default=-60.0)
     ap.add_argument("--version-label")
     ap.add_argument("--character", default="冥鳴ひまり")
     ap.add_argument("--style", default="ノーマル")
@@ -198,7 +202,8 @@ def main():
     rules = dataclasses.replace(
         kr.PACE_REF, yoin_mode=args.yoin_mode, yoin_short_tail_s=args.yoin_short_tail_s,
         yoin_short_dim_start_s=args.yoin_short_dim_start_s, yoin_short_end_s=args.yoin_short_end_s,
-        yoin_drift_ln_short=args.yoin_drift_ln_short, timing=args.timing)
+        yoin_drift_ln_short=args.yoin_drift_ln_short, timing=args.timing,
+        pitch_mode=args.pitch_mode, yoin_fall_cents=args.yoin_fall_cents)
     assert args.yoin_short_tail_s == 0 or args.yoin_mode == "short", "--yoin-short-tail-s は --yoin-mode short 用"
     assert (args.yoin_short_dim_start_s == 0 and args.yoin_short_end_s == 0) or args.yoin_short_tail_s > 0, \
         "--yoin-short-dim-start-s / --yoin-short-end-s は --yoin-short-tail-s が必要"
@@ -225,6 +230,7 @@ def main():
     fallbacks, anomalies, others = [], [], []
     qcache: dict[tuple, vk.QueryResult] = {}
     yoin_checks: dict[str, dict] = {}
+    hold_checks: dict[str, dict] = {}
     for jb in jobs:
         key = (jb.kanji, jb.reading)
         if key not in qcache:
@@ -236,7 +242,9 @@ def main():
             kr.check_plan_vs_query(clip, qr.query, rules)
         else:
             import rule_timing
-            rule_timing.check_rule_clip(clip, rules)
+            hp = rule_timing.check_rule_clip(clip, rules)
+            if hp:
+                hold_checks[jb.stem] = hp
         yoin_chk = kr.check_yoin(clip, rules)
         if yoin_chk:
             yoin_checks[jb.stem] = yoin_chk
@@ -300,6 +308,11 @@ def main():
         for key in sorted({k for v in yoin_checks.values() for k in v}):
             vals = np.array([v[key] for v in yoin_checks.values() if key in v])
             rep.append(f"{key}: n={len(vals)} min={vals.min():.3f} mean={vals.mean():.3f} max={vals.max():.3f}")
+    if hold_checks:
+        rep += ["", "# 伸ばした母音のピッチ（pitch_mode=anchored）: 測った値（clip ごとの最大を、全 clip で min / mean / max）"]
+        for key in sorted({k for v in hold_checks.values() for k in v}):
+            vals = np.array([v[key] for v in hold_checks.values() if key in v])
+            rep.append(f"{key}: n={len(vals)} min={vals.min():.1f} mean={vals.mean():.1f} max={vals.max():.1f}")
     (args.out / "report.txt").write_text("\n".join(rep), "utf-8")
     print("\n".join(rep))
 
