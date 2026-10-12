@@ -3,6 +3,7 @@ package io.github.abonsan.hyakunin.ui.home
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsOn
@@ -56,8 +57,11 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
     private fun capture(screen: String) =
         composeRule.captureScreenshot(if (prefix.isEmpty()) screen else "${prefix}_$screen")
 
-    /** 文字 [text] の欄の、画面での位置。 */
-    private fun boundsOf(text: String): Rect = composeRule.onNodeWithText(text).fetchSemanticsNode().boundsInRoot
+    /** 文字 [text] の欄の、画面での位置（スクロールの外にあっても切り取らない）。 */
+    private fun boundsOf(text: String): Rect {
+        val node = composeRule.onNodeWithText(text).fetchSemanticsNode()
+        return Rect(node.positionInRoot, node.size.toSize())
+    }
 
     @Test
     fun top() {
