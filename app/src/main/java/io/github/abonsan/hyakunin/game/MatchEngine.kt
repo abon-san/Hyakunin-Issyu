@@ -140,6 +140,7 @@ private class ReadTimeline(
  *
  * 音声は、前置き・上の句・下の句のクリップを鳴る順に並べて [snapshot] の `audio` に出す。札が取られて Result になっても、
  * その歌の下の句（余韻まで）は鳴り続ける。[next] で Waiting に進む・新しいエンジンになるときは止まる。
+ * 次に鳴る見込みのクリップ（待ちの間なら、待ちが終わって最初に鳴るもの）を `nextAudio` に出し、再生側が先に読み込めるようにする。
  */
 internal class MatchEngine private constructor(
     val config: GameConfig,
@@ -171,6 +172,10 @@ internal class MatchEngine private constructor(
 
     private val playerCards: MutableList<FieldCard> = playerNos.map(::fieldCard).toMutableList()
     private val cpuCards: MutableList<FieldCard> = cpuNos.map(::fieldCard).toMutableList()
+
+    /** [snapshot] で最後に渡した札の並び。変わっていなければ同じものを渡す（刻みごとに作り直さず、画面の描き直しも減らす）。 */
+    private var playerCardsShown: List<FieldCard> = emptyList()
+    private var cpuCardsShown: List<FieldCard> = emptyList()
 
     /** 経過時間（ms）。 */
     var nowMillis: Long = 0L
@@ -726,6 +731,8 @@ internal class MatchEngine private constructor(
 
     fun snapshot(): MatchUiState {
         val s = session
+        if (playerCardsShown != playerCards) playerCardsShown = playerCards.toList()
+        if (cpuCardsShown != cpuCards) cpuCardsShown = cpuCards.toList()
         return MatchUiState(
             config = config,
             phase = when (phase) {
@@ -735,8 +742,8 @@ internal class MatchEngine private constructor(
                 Phase.RESULT -> MatchPhase.Result
                 Phase.FINISHED -> MatchPhase.Finished(outcome?.winner)
             },
-            playerCards = playerCards.toList(),
-            cpuCards = cpuCards.toList(),
+            playerCards = playerCardsShown,
+            cpuCards = cpuCardsShown,
             reading = s?.let {
                 ReadingState(
                     poem = it.poem,
@@ -763,6 +770,7 @@ internal class MatchEngine private constructor(
             leadIn = leadInState(),
             audio = currentCue(),
             engineTimeMillis = nowMillis,
+            nextAudio = nextAudio(),
         )
     }
 
@@ -773,6 +781,47 @@ internal class MatchEngine private constructor(
     private fun currentCue(): AudioCue? {
         val item = audioItems.firstOrNull { it.endMillis > nowMillis } ?: return null
         return AudioCue(item.asset, item.startMillis, timing.playbackSpeed, item.cueId)
+    }
+
+    /**
+     * 次に鳴る見込みのクリップ（再生側が先に読み込む）。今の並びに次のクリップがあればそれ、
+     * なければ次の読み（前置きがあれば前置き）の最初のクリップ。試合が終わったら null。
+     */
+    private fun nextAudio(): NextAudio? {
+        val current = audioItems.indexOfFirst { it.endMillis > nowMillis }
+        val asset = if (current >= 0 && current + 1 < audioItems.size) {
+            audioItems[current + 1].asset
+        } else {
+            when (phase) {
+                Phase.WAITING -> firstAssetOfRead(nextReadIndex, session?.poem)
+                // 前置きの並びには次の歌の上の句・下の句まで入っている。その次は、もう1つ先の読み
+                Phase.LEAD_IN -> firstAssetOfRead(nextReadIndex + 1, poemByNo.getValue(readOrder[nextReadIndex]))
+                Phase.READING -> firstAssetOfRead(nextReadIndex, session?.poem)
+                Phase.RESULT -> if (outcome == null) firstAssetOfRead(nextReadIndex, session?.poem) else null
+                Phase.FINISHED -> null
+            }
+        }
+        return asset?.let { NextAudio(it, timing.playbackSpeed) }
+    }
+
+    /**
+     * [index] 番目（0始まり）の読みで最初に鳴るクリップ。前置きがあれば序歌（最初の読み）か、直前に読んだ歌 [previous] の下の句。
+     * 時刻表と同じく、仮名の数が合わないクリップは鳴らさない（文字だけで読む）ので飛ばす。
+     */
+    private fun firstAssetOfRead(index: Int, previous: Poem?): String? {
+        val bank = voice ?: return null
+        val no = readOrder.getOrNull(index) ?: return null
+        val poem = poemByNo.getValue(no)
+        val kami = bank.poem(no)?.takeIf { it.fits(poem) }?.kami?.asset
+        if (!leadInEnabled) return kami
+        if (index == 0) {
+            val joka = Joka.poem
+            return bank.jokaKami?.takeIf { it.fits(joka.kamiYomi) }?.asset
+                ?: bank.jokaShimo?.takeIf { it.fits(joka.shimoYomi) }?.asset
+                ?: kami
+        }
+        val shimo = previous?.let { p -> bank.poem(p.no)?.takeIf { it.fits(p) }?.shimo?.asset }
+        return shimo ?: kami
     }
 
     /** AUTO の Waiting 中の残り時間（ms）。それ以外は null。 */

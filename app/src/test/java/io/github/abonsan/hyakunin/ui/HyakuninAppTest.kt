@@ -248,6 +248,9 @@ class HyakuninAppTest {
         val player = players.players.single()
         // 音声で読むときは、最初の音が遅れないよう先に用意しておく
         assertTrue(player.warmedUp)
+        // 札を覚える時間の間に、最初に鳴る序歌の上の句を予告する（再生側が先に読み込む）
+        composeRule.advanceMainLooper(100L)
+        assertEquals("voice/joka_kami.ogg", player.nexts.last()?.asset)
 
         // 札を覚える時間を飛ばすと、序歌の上の句が鳴る
         composeRule.onNodeWithText("すぐ読む").performClick()

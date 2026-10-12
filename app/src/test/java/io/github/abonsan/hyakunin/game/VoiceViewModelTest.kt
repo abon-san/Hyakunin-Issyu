@@ -177,6 +177,97 @@ class VoiceViewModelTest {
         assertEquals(LeadInKind.JOKA, vm.uiState.value.leadIn!!.kind)
     }
 
+    // ---- 音声が時計 ----
+
+    /** cue [cueId] が鳴っているときだけ [position] を返す偽の時計。 */
+    private class FakeAudioClock : AudioClock {
+        var cueId: Long? = null
+        var position: Long? = null
+        val asked = mutableListOf<Long>()
+
+        override fun heardPositionMillis(cueId: Long): Long? {
+            asked += cueId
+            return position.takeIf { cueId == this.cueId }
+        }
+    }
+
+    @Test
+    fun whileAClipPlaysTheEngineFollowsTheHeardPosition() {
+        val vm = viewModel()
+        val clock = FakeAudioClock()
+        vm.attachAudioClock(clock)
+        advance(memorize)
+        val cue = vm.uiState.value.audio!!
+        assertEquals(memorize, cue.startedAtMillis)
+        clock.cueId = cue.cueId
+        // 実時間で 400ms たっても、聞こえているのが 600ms の位置ならエンジンもそこまで（音が進むまで待つ）
+        clock.position = 600L
+        advance(400L)
+        assertEquals(memorize + 600L, vm.uiState.value.engineTimeMillis)
+        // 音が先へ進めば、刻みの遅れに関係なくそこまで進む
+        clock.position = 1_500L
+        advance(20L)
+        assertEquals(memorize + 1_500L, vm.uiState.value.engineTimeMillis)
+        // 表示（序歌の上の句の仮名）も聞こえている位置に合う（100ms から 100ms ごと）
+        assertEquals(15, vm.uiState.value.leadIn!!.revealedKana)
+    }
+
+    @Test
+    fun theEngineWaitsForTheVoiceButNotForever() {
+        val vm = viewModel()
+        val clock = FakeAudioClock()
+        vm.attachAudioClock(clock)
+        advance(memorize)
+        val start = vm.uiState.value.engineTimeMillis
+        clock.cueId = vm.uiState.value.audio!!.cueId
+        // 鳴らし始めたが、まだ音が出ていない（位置 0）: エンジンは待つ
+        clock.position = 0L
+        advance(400L)
+        assertEquals(start, vm.uiState.value.engineTimeMillis)
+        // 500ms を超えて動かなければ、再生器が止まったとみて実時間で進む
+        advance(200L)
+        assertTrue(vm.uiState.value.engineTimeMillis > start)
+    }
+
+    @Test
+    fun withoutAPlayingClipThePausedOrDetachedEngineUsesTheWallClock() {
+        val vm = viewModel()
+        val clock = FakeAudioClock()
+        vm.attachAudioClock(clock)
+        // 鳴っていない（待ち）: 実時間
+        advance(1_000L)
+        assertEquals(1_000L, vm.uiState.value.engineTimeMillis)
+        advance(memorize - 1_000L)
+        clock.cueId = vm.uiState.value.audio!!.cueId
+        clock.position = 300L
+        advance(20L)
+        assertEquals(memorize + 300L, vm.uiState.value.engineTimeMillis)
+        // 一時停止中は、時計が何を返しても進まない
+        vm.setPaused(true)
+        clock.position = 900L
+        advance(1_000L)
+        assertEquals(memorize + 300L, vm.uiState.value.engineTimeMillis)
+        vm.setPaused(false)
+        // 外すと実時間に戻る
+        vm.detachAudioClock(clock)
+        advance(100L)
+        assertEquals(memorize + 400L, vm.uiState.value.engineTimeMillis)
+    }
+
+    @Test
+    fun theClockIsAskedForThePublishedCueIdAfterARestart() {
+        val vm = viewModel()
+        val clock = FakeAudioClock()
+        vm.attachAudioClock(clock)
+        advance(memorize + 100L)
+        val old = vm.uiState.value.audio!!.cueId
+        vm.onRestart()
+        advance(memorize + 100L)
+        val fresh = vm.uiState.value.audio!!.cueId
+        assertTrue(fresh > old)
+        assertEquals(fresh, clock.asked.last())
+    }
+
     @Test
     fun simpleStyleThroughTheViewModelHasNoLeadIn() {
         val vm = viewModel(readingStyle = ReadingStyle.SIMPLE)

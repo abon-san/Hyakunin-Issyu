@@ -7,118 +7,89 @@ import org.junit.Test
 /**
  * 読み上げ音声の鳴らし方を、端末の遅れとメインスレッドの混み具合を変えて再現する（[simulatePlayback]）。
  *
- * v0.4.0 の追従の記録: エンジンは実時間（1 刻み 20〜100ms に丸める）で進み、再生側は 400ms ごとに位置を測って
- * 120ms を超えるずれを seek で直し、鳴り始めの遅れを学習して早めに鳴らす。ExoPlayer の seek は AudioTrack を
- * 作り直す（DefaultAudioSink.flush）ので、seek のたびに音が一瞬途切れ、音量が落ちてから戻る。
+ * v0.4.0 では、エンジンは実時間（1 刻み 20〜100ms に丸める）で進み、再生側は 400ms ごとに位置を測って 120ms を超える
+ * ずれを seek で直し、鳴り始めの遅れを学習して早めに鳴らしていた。ExoPlayer の seek は AudioTrack を作り直す
+ * （DefaultAudioSink.flush）ので、seek のたびに音が一瞬途切れて小さくなってから戻る（音量が揺れて聞こえる）。
+ * 同じ再現で v0.4.0 は次のとおりだった（5 通りの乱数、序歌と 3 枚の読みの間）:
+ * 刻みの揺れだけ 0 回、止まり（250ms ごと 3 秒）13 回、位置が 150ms 先 118 回、出力の遅れ 200ms 4 回（7 クリップを早めに鳴らし、
+ * 3 クリップの出だしを 200ms 削る）、読み込み 80ms 4 回、スマートフォンくらい 4〜9 回、混んだメインスレッド 7〜13 回の seek。
+ * 読み直し・途中で小さくする・音声フォーカスの出し入れ・再生速度の設定し直し・2つ同時に鳴ることは、どの場合も起きていなかった。
+ *
+ * 今は、鳴っている間は音声が時計になり（エンジンが聞こえている位置に合わせて進む）、次のクリップを先に読み込むので、
+ * ふつうに鳴っている間は位置を移さず、音量も変えず、音を出す再生器はいつも1つ。
  */
 class PlaybackReproductionTest {
+    private val all = listOf(
+        "ideal" to SimScenarios.IDEAL,
+        "jitter" to SimScenarios.JITTER,
+        "short ticks" to SimScenarios.SHORT_TICKS,
+        "stalls" to SimScenarios.STALLS,
+        "output latency" to SimScenarios.OUTPUT_LATENCY,
+        "varying latency" to SimScenarios.VARYING_LATENCY,
+        "slow prepare" to SimScenarios.SLOW_PREPARE,
+        "realistic" to SimScenarios.REALISTIC,
+        "busy" to SimScenarios.BUSY,
+    )
+
     private fun records(name: String, scenario: Pair<SimDevice, SimTicks>, speed: Float = 1f): List<PlaybackRecord> =
         simulateAll(scenario, speed = speed).onEach { println("$name x$speed: $it") }
 
-    @Test
-    fun idealTimingNeedsNoCorrection() {
-        for (r in records("ideal", SimScenarios.IDEAL)) {
-            assertEquals(r.toString(), 3, r.reads)
-            assertEquals(r.toString(), 0, r.seeks)
-            assertEquals(r.toString(), 0L, r.maxDisplayAhead)
-            assertEquals(r.toString(), 0L, r.maxDisplayBehind)
-        }
+    /** ふつうに鳴っている間: 位置を移さない・音量を変えない・音を出すのは今の cue の再生器1つだけ・各クリップを1回だけ読み込む。 */
+    private fun assertSteady(r: PlaybackRecord) {
+        assertEquals(r.toString(), 3, r.reads)
+        assertEquals(r.toString(), 0, r.seeks)
+        assertEquals(r.toString(), 0, r.fadesWhileSounding)
+        assertEquals(r.toString(), 0, r.midClipCuts)
+        assertEquals(r.toString(), 1, r.maxOutputs)
+        assertEquals(r.toString(), 0, r.strayOutputs)
+        assertEquals(r.toString(), r.cues, r.prepares)
+        assertEquals(r.toString(), 0, r.onsetSkips)
+        assertEquals(r.toString(), 0, r.earlyStarts)
+        assertEquals(r.toString(), 0, r.pauses)
     }
 
     @Test
-    fun tickJitterAloneDoesNotSeek() {
-        // 刻みが揺れても、エンジンは測った実時間で進むので位置は直さない（表示が刻みの分だけ前後するだけ）
-        for (r in records("jitter", SimScenarios.JITTER)) {
-            assertEquals(r.toString(), 0, r.seeks)
-            assertTrue(r.toString(), r.maxDisplayAhead <= 60L && r.maxDisplayBehind <= 60L)
-        }
-    }
-
-    @Test
-    fun ticksMeasuredShortMakeTheEngineRunAheadOfTheVoice() {
-        // 19ms と測れた刻みを 20ms に切り上げるので、エンジンが音より速く進む。下の句 1 つの間に 80ms 以上先へずれる
-        for (r in records("short ticks", SimScenarios.SHORT_TICKS)) {
-            assertTrue(r.toString(), r.maxDisplayAhead >= 80L)
-        }
-    }
-
-    @Test
-    fun mainThreadStallsMakeTheVoiceJumpBack() {
-        // 250ms 止まると、エンジンは 100ms しか進まず音より 150ms 以上遅れる。再生側は音を 150ms 以上巻き戻す
-        for (r in records("stalls", SimScenarios.STALLS)) {
-            assertTrue(r.toString(), r.driftSeeks >= 10)
-            assertTrue(r.toString(), r.maxDriftSeekJump >= 150L)
-        }
-    }
-
-    @Test
-    fun aPositionReportedAheadMakesThePlayerSeekEvery400Millis() {
-        // 報告される位置が 150ms 先だと、学習した遅れ（0 より小さくならない）では吸収できず、落ち着くたびに直し続ける
-        for (r in records("reported ahead", SimScenarios.REPORTED_AHEAD)) {
-            assertTrue(r.toString(), r.driftSeeks >= 100)
-        }
-    }
-
-    @Test
-    fun outputLatencyIsLearnedBySeekingAndCutsTheStartOfClips() {
-        // ExoPlayer の位置は出力の遅れを含めて聞こえている位置なのに、その遅れを学習して足す:
-        // 最初は seek で直し、その後のクリップは早めに鳴らし、始まりの時刻に予告されたクリップは学習した分だけ途中から鳴らす
-        for (r in records("output latency", SimScenarios.OUTPUT_LATENCY)) {
-            assertTrue(r.toString(), r.driftSeeks >= 1)
-            assertTrue(r.toString(), r.earlyStarts >= 5)
-            // 本物のクリップの最初の仮名は 107ms から。それより先から鳴らすと出だしの音が欠ける
-            assertTrue(r.toString(), r.onsetSkips >= 3 && r.maxOnsetSkip >= 150L)
-        }
-    }
-
-    @Test
-    fun varyingStartLatencyKeepsSeeking() {
-        for (r in records("varying latency", SimScenarios.VARYING_LATENCY)) {
-            assertTrue(r.toString(), r.seeks >= 3)
-        }
-    }
-
-    @Test
-    fun slowLoadingMakesTheFirstClipOfEachReadStartLate() {
-        // 読み（前置き）の最初のクリップと序歌の下の句の 2 回目は、始まりの時刻に予告されてから読み込むので、
-        // 読み込みの分だけ遅れ、途中から鳴らす
-        for (r in records("slow prepare", SimScenarios.SLOW_PREPARE)) {
-            assertEquals(r.toString(), 4, r.lateStartSeeks)
-            assertEquals(r.toString(), 4, r.onsetSkips)
-        }
-    }
-
-    @Test
-    fun aRealisticPhoneSeeksSeveralTimesPerRead() {
+    fun nothingIsCorrectedOrRampedDuringPlaybackWhateverTheTiming() {
         for (speed in listOf(0.85f, 1f, 1.2f)) {
-            for (r in records("realistic", SimScenarios.REALISTIC, speed)) {
-                assertTrue(r.toString(), r.seeks >= 4)
+            for ((name, scenario) in all) {
+                for (r in records(name, scenario, speed)) assertSteady(r)
             }
         }
-        for (r in records("busy", SimScenarios.BUSY)) {
-            assertTrue(r.toString(), r.driftSeeks >= 2)
-            assertTrue(r.toString(), r.maxDisplayAhead + r.maxDisplayBehind >= 120L)
+    }
+
+    @Test
+    fun theDisplayFollowsWhatIsHeard() {
+        // 表示（と CPU）はエンジンの時刻で動く。刻みの時点で、聞こえている音と 1 刻み分しかずれない。
+        // 鳴り始めの遅れ（Bluetooth くらいの 200ms も）は、エンジンが音を待つので先走らない
+        for ((name, scenario) in all) {
+            for (r in records(name, scenario)) {
+                assertTrue(r.toString(), r.maxDisplayAhead <= 45L)
+                assertTrue(r.toString(), r.maxDisplayBehind <= 5L)
+            }
         }
     }
 
     @Test
-    fun noReloadFadeFocusChangeSpeedChangeOrSecondOutputDuringPlayback() {
-        // ほかの疑い（読み直し・途中で小さくする・音声フォーカスの出し入れ・再生速度の設定し直し・2つ同時に鳴る）は起きていない
-        val all = listOf(
-            SimScenarios.IDEAL, SimScenarios.JITTER, SimScenarios.SHORT_TICKS, SimScenarios.STALLS,
-            SimScenarios.REPORTED_AHEAD, SimScenarios.OUTPUT_LATENCY, SimScenarios.VARYING_LATENCY,
-            SimScenarios.SLOW_PREPARE, SimScenarios.REALISTIC, SimScenarios.BUSY,
-        )
-        for (scenario in all) {
-            for (r in simulateAll(scenario)) {
-                assertEquals(r.toString(), r.cues, r.prepares)
-                assertEquals(r.toString(), 0, r.midClipCuts)
-                // 止める（小さくしていく）のは、読みの音声が終わったときだけ
-                assertEquals(r.toString(), r.reads, r.stops)
-                // 一時停止しない（音声フォーカスを手放さない・求め直さない）
-                assertEquals(r.toString(), 0, r.pauses)
-                assertEquals(r.toString(), 1, r.speedCalls)
-                assertEquals(r.toString(), 1, r.maxOutputs)
+    fun aPlayerReportingAheadOfWhatItPlaysIsFollowedWithoutCorrections() {
+        // 再生器の報告する位置が、実際に聞こえる位置より 150ms 先（報告が狂っている端末）。エンジンは報告に合わせるので
+        // 表示はその分だけ先になり、読みの終わりで余韻の最後の 150ms を小さくして止めるが、鳴っている間に位置は移さない
+        for (r in records("reported ahead", SimScenarios.REPORTED_AHEAD)) {
+            assertEquals(r.toString(), 0, r.seeks)
+            assertEquals(r.toString(), 0, r.midClipCuts)
+            assertEquals(r.toString(), 1, r.maxOutputs)
+            assertEquals(r.toString(), r.cues, r.prepares)
+            assertTrue(r.toString(), r.maxDisplayAhead in 150L..195L)
+            assertTrue(r.toString(), r.fadesWhileSounding <= r.reads)
+        }
+    }
+
+    @Test
+    fun theSpeedIsSetOncePerPlayerAndTheVoiceStopsOnlyAfterEachRead() {
+        for ((name, scenario) in all) {
+            for (r in records(name, scenario)) {
+                assertEquals(r.toString(), 2, r.speedCalls)
+                // 止めるのは、次のクリップに移ったとき（鳴り終えた再生器）と読みの音声が終わったときだけ
+                assertTrue(r.toString(), r.stops <= r.cues + r.reads)
             }
         }
     }

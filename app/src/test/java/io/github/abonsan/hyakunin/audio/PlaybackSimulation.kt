@@ -67,6 +67,8 @@ internal data class SimTicks(
  * @property onsetSkips 先頭からではなく途中から鳴らし始めたクリップの数（出だしの音が欠ける）
  * @property earlyStarts クリップの始まりの時刻より前に鳴らし始めた回数
  * @property maxOutputs 同時に音を出していた再生器の数の最大
+ * @property strayOutputs 今の cue を受け持っていない再生器が音を出していた刻みの数（先に読み込んだ再生器が鳴った・前の再生器が残った）
+ * @property fadesWhileSounding 音を出している再生器を小さくしながら止めた回数
  * @property maxDisplayAhead 表示（エンジンの時刻）が、聞こえている音より先に進んでいた量の最大
  * @property maxDisplayBehind 表示が、聞こえている音より遅れていた量の最大
  */
@@ -85,6 +87,8 @@ internal class PlaybackRecord(
     val pauses: Int,
     val speedCalls: Int,
     val maxOutputs: Int,
+    val strayOutputs: Int,
+    val fadesWhileSounding: Int,
     val maxDisplayAhead: Long,
     val maxDisplayBehind: Long,
     val reads: Int,
@@ -92,7 +96,7 @@ internal class PlaybackRecord(
     override fun toString(): String =
         "seeks=$seeks (late=$lateStartSeeks drift=$driftSeeks maxJump=$maxDriftSeekJump) prepares=$prepares cues=$cues " +
             "cuts=$midClipCuts onsetSkips=$onsetSkips (max=$maxOnsetSkip) early=$earlyStarts stops=$stops pauses=$pauses " +
-            "speeds=$speedCalls outputs=$maxOutputs displayAhead=$maxDisplayAhead displayBehind=$maxDisplayBehind reads=$reads"
+            "speeds=$speedCalls outputs=$maxOutputs stray=$strayOutputs fades=$fadesWhileSounding displayAhead=$maxDisplayAhead displayBehind=$maxDisplayBehind reads=$reads"
 }
 
 /** 偽の voice バンク（fakeVoiceBank）のクリップの長さ。 */
@@ -211,7 +215,7 @@ internal class SimDeck(
     }
 
     override fun stop(fadeOutMillis: Long) {
-        commands += "stop"
+        commands += if (presenting && fadeOutMillis > 0L) "stop-fade" else "stop"
         if (isPlaying && fadeOutMillis > 0L) {
             fadeEnd = now + fadeOutMillis
         } else {
@@ -247,15 +251,17 @@ internal fun simulatePlayback(
         // 実時間 = 仮想時間 + 刻みの遅れ（+ 再生側が動くまでの遅れ）
         var lag = 0L
         var collectorLag = 0L
-        val deck = SimDeck({ scheduler.currentTime + lag + collectorLag }, device, random)
-        val decks = listOf(deck)
-        val follower = VoiceCueFollower(deck)
+        val realTime = { scheduler.currentTime + lag + collectorLag }
+        val decks = List(2) { SimDeck(realTime, device, random) }
+        val follower = VoiceCueFollower(decks, wallClock = realTime)
         val order = listOf(1, 6, 2).take(reads)
         val vm = MatchViewModel(
             engineFactory = { layoutEngine(order = order, timing = voiceTiming(playbackSpeed = speed), profile = SLOW_CPU) },
             clock = { scheduler.currentTime + lag },
             tickMillis = 20L,
         )
+        // 鳴っている間は、エンジンの時計を聞こえている位置に合わせる
+        vm.attachAudioClock(follower)
 
         val cueIds = mutableSetOf<Long>()
         val deckCue = mutableMapOf<SimDeck, Long?>()
@@ -267,6 +273,8 @@ internal fun simulatePlayback(
         var maxOnsetSkip = 0L
         var earlyStarts = 0
         var maxOutputs = 0
+        var strayOutputs = 0
+        var fadesWhileSounding = 0
         var maxAhead = 0L
         var maxBehind = 0L
 
@@ -286,14 +294,16 @@ internal fun simulatePlayback(
                 val presentingBefore = decks.associateWith { it.presenting }
                 val remainingBefore = decks.associateWith { it.remainingMillis }
 
-                follower.update(state.audio, state.engineTimeMillis, state.isPaused)
+                follower.update(state.audio, state.engineTimeMillis, state.isPaused, state.nextAudio)
 
                 for (d in decks) {
                     val issued = d.commands.drop(before.getValue(d))
                     if (issued.isEmpty()) continue
-                    if (presentingBefore.getValue(d) && remainingBefore.getValue(d) > 200L && ("prepare" in issued || "stop" in issued)) {
+                    val stopped = "stop" in issued || "stop-fade" in issued
+                    if (presentingBefore.getValue(d) && remainingBefore.getValue(d) > 200L && ("prepare" in issued || stopped)) {
                         midClipCuts++
                     }
+                    if ("stop-fade" in issued) fadesWhileSounding++
                     if ("seek" in issued) {
                         if ("play" in issued) {
                             lateStartSeeks++
@@ -314,6 +324,7 @@ internal fun simulatePlayback(
                     }
                 }
                 maxOutputs = max(maxOutputs, decks.count { it.presenting })
+                if (decks.any { it.presenting && (cue == null || deckCue[it] != cue.cueId) }) strayOutputs++
                 cue?.let { cueIds += it.cueId }
                 collectorLag = 0L
             }
@@ -350,10 +361,12 @@ internal fun simulatePlayback(
             onsetSkips = onsetSkips,
             maxOnsetSkip = maxOnsetSkip,
             earlyStarts = earlyStarts,
-            stops = commands.count { it == "stop" },
+            stops = commands.count { it == "stop" || it == "stop-fade" },
             pauses = commands.count { it == "pause" },
             speedCalls = commands.count { it == "speed" },
             maxOutputs = maxOutputs,
+            strayOutputs = strayOutputs,
+            fadesWhileSounding = fadesWhileSounding,
             maxDisplayAhead = maxAhead,
             maxDisplayBehind = maxBehind,
             reads = done,
