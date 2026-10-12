@@ -20,10 +20,16 @@
     句の途中の伸ばし（nobashi.json の印）: 上の句の終わりの前（句3 の最後の印）0.18、
     四句目の途中 0.30、下の句の最後の句の「最後の二字（または三字）の前」0.30、その他 0.25。
   * 句間のポーズ 0.31。大山札（句1 の後に印がない歌）は句1-句2 の間にポーズも 0.32 も置かない。
-  * 下の句の最後のモーラは母音を約 1.5 秒保持してコサインでフェードアウトし、最後の母音の開始から
-    3.0 秒になるよう無音で埋める（余韻）。
+  * 下の句の最後のモーラは余韻にする。最後の母音の開始から 3.0 秒になるよう無音で埋める。
+    余韻の作り方は yoin_mode で切り替える（v2 の既定は "world"）:
+      "voicevox": v1 の方式。vowel_length を 1.35 に伸ばし（実時間 1.5 秒）、0.3 秒後からコサインで
+                  フェードアウト。VOICEVOX の長い母音は途中が雑音に崩れる（HNR 0〜3 dB、-20 dB）ので非推奨。
+      "world"   : きれいに出る短い母音（vowel_length 0.25）の安定部を WORLD で持続させ（yoin.py）、
+                  遅めに始まる指数的な減衰で消す。
+      "short"   : 短い母音（vowel_length 0.25）をそのまま自然に減衰させて無音で埋める（持続音なし）。
   * 上の句・下の句は別々のクリップ（それぞれ前後に余白を持つ）。間はアプリ側で入れる。
   * 全クリップの有音区間 RMS を -22 dBFS にそろえ、ピークは -1 dBFS 以下。
+    "world" / "short" では、余韻の持続音を除いた部分（最後の母音の終わりまで）でゲインを決める。
 """
 from __future__ import annotations
 
@@ -36,6 +42,7 @@ import numpy as np
 from voicevox_core import AccentPhrase, AudioQuery, Mora
 
 import voicevox_karuta as vk
+import yoin
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
@@ -77,9 +84,23 @@ class KarutaRules:
     mark_other_len: float = 0.25      # その他の句の途中の印
     ku_pause: float = 0.31            # 句の間のポーズ（クエリ単位）
     # 余韻（実時間の秒）
+    yoin_mode: str = "world"          # "world" / "short" / "voicevox"（v1）
+    yoin_total_s: float = 3.0         # 最後の母音の開始からクリップ末まで（無音で埋める）
+    # yoin_mode == "voicevox"（v1）
     yoin_hold_s: float = 1.5
     yoin_fade_delay_s: float = 0.3
-    yoin_total_s: float = 3.0
+    # yoin_mode == "world" / "short"
+    yoin_src_q: float = 0.25          # VOICEVOX に作らせる母音の長さ（クエリ単位。0.25 は穴・雑音が出ない）
+    yoin_sound_s: float = 1.6         # 音が聞こえている長さ（最後の母音の開始から。"world" のみ）
+    yoin_flat_s: float = 0.55         # この時刻までは平ら、それから指数的に減衰
+    yoin_decay_db: float = 30.0       # flat から sound_s までに下げる量（dB）
+    yoin_taper_s: float = 0.12        # 最後の 0 へのコサイン（クリックを避ける）
+    yoin_drift_ln: float = -0.05      # 持続中の ln F0 のゆるやかな下降（sound_s までの合計）
+    yoin_vibrato_cents: float = 8.0
+    yoin_vibrato_hz: float = 5.2
+    yoin_jitter_cents: float = 3.0
+    yoin_tremolo_db: float = 0.6
+    yoin_ap_floor: float = 0.07       # 非周期性の下駄（持続音の HNR を元の母音に合わせる。実測 21.5 dB 相当）
     # 音量
     target_db: float = -22.0
     peak_db: float = -1.0
@@ -87,7 +108,18 @@ class KarutaRules:
     trial_gap_s: float = 0.86
 
 
+def yoin_last_mora_q(rules: KarutaRules) -> float:
+    """下の句の最後のモーラの vowel_length（クエリ単位）。"""
+    if rules.yoin_mode == "voicevox":
+        return rules.yoin_hold_s * rules.speed_scale        # 実時間 hold 秒
+    if rules.yoin_mode in ("world", "short"):
+        return rules.yoin_src_q
+    raise ValueError(f"yoin_mode: {rules.yoin_mode}")
+
+
 PACE_REF = KarutaRules()
+PACE_REF_V1 = KarutaRules(yoin_mode="voicevox")        # v1 の余韻（再現・比較用）
+PACE_REF_SHORT = KarutaRules(yoin_mode="short")        # 短い母音を自然に減衰させるだけ
 ALL_UNVOICED = "AIUEO"
 
 
@@ -256,7 +288,7 @@ def shape_ref(qr: vk.QueryResult, plan: VersePlan, rules: KarutaRules) -> AudioQ
         if plan.pause_after[k]:
             phrases[pi].pause_mora = vk._pause_mora(rules.ku_pause)
     if plan.kind == "shimo":
-        moras[-1].vowel_length = rules.yoin_hold_s * rules.speed_scale   # 実時間 hold 秒
+        moras[-1].vowel_length = yoin_last_mora_q(rules)
     return AudioQuery(
         accent_phrases=phrases, speed_scale=rules.speed_scale, pitch_scale=rules.pitch_scale,
         intonation_scale=rules.intonation_scale, volume_scale=rules.volume_scale,
@@ -275,6 +307,23 @@ class Clip:
     yoin_s: float                  # 下の句のみ（最後の母音の開始〜クリップ末）
     gain_db: float
     spans: list[tuple[float, float, float]]   # モーラの (開始, 母音の開始, 終わり) 秒
+    yoin_info: dict = field(default_factory=dict)   # 余韻の作り方の記録（検査用）
+
+
+def _normalize(x: np.ndarray, rules: KarutaRules, ref_end: int | None = None) -> tuple[np.ndarray, float]:
+    """有音区間 RMS を target_db に合わせる。ref_end があれば x[:ref_end] でゲインを決める
+    （余韻の持続音を数えない）。ピークが peak_db を超える分は vk.normalize_loudness と同じ tanh で丸める。"""
+    if ref_end is None:
+        return vk.normalize_loudness(x, rules.target_db, rules.peak_db)
+    _, gain_db = vk.normalize_loudness(x[:ref_end].copy(), rules.target_db, rules.peak_db)
+    y = x * 10 ** (gain_db / 20)
+    ceil = 10 ** (rules.peak_db / 20)
+    if np.abs(y).max() > ceil:
+        knee = ceil * 0.7
+        a = np.abs(y)
+        over = a > knee
+        y[over] = np.sign(y[over]) * (knee + (ceil - knee) * np.tanh((a[over] - knee) / (ceil - knee)))
+    return y, gain_db
 
 
 def render_clip(engine: vk.Engine, qr: vk.QueryResult, plan: VersePlan, style_id: int,
@@ -284,20 +333,46 @@ def render_clip(engine: vk.Engine, qr: vk.QueryResult, plan: VersePlan, style_id
     x = vk._wav_to_float(engine.synth.synthesis(q, style_id, enable_interrogative_upspeak=False))
     err = len(x) - tl.total * vk.SAMPLE_RATE
     assert abs(err) <= vk.SAMPLES_PER_FRAME, f"timeline と実際の長さが合わない: {err} サンプル"
+    sr = vk.SAMPLE_RATE
+    ref_end = None
+    info: dict = {}
     if plan.kind == "shimo":
-        v0 = int(round(tl.vowel_starts[-1] * vk.SAMPLE_RATE))
-        v1 = int(round(tl.ends[-1] * vk.SAMPLE_RATE))
-        vk._fade_out(x, v0 + int(rules.yoin_fade_delay_s * vk.SAMPLE_RATE), v1)
-        n = v0 + int(round(rules.yoin_total_s * vk.SAMPLE_RATE))
+        v0 = int(round(tl.vowel_starts[-1] * sr))
+        v1 = int(round(tl.ends[-1] * sr))
+        n = v0 + int(round(rules.yoin_total_s * sr))
+        if rules.yoin_mode == "voicevox":
+            vk._fade_out(x, v0 + int(rules.yoin_fade_delay_s * sr), v1)
+        elif rules.yoin_mode == "short":
+            ref_end = v1
+        elif rules.yoin_mode == "world":
+            lvl = {"L": rules.level_L, "M": rules.level_M, "H": rules.level_H}[plan.levels[-1]]
+            y, n_valid, sinfo = yoin.sustain_vowel(
+                x, tl.vowel_starts[-1], tl.ends[-1], lvl, rules.yoin_sound_s,
+                drift_ln=rules.yoin_drift_ln, vibrato_cents=rules.yoin_vibrato_cents,
+                vibrato_hz=rules.yoin_vibrato_hz, jitter_cents=rules.yoin_jitter_cents,
+                tremolo_db=rules.yoin_tremolo_db, ap_floor=rules.yoin_ap_floor)
+            ref_end = v1
+            splice_end = n_valid
+            end_i = v0 + int(round(rules.yoin_sound_s * sr))
+            y = y[:end_i] if len(y) >= end_i else np.pad(y, (0, end_i - len(y)))
+            # 持続音（切り替えの後）にだけ減衰をかける
+            env = yoin.decay_envelope(len(y) - v0, 0.0, rules.yoin_flat_s, rules.yoin_decay_db,
+                                      rules.yoin_sound_s, rules.yoin_taper_s)
+            assert splice_end - v0 < rules.yoin_flat_s * sr, "切り替えが減衰の開始より後"
+            y[v0:] *= env
+            x = y
+            info = dict(sinfo, v0_s=v0 / sr, splice_end_s=splice_end / sr, sound_s=rules.yoin_sound_s)
+        else:
+            raise ValueError(rules.yoin_mode)
         x = x[:n] if len(x) >= n else np.pad(x, (0, n - len(x)))
         verse_s = tl.vowel_starts[-1] - tl.starts[0]
-        yoin_s = len(x) / vk.SAMPLE_RATE - tl.vowel_starts[-1]
+        yoin_s = len(x) / sr - tl.vowel_starts[-1]
     else:
         verse_s = tl.ends[-1] - tl.starts[0]
         yoin_s = 0.0
-    y, gain = vk.normalize_loudness(x, rules.target_db, rules.peak_db)
+    y, gain = _normalize(x, rules, ref_end)
     return Clip(y, q, plan, qr, vk._kana_times(qr, tl, 0.0), verse_s, yoin_s, gain,
-                list(zip(tl.starts, tl.vowel_starts, tl.ends)))
+                list(zip(tl.starts, tl.vowel_starts, tl.ends)), info)
 
 
 # ---------------------------------------------------------------- 検査
@@ -342,7 +417,7 @@ def check_plan_vs_query(clip: Clip, default_q: AudioQuery, rules: KarutaRules) -
         assert cum[i] == mk.k, f"印 {mk.k} がモーラ境界でない"
         expected[i] = mk.length
     if plan.kind == "shimo":
-        expected[len(moras) - 1] = rules.yoin_hold_s * rules.speed_scale
+        expected[len(moras) - 1] = yoin_last_mora_q(rules)
     for i, (m, d) in enumerate(zip(moras, dmoras)):
         if i in expected:
             assert abs(m.vowel_length - expected[i]) < 1e-9, f"モーラ {i} の長さ {m.vowel_length}"
@@ -369,6 +444,58 @@ def check_plan_vs_query(clip: Clip, default_q: AudioQuery, rules: KarutaRules) -
     pcm = np.round(clip.samples * 32767)
     assert np.abs(clip.samples).max() < 10 ** (rules.peak_db / 20) + 1e-6, "ピークが -1 dBFS を超えた"
     assert (np.abs(pcm) >= 32767).sum() == 0, "クリッピング"
+
+
+def check_yoin(clip: Clip, rules: KarutaRules) -> dict:
+    """下の句の余韻を独立に検査する（"world" / "short" のとき）。測った値を返す。"""
+    if clip.plan.kind != "shimo" or rules.yoin_mode == "voicevox":
+        return {}
+    sr = vk.SAMPLE_RATE
+    x = clip.samples
+    v0 = clip.spans[-1][1]
+    i0 = int(round(v0 * sr))
+    assert len(x) == i0 + int(round(rules.yoin_total_s * sr)), "余韻を含む長さが最後の母音の開始 + 3.0 秒でない"
+    assert x[-1] == 0.0 and abs(x[i0:]).max() > 0
+    out: dict = {}
+    # 20 ms ごとの RMS（dB）
+    n = int(0.02 * sr)
+    seg = x[i0:]
+    nf = len(seg) // n
+    e = 10 * np.log10((seg[:nf * n].reshape(nf, n) ** 2).mean(1) + 1e-12)
+    if rules.yoin_mode == "short":
+        k = int(np.argmax(e))
+        assert (np.diff(e[k:][e[k:] > -100]) <= 6).all(), "短い余韻の減衰が単調でない"
+        return out
+    # --- world: 持続音
+    f0 = clip.yoin_info["f0"]       # 持続音の実際の基本周波数（クエリの高さから 数 % ずれる）
+    t_end = rules.yoin_sound_s
+    # 1) 音の終わり以降は完全な無音
+    assert np.abs(seg[int(round((t_end + 0.005) * sr)):]).max() == 0.0, "音の終わりのあとが無音でない"
+    # 2) 平らな区間のレベルが揺れない（0.15〜flat 秒の 20 ms RMS の幅）
+    a, b = int(0.15 / 0.02), int(rules.yoin_flat_s / 0.02)
+    out["flat_range_db"] = float(e[a:b].max() - e[a:b].min())
+    assert out["flat_range_db"] <= 3.0, f"持続音のレベルが揺れている: {out['flat_range_db']:.1f} dB"
+    # 3) 減衰は単調（20 ms ごとに +1.5 dB を超えて戻らない）で、最後まで落ちる
+    d = np.diff(e[b:int(t_end / 0.02)])
+    out["max_rise_db"] = float(d.max())
+    assert d.max() <= 1.5, f"減衰の途中で音が戻る: +{d.max():.1f} dB"
+    assert e[int((t_end - 0.1) / 0.02)] <= e[a:b].mean() - rules.yoin_decay_db * 0.8, "減衰が足りない"
+    # 4) 持続音は周期的（HNR が元の母音の範囲）
+    seg_h = seg[int(0.25 * sr):int(0.5 * sr)]
+    out["hnr_db"] = yoin.hnr_db(seg_h, f0)
+    assert 12.0 <= out["hnr_db"] <= 35.0, f"持続音の HNR が範囲外: {out['hnr_db']:.1f}"
+    # 5) 切り替えの前後でつながっている: 切り替えの ±10 ms の 1 サンプル差分の最大が、母音の中の差分を超えない
+    sp = int(round(clip.yoin_info["splice_end_s"] * sr))
+    near = np.abs(np.diff(x[sp - 240:sp + 240])).max()
+    body = np.abs(np.diff(x[i0 + int(0.02 * sr):sp - 240])).max()
+    out["splice_step_ratio"] = float(near / body)
+    assert near <= 1.5 * body, f"切り替えで段差: {near:.4f} vs {body:.4f}"
+    # 6) 切り替えの前後 20 ms の RMS の差
+    pre = 10 * np.log10((x[sp - 960:sp - 480] ** 2).mean() + 1e-12)
+    post = 10 * np.log10((x[sp + 480:sp + 960] ** 2).mean() + 1e-12)
+    out["splice_level_step_db"] = float(post - pre)
+    assert abs(post - pre) <= 2.5, f"切り替えでレベルが飛ぶ: {post - pre:.1f} dB"
+    return out
 
 
 def unit_starts(qr: vk.QueryResult, ms: list[int]) -> list[int]:

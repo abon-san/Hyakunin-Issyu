@@ -16,10 +16,13 @@
     --poems 1,2,17    指定した歌だけ生成（既定は全部。序歌は常に含める。--no-joka で除く）
     --no-alt          別読みを作らない
     --codec vorbis|opus   --quality Q（vorbis の既定 3）
+    --yoin-mode world|short|voicevox   下の句の余韻の作り方（既定 world。voicevox は v1 の再現）
+    --version-label v2    timings.json の version（既定: voicevox なら v1、それ以外は v2）
 """
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import subprocess
 import sys
@@ -143,6 +146,8 @@ def build_trials(clips: dict, poems, rules: kr.KarutaRules, trial_dir: Path) -> 
         x = np.concatenate([X(f"{n:03d}_kami"), gap, X(f"{n:03d}_shimo")])
         save(f"{n:02d}_{first_ku(poems[n]['kamiYomi'])}.wav", x)
     for n in TRIAL_ALT:
+        if f"{n:03d}_kami_alt" not in clips and f"{n:03d}_shimo_alt" not in clips:
+            continue
         name = first_ku(poems[n]["kamiYomi"])
         for label, alt in (("いう" if n != 76 else "まがう", False), ("ゆう" if n != 76 else "まごう", True)):
             parts = {}
@@ -150,8 +155,9 @@ def build_trials(clips: dict, poems, rules: kr.KarutaRules, trial_dir: Path) -> 
                 alt_key = f"{n:03d}_{part}_alt"
                 parts[part] = X(alt_key if alt and alt_key in clips else f"{n:03d}_{part}")
             save(f"{n:02d}_{name}_{label}.wav", np.concatenate([parts["kami"], gap, parts["shimo"]]))
-    flow = np.concatenate([joka, X("001_kami"), silence(3.0), X("001_shimo"), ma, X("002_kami")])
-    save("00_競技の流れ.wav", flow)
+    if "002_kami" in clips:
+        flow = np.concatenate([joka, X("001_kami"), silence(3.0), X("001_shimo"), ma, X("002_kami")])
+        save("00_競技の流れ.wav", flow)
     return written
 
 
@@ -168,11 +174,14 @@ def main():
     ap.add_argument("--no-ogg", action="store_true")
     ap.add_argument("--codec", choices=["vorbis", "opus"], default="vorbis")
     ap.add_argument("--quality", type=float, default=3)
+    ap.add_argument("--yoin-mode", choices=["world", "short", "voicevox"], default="world")
+    ap.add_argument("--version-label")
     ap.add_argument("--character", default="冥鳴ひまり")
     ap.add_argument("--style", default="ノーマル")
     args = ap.parse_args()
     t0 = time.time()
-    rules = kr.PACE_REF
+    rules = dataclasses.replace(kr.PACE_REF, yoin_mode=args.yoin_mode)
+    version = args.version_label or ("v1" if args.yoin_mode == "voicevox" else "v2")
     poems, nobashi = kr.load_poems(), kr.load_nobashi()
     only = [int(x) for x in args.poems.split(",")] if args.poems else list(range(1, 101))
     jobs = build_jobs(poems, nobashi, only, not args.no_joka, not args.no_alt)
@@ -192,6 +201,7 @@ def main():
     report: list[str] = []
     fallbacks, anomalies, others = [], [], []
     qcache: dict[tuple, vk.QueryResult] = {}
+    yoin_checks: dict[str, dict] = {}
     for jb in jobs:
         key = (jb.kanji, jb.reading)
         if key not in qcache:
@@ -200,6 +210,9 @@ def main():
         plan = kr.plan_verse(qr, jb.part, jb.reading, jb.marks, jb.oyama, rules)
         clip = kr.render_clip(eng, qr, plan, st.id, rules)
         kr.check_plan_vs_query(clip, qr.query, rules)
+        yoin_chk = kr.check_yoin(clip, rules)
+        if yoin_chk:
+            yoin_checks[jb.stem] = yoin_chk
         clips[jb.stem] = clip
         wav = wav_dir / f"{jb.stem}.wav"
         vk.save_wav(wav, clip.samples)
@@ -240,7 +253,7 @@ def main():
              "shimoAll": stat(lambda e: e["part"] == "shimo" and not e["alt"])}
     total_bytes = sum(e.get("bytes", 0) for e in entries)
     main_bytes = sum(e.get("bytes", 0) for e in entries if not e["alt"])
-    timings = {"version": "v1", "voice": {"character": st.character, "style": st.style, "id": st.id},
+    timings = {"version": version, "voice": {"character": st.character, "style": st.style, "id": st.id},
                "codec": ("vorbis q%g" % args.quality if args.codec == "vorbis" else "opus 32k") + ", mono, 24 kHz",
                "rules": {k: getattr(rules, k) for k in rules.__dataclass_fields__},
                "stats": stats, "totalOggBytes": total_bytes, "mainOggBytes": main_bytes, "clips": entries}
@@ -255,6 +268,11 @@ def main():
     rep += [f"{s} k={m.k} 『{m.ch}』 モーラ#{m.mora} 句{m.ku + 1} {m.note}" for s, m in others]
     rep += ["", "# 注意点"] + [f"{s}: {a}" for s, a in anomalies]
     rep += ["", "# 統計", json.dumps(stats, ensure_ascii=False, indent=1)]
+    if yoin_checks:
+        rep += ["", f"# 余韻の検査（yoin_mode={rules.yoin_mode}）: 測った値"]
+        for key in sorted({k for v in yoin_checks.values() for k in v}):
+            vals = np.array([v[key] for v in yoin_checks.values() if key in v])
+            rep.append(f"{key}: n={len(vals)} min={vals.min():.3f} mean={vals.mean():.3f} max={vals.max():.3f}")
     (args.out / "report.txt").write_text("\n".join(rep), "utf-8")
     print("\n".join(rep))
 
