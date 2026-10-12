@@ -35,6 +35,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -247,6 +248,9 @@ class HyakuninAppTest {
         val player = players.players.single()
         // 音声で読むときは、最初の音が遅れないよう先に用意しておく
         assertTrue(player.warmedUp)
+        // 札を覚える時間の間に、最初に鳴る序歌の上の句を予告する（再生側が先に読み込む）
+        composeRule.advanceMainLooper(100L)
+        assertEquals("voice/joka_kami.ogg", player.nexts.last()?.asset)
 
         // 札を覚える時間を飛ばすと、序歌の上の句が鳴る
         composeRule.onNodeWithText("すぐ読む").performClick()
@@ -275,6 +279,41 @@ class HyakuninAppTest {
         composeRule.onNodeWithText("やめる").performClick()
         composeRule.waitForIdle()
         assertTrue(player.released)
+    }
+
+    @Test
+    fun eachMatchHasOneVoicePlayerAndAnOldOneIsNotLeftPlaying() {
+        showApp(voiceBanks = VoiceBankSource.ready(fakeVoiceBank(poems = Poems.all)))
+        composeRule.onNodeWithText("競技モード").performClick()
+        composeRule.onNodeWithText("対戦開始").performClick()
+        composeRule.onNodeWithText("すぐ読む").performClick()
+        // 刻みごとに画面を描き直しても（一時停止・再開をはさんでも）、再生器は作り直さない
+        composeRule.advanceMainLooper(3_000L)
+        composeRule.onNodeWithContentDescription("一時停止").performClick()
+        composeRule.onNodeWithText("再開").performClick()
+        val first = players.players.single()
+        val updatesBefore = first.updates.size
+        composeRule.advanceMainLooper(3_000L)
+        assertSame(first, players.players.single())
+        assertSame(first, composeRule.activity.activeVoicePlayer())
+        assertFalse(first.released)
+        assertTrue("${first.updates.size} > $updatesBefore", first.updates.size > updatesBefore)
+
+        // 対戦をやめて新しい対戦を始めると、前の再生器は手放し、新しい再生器だけが鳴らす
+        pressBack()
+        composeRule.onNodeWithText("やめる").performClick()
+        composeRule.waitForIdle()
+        assertTrue(first.released)
+        composeRule.onNodeWithText("対戦開始").performClick()
+        composeRule.onNodeWithText("すぐ読む").performClick()
+        composeRule.advanceMainLooper(1_000L)
+        assertEquals(2, players.players.size)
+        val second = players.players.last()
+        assertSame(second, composeRule.activity.activeVoicePlayer())
+        assertFalse(second.released)
+        val updatesOfFirst = first.updates.size
+        composeRule.advanceMainLooper(1_000L)
+        assertEquals("手放した再生器には何も渡さない", updatesOfFirst, first.updates.size)
     }
 
     @Test

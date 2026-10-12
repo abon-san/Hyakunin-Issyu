@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.abonsan.hyakunin"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.4.0"
+        versionCode = 8
+        versionName = "0.4.1"
     }
 
     buildTypes {
@@ -28,6 +28,8 @@ android {
 
     buildFeatures {
         compose = true
+        // 読み上げ音声の診断をデバッグ版だけ logcat に出す（BuildConfig.DEBUG）
+        buildConfig = true
     }
 
     testOptions {

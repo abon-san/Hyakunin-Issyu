@@ -8,8 +8,10 @@ import androidx.compose.ui.test.performClick
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import io.github.abonsan.hyakunin.audio.VoicePlayer
 import io.github.abonsan.hyakunin.game.MatchPhase
 import io.github.abonsan.hyakunin.game.MatchViewModel
+import io.github.abonsan.hyakunin.ui.match.VoicePlayerHolder
 import org.junit.Assert.assertEquals
 import org.robolectric.Shadows.shadowOf
 import java.time.Duration
@@ -19,6 +21,13 @@ internal fun ComponentActivity.activeMatchViewModel(): MatchViewModel? {
     val owner = ViewModelProvider(this)[MatchStoreHolder::class.java].activeOwner() ?: return null
     val factory = viewModelFactory { initializer<MatchViewModel> { error("対戦の ViewModel がまだ作られていない") } }
     return ViewModelProvider.create(owner, factory)[MatchViewModel::class]
+}
+
+/** 表示中の対戦の読み上げ音声の再生器（対戦の ViewModelStore にあるもの）。対戦していなければ null。 */
+internal fun ComponentActivity.activeVoicePlayer(): VoicePlayer? {
+    val owner = ViewModelProvider(this)[MatchStoreHolder::class.java].activeOwner() ?: return null
+    val factory = viewModelFactory { initializer<VoicePlayerHolder> { error("再生器がまだ作られていない") } }
+    return ViewModelProvider.create(owner, factory)[VoicePlayerHolder::class].player
 }
 
 /** メインスレッドの仮想時間を進める（対戦の ViewModel の刻みが動く）。 */

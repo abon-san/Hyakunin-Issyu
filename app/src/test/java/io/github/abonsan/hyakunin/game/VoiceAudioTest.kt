@@ -127,6 +127,49 @@ class VoiceAudioTest {
         assertEquals(2.0f, shimo.playbackSpeed)
     }
 
+    // ---- 次に鳴るクリップの予告（先に読み込む） ----
+
+    private fun MatchEngine.nextAt(t: Long): String? {
+        advanceTo(t)
+        return state.nextAudio?.asset
+    }
+
+    @Test
+    fun theNextClipIsAnnouncedAheadThroughTheWholeSequence() {
+        val e = voiceEngine()
+        val t0 = memorize
+        // 待ちの間に、待ちが終わって最初に鳴る序歌の上の句
+        assertEquals("voice/joka_kami.ogg", e.state.nextAudio!!.asset)
+        assertEquals(1.0f, e.state.nextAudio!!.playbackSpeed)
+        assertEquals("voice/joka_shimo.ogg", e.nextAt(t0))
+        // 下の句の 1 回目の間は 2 回目（同じファイル）、2 回目の間は札の上の句
+        assertEquals("voice/joka_shimo.ogg", e.nextAt(t0 + 2_400))
+        assertEquals("voice/p001_kami.ogg", e.nextAt(t0 + 6_800))
+        // 間合い（上の句を予告中）は下の句、上の句の間も下の句
+        assertEquals("voice/p001_shimo.ogg", e.nextAt(t0 + 11_200))
+        assertEquals("voice/p001_shimo.ogg", e.nextAt(firstRead + 100))
+        // 下の句の間は、次の読みの前置き（この歌の下の句）
+        assertEquals("voice/p001_shimo.ogg", e.nextAt(firstRead + 4_100))
+        e.tapCard(Side.PLAYER, 1)
+        e.next()
+        assertEquals(MatchPhase.Waiting, e.state.phase)
+        assertEquals("voice/p001_shimo.ogg", e.state.nextAudio!!.asset)
+    }
+
+    @Test
+    fun theNextClipFollowsTheReadingStyleSpeedAndTheLastRead() {
+        val simple = voiceEngine(readingStyle = ReadingStyle.SIMPLE, timing = voiceTiming(playbackSpeed = 1.2f))
+        assertEquals(NextAudio("voice/p001_kami.ogg", 1.2f), simple.state.nextAudio)
+        simple.startReading()
+        assertEquals("voice/p002_kami.ogg", simple.nextAt(simple.nowMillis + 3_000))
+        // 最後の読みの後は何も鳴らない
+        val last = voiceEngine(order = listOf(1))
+        last.beginReadThroughLeadIn()
+        assertNull(last.nextAt(last.nowMillis + 4_100))
+        // 音声を使わないときは予告しない
+        assertNull(layoutEngine(order = listOf(1, 2), timing = voiceTiming(), voiceEnabled = false).state.nextAudio)
+    }
+
     // ---- 札を取ったあと ----
 
     @Test

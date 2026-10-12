@@ -106,7 +106,8 @@ data class LeadInState(
 )
 
 /**
- * 今鳴らすべき音声。再生側は [MatchUiState.engineTimeMillis] に合わせて再生位置を追従させる。
+ * 今鳴らすべき音声。再生側は始まりの時刻（[startedAtMillis]）に鳴らし始める。鳴っている間はエンジンの時計の方が
+ * 聞こえている位置に合わせて進む（[AudioClock]）ので、再生側は鳴っている最中に位置を直さない。
  *
  * - [cueId] が前回と同じなら「同じクリップが鳴り続けている」、違えば「新しいクリップ」。
  *   同じファイルを続けて読む（序歌の下の句の2回目など）ときも別の [cueId] になる。単調に増える
@@ -128,7 +129,21 @@ data class AudioCue(
 
     /** [engineTimeMillis] までにクリップの先頭が鳴っているべきか。 */
     fun hasStartedAt(engineTimeMillis: Long): Boolean = engineTimeMillis >= startedAtMillis
+
+    /** クリップ内の位置 [positionMillis] が鳴る（鳴った）エンジンの時刻。[positionAt] の逆。 */
+    fun engineTimeAt(positionMillis: Long): Long = startedAtMillis + (positionMillis / playbackSpeed.toDouble()).roundToLong()
 }
+
+/**
+ * 次に鳴る見込みのクリップ（[MatchUiState.nextAudio]）。再生側が先に読み込んでおき、その cue が来たらすぐ鳴らす。
+ * [AudioCue] と違い、いつ鳴るか（「読み始める」を押したときなど）・どの cue になるかはまだ決まっていない。
+ */
+data class NextAudio(
+    /** [io.github.abonsan.hyakunin.game.voice.VoiceClip.asset]。 */
+    val asset: String,
+    /** 再生速度の倍率（[AudioCue.playbackSpeed] と同じ）。読み込む前に合わせておく。 */
+    val playbackSpeed: Float,
+)
 
 sealed interface MatchPhase {
     /**
@@ -185,10 +200,15 @@ data class MatchUiState(
      */
     val audio: AudioCue? = null,
     /**
-     * エンジンの時計（ms）。試合の始まりを 0 とし、一時停止中は進まない。再生側が
-     * `audio.positionAt(engineTimeMillis)` で再生位置のずれを直す。
+     * エンジンの時計（ms）。試合の始まりを 0 とし、一時停止中は進まない。音声が鳴っている間は、聞こえている位置に合わせて進む
+     * （[AudioClock]）。再生側は `audio.positionAt(engineTimeMillis)` を、鳴らし始め・再開の位置に使う。
      */
     val engineTimeMillis: Long = 0L,
+    /**
+     * [audio] の次に鳴る見込みのクリップ（[audio] が null なら、次に最初に鳴るもの）。再生側が先に読み込んでおく。
+     * 鳴らすかどうか・いつ鳴らすかは [audio] で決まり、これは読み込みの予告だけ。予告がなければ null。
+     */
+    val nextAudio: NextAudio? = null,
 )
 
 interface MatchActions {
