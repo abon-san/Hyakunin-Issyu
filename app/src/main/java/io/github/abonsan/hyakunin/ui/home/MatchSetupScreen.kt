@@ -1,8 +1,6 @@
 package io.github.abonsan.hyakunin.ui.home
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -19,29 +17,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import io.github.abonsan.hyakunin.R
 import io.github.abonsan.hyakunin.game.CpuLevel
@@ -62,14 +51,12 @@ import io.github.abonsan.hyakunin.ui.components.SelectedDescription
 import io.github.abonsan.hyakunin.ui.components.SettingBlock
 import io.github.abonsan.hyakunin.ui.components.SettingSpacing
 import io.github.abonsan.hyakunin.ui.components.SettingsCard
+import io.github.abonsan.hyakunin.ui.components.WafuSlider
 import io.github.abonsan.hyakunin.ui.components.fadingBottomEdge
 import io.github.abonsan.hyakunin.ui.components.isWideLayout
-import io.github.abonsan.hyakunin.ui.theme.Gofun
-import io.github.abonsan.hyakunin.ui.theme.Shu
 import io.github.abonsan.hyakunin.ui.theme.Sumi
 import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
 import io.github.abonsan.hyakunin.ui.theme.Washi
-import io.github.abonsan.hyakunin.ui.theme.WashiDeep
 import io.github.abonsan.hyakunin.ui.theme.noLineBreak
 import kotlin.math.roundToInt
 
@@ -431,7 +418,6 @@ private fun <T> ChoiceSetting(
 /** 選べない設定の見出しの濃さ。 */
 private const val DISABLED_ALPHA = 0.5f
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EmptyCardSetting(count: Int, onCountChange: (Int) -> Unit, spacing: SettingSpacing) {
     SettingBlock(spacing = spacing) {
@@ -459,7 +445,7 @@ private fun EmptyCardSetting(count: Int, onCountChange: (Int) -> Unit, spacing: 
                 onClick = { onCountChange(count - 1) },
                 enabled = count > 0,
             )
-            Slider(
+            WafuSlider(
                 value = count.toFloat(),
                 onValueChange = { onCountChange(it.roundToInt()) },
                 modifier = Modifier
@@ -467,8 +453,6 @@ private fun EmptyCardSetting(count: Int, onCountChange: (Int) -> Unit, spacing: 
                     .padding(horizontal = 6.dp)
                     .semantics { contentDescription = "空札の枚数" },
                 valueRange = 0f..GameConfig.MAX_EMPTY_CARDS.toFloat(),
-                thumb = { SliderKnob() },
-                track = { SliderLine(it) },
             )
             RoundIconButton(
                 icon = R.drawable.ic_plus,
@@ -493,39 +477,4 @@ internal fun readCountText(emptyCards: Int, short: Boolean): String {
     val fieldCards = GameConfig.CARDS_PER_SIDE * 2
     val total = "読まれる札は全 ${fieldCards + emptyCards} 首"
     return if (short) total else total + noLineBreak("（場の札 $fieldCards 枚と空札 $emptyCards 枚）")
-}
-
-/** スライダーのつまみ。朱の珠に胡粉の縁。 */
-@Composable
-private fun SliderKnob() {
-    Box(
-        Modifier
-            .size(26.dp)
-            .shadow(2.dp, CircleShape)
-            .background(Shu, CircleShape)
-            .border(2.5.dp, Gofun, CircleShape),
-    )
-}
-
-/** スライダーの溝。細い線で、選んだところまでを朱にする。 */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SliderLine(state: SliderState) {
-    val range = state.valueRange
-    val span = range.endInclusive - range.start
-    val fraction = if (span > 0f) ((state.value - range.start) / span).coerceIn(0f, 1f) else 0f
-    Canvas(
-        Modifier
-            .fillMaxWidth()
-            .height(6.dp),
-    ) {
-        val y = size.height / 2
-        val stroke = 4.dp.toPx()
-        val rtl = layoutDirection == LayoutDirection.Rtl
-        val startX = if (rtl) size.width else 0f
-        val endX = if (rtl) 0f else size.width
-        val activeX = startX + (endX - startX) * fraction
-        drawLine(WashiDeep, Offset(startX, y), Offset(endX, y), stroke, StrokeCap.Round)
-        drawLine(Shu, Offset(startX, y), Offset(activeX, y), stroke, StrokeCap.Round)
-    }
 }

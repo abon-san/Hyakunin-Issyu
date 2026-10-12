@@ -27,11 +27,18 @@ data class AppSettings(
     val verseStyle: VerseStyle = VerseStyle.KANA,
     /** 読み上げ音声を鳴らすか。対戦開始時に [GameConfig.voiceEnabled] へ渡す。 */
     val voiceEnabled: Boolean = true,
-)
+    /** 読み上げ音声の音量（0〜1）。対戦開始時に [GameConfig.voiceVolume] へ渡す。設定の画面の「試聴」もこの音量で鳴らす。 */
+    val voiceVolume: Float = 1f,
+) {
+    init {
+        require(voiceVolume in 0f..1f) { "voiceVolume=$voiceVolume" }
+    }
+}
 
 /**
  * [AppSettings] を SharedPreferences に保存・復元する。読めない値は既定値に戻す。
- * まだ保存していない項目（以前の版から更新した場合の句の表示・読み上げ音声など）も既定値にする。
+ * まだ保存していない項目（以前の版から更新した場合の句の表示・読み上げ音声・音量など）も既定値にする。
+ * 音量は、範囲の外の値なら 0〜1 に収める（数でない値・無限大は読めない値として既定値にする）。
  */
 class AppSettingsStore(private val prefs: SharedPreferences) {
 
@@ -48,6 +55,11 @@ class AppSettingsStore(private val prefs: SharedPreferences) {
             verseStyle = VerseStyle.entries.firstOrNull { it.name == verseStyle } ?: default.verseStyle,
             voiceEnabled = runCatching { prefs.getBoolean(KEY_VOICE_ENABLED, default.voiceEnabled) }
                 .getOrDefault(default.voiceEnabled),
+            voiceVolume = runCatching { prefs.getFloat(KEY_VOICE_VOLUME, default.voiceVolume) }
+                .getOrNull()
+                ?.takeIf { it.isFinite() }
+                ?.coerceIn(0f, 1f)
+                ?: default.voiceVolume,
         )
     }
 
@@ -57,6 +69,7 @@ class AppSettingsStore(private val prefs: SharedPreferences) {
             putBoolean(KEY_FLIP_OPPONENT, settings.flipOpponentCards)
             putString(KEY_VERSE_STYLE, settings.verseStyle.name)
             putBoolean(KEY_VOICE_ENABLED, settings.voiceEnabled)
+            putFloat(KEY_VOICE_VOLUME, settings.voiceVolume)
         }
     }
 
@@ -69,5 +82,7 @@ class AppSettingsStore(private val prefs: SharedPreferences) {
         const val KEY_VERSE_STYLE = "verse_style"
 
         const val KEY_VOICE_ENABLED = "voice_enabled"
+
+        const val KEY_VOICE_VOLUME = "voice_volume"
     }
 }

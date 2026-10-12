@@ -35,8 +35,10 @@ class GameConfigSaverTest {
                 readInterval = ReadInterval.SEC_10,
                 readingStyle = ReadingStyle.SIMPLE,
                 voiceEnabled = false,
+                voiceVolume = 0.45f,
             ),
             GameConfig(readingStyle = ReadingStyle.SIMPLE),
+            GameConfig(voiceVolume = 0f),
             GameConfig(ruleMode = RuleMode.SIMPLE, readingStyle = ReadingStyle.COMPETITIVE, voiceEnabled = false),
         )
         for (config in configs) {
@@ -67,5 +69,12 @@ class GameConfigSaverTest {
             GameConfigSaver.restore(old),
         )
         assertEquals(ReadingStyle.COMPETITIVE, GameConfigSaver.restore(listOf("COMPETITIVE") + old.drop(1))!!.readingStyle)
+    }
+
+    @Test
+    fun stateSavedBeforeTheVolumeGetsFullVolume() {
+        // 音量を足す前の版で保存した状態（11 項目）
+        val old = listOf("COMPETITIVE", 10, "INTERMEDIATE", "NORMAL", true, "KANA", "AUTO", "SEC_30", "SEC_4", "COMPETITIVE", false)
+        assertEquals(GameConfig(voiceEnabled = false, voiceVolume = 1f), GameConfigSaver.restore(old))
     }
 }

@@ -18,28 +18,41 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.hideFromAccessibility
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import io.github.abonsan.hyakunin.R
 import io.github.abonsan.hyakunin.game.VerseStyle
+import io.github.abonsan.hyakunin.game.voice.VoiceClip
 import io.github.abonsan.hyakunin.ui.components.ChoiceRow
 import io.github.abonsan.hyakunin.ui.components.PanelDivider
 import io.github.abonsan.hyakunin.ui.components.ScreenHeader
+import io.github.abonsan.hyakunin.ui.components.SecondaryButton
 import io.github.abonsan.hyakunin.ui.components.SectionLabel
 import io.github.abonsan.hyakunin.ui.components.SelectedDescription
 import io.github.abonsan.hyakunin.ui.components.SettingBlock
 import io.github.abonsan.hyakunin.ui.components.SettingSpacing
 import io.github.abonsan.hyakunin.ui.components.SettingsCard
 import io.github.abonsan.hyakunin.ui.components.SwitchSetting
+import io.github.abonsan.hyakunin.ui.components.WafuSlider
 import io.github.abonsan.hyakunin.ui.components.fadingBottomEdge
 import io.github.abonsan.hyakunin.ui.components.isWideLayout
 import io.github.abonsan.hyakunin.ui.theme.Sumi
 import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
 import io.github.abonsan.hyakunin.ui.theme.Washi
 import io.github.abonsan.hyakunin.ui.theme.noLineBreak
+import kotlin.math.roundToInt
 
 /** 縦に積むときの設定の板の幅の上限。 */
 private val NarrowCardMaxWidth = 560.dp
@@ -48,9 +61,11 @@ private val NarrowCardMaxWidth = 560.dp
 private val WideCardsMaxWidth = 960.dp
 
 /**
- * 設定の画面。画面の向きの板、対戦の板（句の表示・敵陣の札の向き・読み上げ音声）、クレジットの板を、
+ * 設定の画面。画面の向きの板、対戦の板（句の表示・敵陣の札の向き・読み上げ音声とその音量）、クレジットの板を、
  * 縦長の画面では縦に積み、横に広い画面では左右の列に分けて上下に詰める。
  * 変えた設定は [onSettingsChange] ですぐに渡す。
+ *
+ * @param previewClip 音量の「試聴」で鳴らすクリップ（序歌の上の句）。読み込み中・音声がないときは null で、「試聴」を押せない
  */
 @Composable
 fun SettingsScreen(
@@ -58,6 +73,7 @@ fun SettingsScreen(
     onSettingsChange: (AppSettings) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    previewClip: VoiceClip? = null,
 ) {
     BoxWithConstraints(
         modifier
@@ -83,7 +99,7 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 if (wide) {
-                    // 左に画面の向きとクレジット、右に対戦の設定（高さがほぼそろう）
+                    // 左に画面の向きとクレジット、右に対戦の設定（読み上げ音声の音量まで。右の方が少し高い）
                     Row(
                         Modifier
                             .widthIn(max = WideCardsMaxWidth)
@@ -94,7 +110,9 @@ fun SettingsScreen(
                             SettingsCard { OrientationSetting(settings, onSettingsChange, spacing) }
                             SettingsCard { Credits(spacing) }
                         }
-                        SettingsCard(Modifier.weight(1f)) { MatchDisplaySettings(settings, onSettingsChange, spacing) }
+                        SettingsCard(Modifier.weight(1f)) {
+                            MatchDisplaySettings(settings, onSettingsChange, spacing, previewClip)
+                        }
                     }
                 } else {
                     Column(
@@ -104,7 +122,7 @@ fun SettingsScreen(
                     ) {
                         SettingsCard { OrientationSetting(settings, onSettingsChange, spacing) }
                         Spacer(Modifier.height(14.dp))
-                        SettingsCard { MatchDisplaySettings(settings, onSettingsChange, spacing) }
+                        SettingsCard { MatchDisplaySettings(settings, onSettingsChange, spacing, previewClip) }
                         Spacer(Modifier.height(14.dp))
                         SettingsCard { Credits(spacing) }
                     }
@@ -141,12 +159,13 @@ private fun OrientationSetting(
     }
 }
 
-/** 対戦の設定（句の表示・敵陣の札の向き・読み上げ音声）。 */
+/** 対戦の設定（句の表示・敵陣の札の向き・読み上げ音声とその音量）。 */
 @Composable
 private fun MatchDisplaySettings(
     settings: AppSettings,
     onSettingsChange: (AppSettings) -> Unit,
     spacing: SettingSpacing,
+    previewClip: VoiceClip?,
 ) {
     SettingBlock(spacing = spacing) {
         SectionLabel("句の表示")
@@ -176,6 +195,138 @@ private fun MatchDisplaySettings(
         onCheckedChange = { onSettingsChange(settings.copy(voiceEnabled = it)) },
         spacing = spacing,
     )
+    VolumeSetting(
+        volume = settings.voiceVolume,
+        onVolumeChange = { onSettingsChange(settings.copy(voiceVolume = it)) },
+        enabled = settings.voiceEnabled,
+        previewClip = previewClip,
+        spacing = spacing,
+    )
+}
+
+/** 読み上げの音量の見出し（スライダーの読み上げ機能向けの名前にも使う）。 */
+internal const val VOLUME_LABEL = "音量"
+
+/** 「試聴」のボタンの文字。鳴っている間は [PREVIEW_STOP_LABEL]。 */
+internal const val PREVIEW_LABEL = "試聴"
+
+/** 「試聴」で鳴らしている間のボタンの文字。 */
+internal const val PREVIEW_STOP_LABEL = "停止"
+
+/** 音量の刻みの数（5% ずつ）。 */
+private const val VOLUME_STEPS = 20
+
+/** 読み上げ音声を切っているときの、音量の見出しと値の濃さ。 */
+private const val DISABLED_ALPHA = 0.5f
+
+/** 音量の見出し・スライダー・値・「試聴」を1行に並べられる幅。これより狭ければ、見出しと値を上の行に分ける。 */
+private val VolumeOneLineMinWidth = 340.dp
+
+/** 音量 [volume]（0〜1）の表示（例:「80%」）。 */
+internal fun volumeText(volume: Float): String = "${(volume * 100).roundToInt()}%"
+
+/** スライダーの値 [value] を、音量の刻み（5%）にそろえる。 */
+internal fun snapVolume(value: Float): Float =
+    (value * VOLUME_STEPS).roundToInt().coerceIn(0, VOLUME_STEPS) / VOLUME_STEPS.toFloat()
+
+/**
+ * 読み上げ音声の音量（0〜100%、5% 刻み）のスライダーと今の値、その音量で序歌の上の句を鳴らす「試聴」。
+ * 読み上げ音声を切っているときは淡くして動かせなくする（「試聴」は [previewClip] がないときも押せない）。
+ * 「試聴」は、もう一度押すと止まる。鳴っている間にスライダーを動かすと、すぐその音量に変わる。
+ * 見出しと値は読み上げ機能では読まない（スライダーが名前と値を持つ）。
+ */
+@Composable
+private fun VolumeSetting(
+    volume: Float,
+    onVolumeChange: (Float) -> Unit,
+    enabled: Boolean,
+    previewClip: VoiceClip?,
+    spacing: SettingSpacing,
+) {
+    val preview = rememberVoicePreview()
+    val canPreview = enabled && previewClip != null
+    // 読み上げ音声を切った・クリップがなくなったら止める
+    LaunchedEffect(preview, canPreview) {
+        if (!canPreview) preview.stop()
+    }
+    // 鳴っている間にスライダーを動かしたら、すぐその音量にする
+    LaunchedEffect(preview, volume) {
+        preview.setVolume(volume)
+    }
+    val text = volumeText(volume)
+    val dimmed = Modifier
+        .alpha(if (enabled) 1f else DISABLED_ALPHA)
+        .semantics { hideFromAccessibility() }
+    val label = @Composable {
+        Text(VOLUME_LABEL, modifier = dimmed, style = MaterialTheme.typography.titleSmall, color = Sumi)
+    }
+    val value = @Composable {
+        Text(
+            text = text,
+            modifier = dimmed.widthIn(min = 44.dp),
+            style = MaterialTheme.typography.bodyLarge,
+            color = Sumi,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+        )
+    }
+    val slider = @Composable { sliderModifier: Modifier ->
+        WafuSlider(
+            value = volume,
+            onValueChange = { snapVolume(it).let { new -> if (new != volume) onVolumeChange(new) } },
+            modifier = sliderModifier.semantics {
+                contentDescription = VOLUME_LABEL
+                stateDescription = text
+            },
+            enabled = enabled,
+            steps = VOLUME_STEPS - 1,
+        )
+    }
+    val button = @Composable {
+        SecondaryButton(
+            text = if (preview.playing) PREVIEW_STOP_LABEL else PREVIEW_LABEL,
+            onClick = {
+                if (preview.playing) {
+                    preview.stop()
+                } else if (previewClip != null) {
+                    preview.play(previewClip.asset, volume)
+                }
+            },
+            icon = if (preview.playing) R.drawable.ic_stop else R.drawable.ic_play,
+            minHeight = 40.dp,
+            enabled = canPreview,
+        )
+    }
+    BoxWithConstraints(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = spacing.block),
+    ) {
+        if (maxWidth >= VolumeOneLineMinWidth) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                label()
+                Spacer(Modifier.width(12.dp))
+                slider(Modifier.weight(1f))
+                Spacer(Modifier.width(6.dp))
+                value()
+                Spacer(Modifier.width(12.dp))
+                button()
+            }
+        } else {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    label()
+                    Spacer(Modifier.weight(1f))
+                    value()
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    slider(Modifier.weight(1f))
+                    Spacer(Modifier.width(12.dp))
+                    button()
+                }
+            }
+        }
+    }
 }
 
 /** 読み上げ音声の表記（VOICEVOX の利用規約で求められる形）。 */

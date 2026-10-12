@@ -1,6 +1,7 @@
 package io.github.abonsan.hyakunin.game
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -19,6 +20,15 @@ class GameConfigTest {
         for (style in VerseStyle.entries) {
             assertTrue(style.name, style.description.isNotBlank())
         }
+    }
+
+    @Test
+    fun theVoiceVolumeIsFullByDefaultAndStaysInRange() {
+        assertEquals(1f, GameConfig().voiceVolume)
+        assertEquals(0f, GameConfig(voiceVolume = 0f).voiceVolume)
+        assertThrows(IllegalArgumentException::class.java) { GameConfig(voiceVolume = 1.5f) }
+        assertThrows(IllegalArgumentException::class.java) { GameConfig(voiceVolume = -0.1f) }
+        assertThrows(IllegalArgumentException::class.java) { GameConfig(voiceVolume = Float.NaN) }
     }
 
     @Test

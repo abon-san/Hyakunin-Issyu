@@ -1,11 +1,19 @@
 package io.github.abonsan.hyakunin.ui.home
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import io.github.abonsan.hyakunin.BuildConfig
 import io.github.abonsan.hyakunin.game.CpuLevel
 import io.github.abonsan.hyakunin.game.GameConfig
 import io.github.abonsan.hyakunin.game.MemorizeTime
@@ -15,14 +23,22 @@ import io.github.abonsan.hyakunin.game.ReadingSpeed
 import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.VerseStyle
+import io.github.abonsan.hyakunin.game.voice.FAKE_JOKA_KAMI
 import io.github.abonsan.hyakunin.ui.captureScreenshot
 import io.github.abonsan.hyakunin.ui.settings.AppSettings
+import io.github.abonsan.hyakunin.ui.settings.FakeVoicePreviewFactory
+import io.github.abonsan.hyakunin.ui.settings.LocalVoicePreviewFactory
+import io.github.abonsan.hyakunin.ui.settings.PREVIEW_LABEL
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
 import io.github.abonsan.hyakunin.ui.settings.SettingsScreen
 import io.github.abonsan.hyakunin.ui.settings.VOICE_CREDIT
 import io.github.abonsan.hyakunin.ui.settings.VOICE_CREDIT_NOTE
+import io.github.abonsan.hyakunin.ui.settings.VOLUME_LABEL
 import io.github.abonsan.hyakunin.ui.settings.settingsDescription
 import io.github.abonsan.hyakunin.ui.theme.HyakuninTheme
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -40,6 +56,9 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
     private fun capture(screen: String) =
         composeRule.captureScreenshot(if (prefix.isEmpty()) screen else "${prefix}_$screen")
 
+    /** 文字 [text] の欄の、画面での位置。 */
+    private fun boundsOf(text: String): Rect = composeRule.onNodeWithText(text).fetchSemanticsNode().boundsInRoot
+
     @Test
     fun top() {
         composeRule.setContent {
@@ -50,7 +69,20 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
         composeRule.onNodeWithText("設定").assertExists()
         // 読み上げ音声のクレジットを小さく添える
         composeRule.onNodeWithText(VOICE_CREDIT).assertExists()
+        // 版（BuildConfig の versionName）は、クレジットの下の行に小さく添える。ほかの文字やボタンと重ならない
+        assertEquals("Ver. ${BuildConfig.VERSION_NAME}", VERSION_LABEL)
+        composeRule.onNodeWithContentDescription("バージョン ${BuildConfig.VERSION_NAME}").assertExists()
+        val version = boundsOf(VERSION_LABEL)
+        assertTrue("クレジットの下: $version / ${boundsOf(VOICE_CREDIT)}", version.top >= boundsOf(VOICE_CREDIT).bottom)
+        for (other in listOf(VOICE_CREDIT, "設定", "簡易モード", RuleMode.SIMPLE.description, "百人一首")) {
+            assertFalse("$other と重なる: $version / ${boundsOf(other)}", version.overlaps(boundsOf(other)))
+        }
         capture("top")
+        // 低い画面ではスクロールすれば、画面からはみ出さずに見える
+        composeRule.onNodeWithText(VERSION_LABEL).performScrollTo().assertIsDisplayed()
+        val root = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val scrolled = boundsOf(VERSION_LABEL)
+        assertTrue("画面からはみ出す: $scrolled / $root", root.intersect(scrolled) == scrolled)
     }
 
     @Test
@@ -94,12 +126,15 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
     @Test
     fun settings() {
         composeRule.setContent {
-            HyakuninTheme {
-                SettingsScreen(
-                    settings = AppSettings(orientation = ScreenOrientation.AUTO),
-                    onSettingsChange = {},
-                    onBack = {},
-                )
+            CompositionLocalProvider(LocalVoicePreviewFactory provides FakeVoicePreviewFactory()) {
+                HyakuninTheme {
+                    SettingsScreen(
+                        settings = AppSettings(orientation = ScreenOrientation.AUTO),
+                        onSettingsChange = {},
+                        onBack = {},
+                        previewClip = FAKE_JOKA_KAMI,
+                    )
+                }
             }
         }
         composeRule.onNodeWithText(ScreenOrientation.AUTO.description).assertExists()
@@ -107,8 +142,12 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
         composeRule.onNodeWithText("句の表示").assertExists()
         composeRule.onNodeWithText(VerseStyle.KANA.settingsDescription).assertExists()
         composeRule.onNodeWithText(VerseStyle.READING.settingsDescription).assertDoesNotExist()
-        // 読み上げ音声（既定はオン）とクレジット
+        // 読み上げ音声（既定はオン）と、その下の音量（既定は 100%）と「試聴」、クレジット
         composeRule.onNodeWithText("読み上げ音声").assertIsOn()
+        composeRule.onNodeWithContentDescription(VOLUME_LABEL).assertIsEnabled()
+        composeRule.onNodeWithText("100%").assertExists()
+        composeRule.onNodeWithText(PREVIEW_LABEL).assertIsEnabled()
+        assertTrue("音量は読み上げ音声のすぐ下", boundsOf(VOLUME_LABEL).top > boundsOf("読み上げ音声").bottom)
         composeRule.onNodeWithText(VOICE_CREDIT).assertExists()
         composeRule.onNodeWithText(VOICE_CREDIT_NOTE).assertExists()
         capture("settings")

@@ -17,14 +17,14 @@ private const val SETTINGS_PREFS_NAME = "game_config"
  * 対戦設定をルールのモードごとに SharedPreferences に保存・復元する。読めない値は既定値に戻す。
  * そのモードでまだ保存していない項目は、モード共通だった以前の保存値（旧キー）を引き継ぐ。
  * 読み方（[GameConfig.readingStyle]）の既定はモードで違う（[defaultReadingStyle]）。
- * [GameConfig.flipOpponentCards]・[GameConfig.verseStyle]・[GameConfig.voiceEnabled] は画面の設定（AppSettingsStore）で
- * 持つので、ここでは扱わない。
+ * [GameConfig.flipOpponentCards]・[GameConfig.verseStyle]・[GameConfig.voiceEnabled]・[GameConfig.voiceVolume] は
+ * 画面の設定（AppSettingsStore）で持つので、ここでは扱わない。
  */
 class GameConfigStore(private val prefs: SharedPreferences) {
 
     constructor(context: Context) : this(settingsPreferences(context))
 
-    /** [mode] の対戦設定。画面の設定で持つ項目（札の向き・句の表示・読み上げ音声）は既定値のまま返す。 */
+    /** [mode] の対戦設定。画面の設定で持つ項目（札の向き・句の表示・読み上げ音声とその音量）は既定値のまま返す。 */
     fun load(mode: RuleMode): GameConfig {
         val default = GameConfig(ruleMode = mode, readingStyle = mode.defaultReadingStyle)
         val keys = ModeKeys(mode)

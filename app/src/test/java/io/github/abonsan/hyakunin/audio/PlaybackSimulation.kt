@@ -24,7 +24,7 @@ import kotlin.math.roundToLong
 import kotlin.random.Random
 
 // 対戦（MatchViewModel と MatchEngine）と再生側（VoiceCueFollower）を、仮想の時計と ExoPlayer に似せた偽の再生器で
-// 一緒に動かし、再生器への命令（位置の移動・読み込み・停止など）と、聞こえる音と表示のずれを数える。
+// 一緒に動かし、再生器への命令（位置の移動・読み込み・停止・音量など）と、聞こえる音と表示のずれ、聞こえる音量を数える。
 // 端末の遅れやメインスレッドの混み具合を変えて、音が途切れる・揺れる仕組みを再現する。
 
 /**
@@ -71,6 +71,10 @@ internal data class SimTicks(
  * @property fadesWhileSounding 音を出している再生器を小さくしながら止めた回数
  * @property maxDisplayAhead 表示（エンジンの時刻）が、聞こえている音より先に進んでいた量の最大
  * @property maxDisplayBehind 表示が、聞こえている音より遅れていた量の最大
+ * @property volumeCalls 再生器に利用者の音量を渡した回数（すべての再生器の合計）
+ * @property volumeCallsWhileSounding 音を出している再生器があるときに、利用者の音量を渡した回数
+ * @property steadyGainMismatches ふつうに鳴っている（小さくして止めている最中でない）再生器の音量が、利用者の音量と違った刻みの数
+ * @property maxHeardGain 聞こえた音量の最大（小さくして止める最中も含む）。音が出なければ 0
  */
 internal class PlaybackRecord(
     val seeks: Int,
@@ -92,11 +96,16 @@ internal class PlaybackRecord(
     val maxDisplayAhead: Long,
     val maxDisplayBehind: Long,
     val reads: Int,
+    val volumeCalls: Int,
+    val volumeCallsWhileSounding: Int,
+    val steadyGainMismatches: Int,
+    val maxHeardGain: Float,
 ) {
     override fun toString(): String =
         "seeks=$seeks (late=$lateStartSeeks drift=$driftSeeks maxJump=$maxDriftSeekJump) prepares=$prepares cues=$cues " +
             "cuts=$midClipCuts onsetSkips=$onsetSkips (max=$maxOnsetSkip) early=$earlyStarts stops=$stops pauses=$pauses " +
-            "speeds=$speedCalls outputs=$maxOutputs stray=$strayOutputs fades=$fadesWhileSounding displayAhead=$maxDisplayAhead displayBehind=$maxDisplayBehind reads=$reads"
+            "speeds=$speedCalls outputs=$maxOutputs stray=$strayOutputs fades=$fadesWhileSounding displayAhead=$maxDisplayAhead displayBehind=$maxDisplayBehind reads=$reads " +
+            "volumes=$volumeCalls (sounding=$volumeCallsWhileSounding) gainMismatches=$steadyGainMismatches maxGain=$maxHeardGain"
 }
 
 /** 偽の voice バンク（fakeVoiceBank）のクリップの長さ。 */
@@ -113,6 +122,7 @@ private val CLIP_DURATIONS: Map<String, Long> = buildMap {
 /**
  * ExoPlayer に似せた偽の再生器。時刻 [clock] は実時間（ms）。位置を移すと、音が出るまでまた遅れる（AudioTrack の作り直し）。
  * 報告する位置（[positionMillis]）は ExoPlayer と同じく聞こえている位置で、[SimDevice.reportedOffset] だけずらせる。
+ * 聞こえる音量（[heardGain]）は ExoVoicePlayer と同じく、利用者の音量 × 小さくして止めるときの音量（[fadeOutGain]）。
  */
 internal class SimDeck(
     private val clock: () -> Long,
@@ -134,6 +144,12 @@ internal class SimDeck(
     private var presentFrom: Long? = null
     private var speed = 1f
     private var fadeEnd: Long? = null
+    private var fadeStart = 0L
+    private var fadeLength = 0L
+
+    /** 渡された利用者の音量。作ったばかりの再生器は 1。 */
+    var userVolume = 1f
+        private set
 
     private val now: Long get() = clock()
     private val duration: Long get() = asset?.let(CLIP_DURATIONS::getValue) ?: 0L
@@ -171,6 +187,21 @@ internal class SimDeck(
 
     /** 鳴らし終えるまでの残り（クリップの ms）。 */
     val remainingMillis: Long get() = duration - heardMillis
+
+    /** 小さくして止めている最中か。 */
+    val fading: Boolean
+        get() {
+            settleFade()
+            return fadeEnd != null
+        }
+
+    /** いま聞こえている音量（音を出していなければ 0）。 */
+    val heardGain: Float
+        get() {
+            if (!presenting) return 0f
+            val fade = if (fading) fadeOutGain(now - fadeStart, fadeLength) else 1f
+            return userVolume * fade
+        }
 
     private val ended: Boolean get() = !idle && presentFrom != null && heardMillis >= duration
 
@@ -214,9 +245,16 @@ internal class SimDeck(
         this.speed = speed
     }
 
+    override fun setVolume(volume: Float) {
+        commands += "volume"
+        userVolume = volume
+    }
+
     override fun stop(fadeOutMillis: Long) {
         commands += if (presenting && fadeOutMillis > 0L) "stop-fade" else "stop"
         if (isPlaying && fadeOutMillis > 0L) {
+            fadeStart = now
+            fadeLength = fadeOutMillis
             fadeEnd = now + fadeOutMillis
         } else {
             idle = true
@@ -234,7 +272,7 @@ internal class SimDeck(
 
 /**
  * 序歌と [reads] 枚の読み（競技かるた式、偽の音声。CPU は下の句の後に取る）を、[device] の再生器と [ticks] の刻みで鳴らす。
- * 読み終えて音声がなくなったら「次へ」を押す。
+ * 読み終えて音声がなくなったら「次へ」を押す。利用者の音量 [volume] は、対戦の初めに（鳴らす前に）渡す。
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 internal fun simulatePlayback(
@@ -243,6 +281,7 @@ internal fun simulatePlayback(
     speed: Float = 1f,
     seed: Int = 1,
     reads: Int = 3,
+    volume: Float = 1f,
 ): PlaybackRecord {
     val scheduler = TestCoroutineScheduler()
     Dispatchers.setMain(StandardTestDispatcher(scheduler))
@@ -254,6 +293,8 @@ internal fun simulatePlayback(
         val realTime = { scheduler.currentTime + lag + collectorLag }
         val decks = List(2) { SimDeck(realTime, device, random) }
         val follower = VoiceCueFollower(decks, wallClock = realTime)
+        // 対戦を始めるときに音量を渡す（MatchVoicePlayback と同じ）
+        follower.setVolume(volume)
         val order = listOf(1, 6, 2).take(reads)
         val vm = MatchViewModel(
             engineFactory = { layoutEngine(order = order, timing = voiceTiming(playbackSpeed = speed), profile = SLOW_CPU) },
@@ -277,6 +318,9 @@ internal fun simulatePlayback(
         var fadesWhileSounding = 0
         var maxAhead = 0L
         var maxBehind = 0L
+        var volumeCallsWhileSounding = 0
+        var steadyGainMismatches = 0
+        var maxHeardGain = 0f
 
         vm.viewModelScope.launch {
             vm.uiState.collect { state ->
@@ -288,6 +332,13 @@ internal fun simulatePlayback(
                     maxAhead = max(maxAhead, diff.roundToLong())
                     maxBehind = max(maxBehind, (-diff).roundToLong())
                 }
+                // 聞こえている音量: ふつうに鳴っている間は利用者の音量のまま、小さくして止めるときもそれを超えない
+                for (d in decks) {
+                    if (!d.presenting) continue
+                    val gain = d.heardGain
+                    maxHeardGain = max(maxHeardGain, gain)
+                    if (!d.fading && gain != volume) steadyGainMismatches++
+                }
                 collectorLag = if (ticks.collectorDelay.last > 0) random.nextInt(ticks.collectorDelay.first, ticks.collectorDelay.last + 1).toLong() else 0L
                 val before = decks.associateWith { it.commands.size }
                 val heardBefore = decks.associateWith { it.heardMillis }
@@ -296,9 +347,11 @@ internal fun simulatePlayback(
 
                 follower.update(state.audio, state.engineTimeMillis, state.isPaused, state.nextAudio)
 
+                val sounding = presentingBefore.values.any { it }
                 for (d in decks) {
                     val issued = d.commands.drop(before.getValue(d))
                     if (issued.isEmpty()) continue
+                    if (sounding) volumeCallsWhileSounding += issued.count { it == "volume" }
                     val stopped = "stop" in issued || "stop-fade" in issued
                     if (presentingBefore.getValue(d) && remainingBefore.getValue(d) > 200L && ("prepare" in issued || stopped)) {
                         midClipCuts++
@@ -370,6 +423,10 @@ internal fun simulatePlayback(
             maxDisplayAhead = maxAhead,
             maxDisplayBehind = maxBehind,
             reads = done,
+            volumeCalls = commands.count { it == "volume" },
+            volumeCallsWhileSounding = volumeCallsWhileSounding,
+            steadyGainMismatches = steadyGainMismatches,
+            maxHeardGain = maxHeardGain,
         )
     } finally {
         Dispatchers.resetMain()
@@ -414,4 +471,5 @@ internal fun simulateAll(
     scenario: Pair<SimDevice, SimTicks>,
     seeds: IntRange = 1..5,
     speed: Float = 1f,
-): List<PlaybackRecord> = seeds.map { simulatePlayback(scenario.first, scenario.second, speed, seed = it) }
+    volume: Float = 1f,
+): List<PlaybackRecord> = seeds.map { simulatePlayback(scenario.first, scenario.second, speed, seed = it, volume = volume) }

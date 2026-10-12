@@ -19,6 +19,10 @@ private class FakePort(var latencyMillis: Long = 0L, private val readyOnPrepare:
     var offset = 0L
     override var underrunCount = 0
 
+    /** 渡された利用者の音量（作ったばかりの再生器は 1）。 */
+    var volume = 1f
+        private set
+
     /** 止まった（位置が進まなくなった）ときの位置。 */
     private var frozen: Long? = null
     var stuck: Boolean
@@ -62,6 +66,11 @@ private class FakePort(var latencyMillis: Long = 0L, private val readyOnPrepare:
     override fun setSpeed(speed: Float) {
         commands += "speed $speed"
         this.speed = speed
+    }
+
+    override fun setVolume(volume: Float) {
+        commands += "volume $volume"
+        this.volume = volume
     }
 
     override fun stop(fadeOutMillis: Long) {
@@ -327,6 +336,69 @@ class VoiceCueFollowerTest {
                 "maxDrift=${report.maxDriftMillis}ms underruns=2",
             report.toLogLine(),
         )
+    }
+
+    @Test
+    fun theUserVolumeIsGivenToEachPlayerOnceBeforeAnythingPlays() {
+        // 対戦の初めに音量を渡す: どちらの再生器にも1回だけ。読み込み・鳴らし始め・鳴っている間・次のクリップでは渡さない
+        follower.setVolume(0.6f)
+        assertEquals(listOf("volume 0.6"), a.take())
+        assertEquals(listOf("volume 0.6"), b.take())
+        follower.setVolume(0.6f)
+        run(0L, 980L, null, next = next("k.ogg"))
+        assertEquals(listOf("speed 1.0", "prepare k.ogg"), a.take())
+        val kami = cue(1, "k.ogg", start = 1_000L)
+        at(1_000L, kami, next = next("s.ogg"))
+        assertEquals(listOf("play"), a.take())
+        assertEquals(listOf("speed 1.0", "prepare s.ogg"), b.take())
+        run(1_020L, 4_000L, kami, next = next("s.ogg"))
+        assertEquals(emptyList<String>(), a.take() + b.take())
+        val shimo = cue(2, "s.ogg", start = 4_020L)
+        at(4_020L, shimo)
+        run(4_040L, 8_000L, shimo)
+        assertEquals(listOf("stop 0"), a.take())
+        assertEquals(listOf("play"), b.take())
+        // どちらの再生器も、利用者の音量で鳴る
+        assertEquals(0.6f, a.volume)
+        assertEquals(0.6f, b.volume)
+    }
+
+    @Test
+    fun atFullVolumeNoVolumeIsEverSet() {
+        // 100%（既定）なら、作ったばかりの再生器の音量のままなので何も渡さない
+        follower.setVolume(1f)
+        val kami = cue(1, "k.ogg", start = 0L)
+        run(0L, 3_000L, kami, next = next("s.ogg"))
+        run(3_020L, 6_000L, cue(2, "s.ogg", start = 3_020L))
+        at(6_020L, null)
+        assertTrue((a.commands + b.commands).none { it.startsWith("volume") })
+    }
+
+    @Test
+    fun changingTheVolumeWhilePlayingOnlyChangesTheVolume() {
+        val kami = cue(3, "k.ogg", start = 0L)
+        run(0L, 1_000L, kami)
+        a.take()
+        val heard = follower.heardPositionMillis(3L)
+        // 鳴っている最中に変えても、位置は移さず止めもしない（音量だけ。聞こえている位置はそのまま進む）
+        follower.setVolume(0.3f)
+        assertEquals(listOf("volume 0.3"), a.take())
+        assertEquals(listOf("volume 0.3"), b.take())
+        assertEquals(heard, follower.heardPositionMillis(3L))
+        run(1_020L, 2_000L, kami)
+        assertEquals(emptyList<String>(), a.take() + b.take())
+        assertEquals(2_000L, follower.heardPositionMillis(3L))
+    }
+
+    @Test
+    fun theVolumeIsKeptInRange() {
+        follower.setVolume(1.4f)
+        assertEquals(emptyList<String>(), a.take())
+        follower.setVolume(-0.5f)
+        assertEquals(listOf("volume 0.0"), a.take())
+        follower.setVolume(Float.NaN)
+        assertEquals(emptyList<String>(), a.take())
+        assertEquals(0f, a.volume)
     }
 
     @Test

@@ -44,7 +44,7 @@ fun MatchRoute(config: GameConfig, onExit: () -> Unit, voiceBank: VoiceBank? = n
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
         if (!pausedByUser && !confirmingExit) viewModel.setPaused(false)
     }
-    MatchVoicePlayback(viewModel, warmUp = config.voiceEnabled && voiceBank != null)
+    MatchVoicePlayback(viewModel, warmUp = config.voiceEnabled && voiceBank != null, volume = config.voiceVolume)
 
     val actions = remember(viewModel) {
         object : MatchActions by viewModel {
