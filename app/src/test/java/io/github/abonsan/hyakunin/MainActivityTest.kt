@@ -11,6 +11,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.abonsan.hyakunin.game.MatchPhase
+import io.github.abonsan.hyakunin.game.MatchUiState
 import io.github.abonsan.hyakunin.game.MatchViewModel
 import io.github.abonsan.hyakunin.ui.activeMatchViewModel
 import io.github.abonsan.hyakunin.ui.activeVoicePlayer
@@ -148,12 +149,19 @@ class MainActivityTest {
 
         composeRule.onNodeWithText("再開").performClick()
         assertFalse(viewModel.uiState.value.isPaused)
-        composeRule.advanceMainLooper(1_000L)
-        val resumed = viewModel.uiState.value
-        assertTrue(
-            "読みが進む: ${before.reading} -> ${resumed.reading}",
-            resumed.phase != MatchPhase.Reading || resumed.reading!!.revealedKana > before.reading!!.revealedKana,
-        )
+        // 再開すると読みが進む。ExoPlayer は自分のスレッド（実時間）で鳴らし直し、それまで聞こえている位置は進まない
+        // （エンジンは音を待つ）ので、仮想時間を進めながら実時間でも少し待つ（遅いマシンでも 5 秒まで）
+        fun advanced(state: MatchUiState) =
+            state.phase != MatchPhase.Reading || state.reading!!.revealedKana > before.reading!!.revealedKana
+        var resumed = viewModel.uiState.value
+        var waited = 0L
+        while (!advanced(resumed) && waited < 5_000L) {
+            composeRule.advanceMainLooper(100L)
+            Thread.sleep(10)
+            waited += 100L
+            resumed = viewModel.uiState.value
+        }
+        assertTrue("読みが進む: ${before.reading} -> ${resumed.reading}", advanced(resumed))
 
         // 縦に戻しても同じ対戦
         scenario.rotateTo("w411dp-h891dp-xxhdpi")
