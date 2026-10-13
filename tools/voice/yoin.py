@@ -508,7 +508,10 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
 
     add = int(round(add_s * SR))
     lead = int(0.06 * SR)
-    ve_i = int(round(ve * SR))
+    # join_orig（次の仮名が有声で続く）: 元へ戻すクロスフェードの終わりを、母音の終わり ve の 15 ms 後（次の仮名の頭）にする。
+    # 次の仮名の頭の高さへの動きは、次の仮名に属する（伸ばした母音の中では上げない）。
+    post_n = int(0.015 * SR) if (no_rise and join_orig) else 0
+    ve_i = int(round(ve * SR)) + post_n
     tail_n = max(0, ve_i - be) if no_rise else 0      # no_rise: 後ろの窓のあとの元の尾も、平らな F0 の合成音に置き換える
     total = lead + w + add + tail_n + int(0.06 * SR)
     n = int(round(total / SR * 1000 / FRAME_MS)) + 2
@@ -556,7 +559,7 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
         if f_join is not None:
             t_end = (shf + w + add + tail_n) / SR          # 合成音の中で、元の ve に当たる時刻（位相合わせで ±1.5 周期ずれる）
             ramp_j = np.clip((tt - (t_end - Lb / SR - 0.004)) / (Lb / SR + 0.008), 0, 1)
-            lnf2 = lnf + np.minimum(f_join - lf, 15 * np.log(2) / 1200) * ramp_j      # 元の F0 へ合わせる。上げ幅は最大 +15 cent（下げは自由。ビブラートと接ぎ目を足しても +30 cent の検査に収まるように）
+            lnf2 = lnf + np.minimum(f_join - lf, 150 * np.log(2) / 1200) * ramp_j      # 元の F0 へ合わせる（下げも上げも）。上げは ve の約 15 ms 前から = 次の仮名の頭の動き。上げ幅は最大 +150 cent
             y = synth(lnf2)
     yy = y[shf:]
     # --- 位相合わせ（後ろ）: yy[e-L:e] が x[be-L : be] に一番合う e
@@ -568,7 +571,7 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
         cc = _xcorr(tgt_b, yy[ee - L: ee])
         if cc > bestb:
             bestb, e = cc, ee
-    if Lb > 0 and f_join is not None:
+    if Lb > 0:
         tgt_j = x[ve_i - Lb: ve_i]
         bj, e = -9.0, w + add
         for ee in range(w + add - int(1.5 * T), w + add + int(1.5 * T) + 1):
@@ -625,5 +628,5 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
     info = dict(s0=s0, w=w, ins_at=be, n_add=e - w, xcorr_front=best, xcorr_back=bestb,
                 f0_front=float(np.exp(lf)), f0_back=float(np.exp(lb)), anchor_s=s0 / SR,
                 xfade_front=(s0, s0 + L), xfade_back=(s0 + e - L, s0 + e),
-                per_front=pk["per_front"], per_back=pk["per_back"], tail_n=tail_n, no_rise=no_rise, join_xcorr=join_xcorr)
+                per_front=pk["per_front"], per_back=pk["per_back"], tail_n=tail_n, post_n=post_n, no_rise=no_rise, join_xcorr=join_xcorr)
     return out, info

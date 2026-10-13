@@ -201,7 +201,7 @@ def render_rule_clip(engine: vk.Engine, qr: vk.QueryResult, plan: kr.VersePlan, 
                        xfade_front=[a + before for a in inf["xfade_front"]],
                        xfade_back=[a + before for a in inf["xfade_back"]],
                        ext_start_s=(inf["s0"] + before) / sr, ext_end_s=(inf["s0"] + before) / sr
-                       + (inf["n_add"] + inf["w"] + inf.get("tail_n", 0)) / sr, tail_s=inf.get("tail_n", 0) / sr, no_rise=inf.get("no_rise", False))
+                       + (inf["n_add"] + inf["w"] + inf.get("tail_n", 0) - inf.get("post_n", 0)) / sr, tail_s=(inf.get("tail_n", 0) - inf.get("post_n", 0)) / sr, no_rise=inf.get("no_rise", False))
         holds.append(rec)
     info = dict(info, alpha=alpha, base_total_s=base_total, target_s=target, extra_s=extra)
     clip = kr.Clip(z, q, plan, qr, vk._kana_times(qr, tl2, 0.0), verse_s, yoin_s, gain,
