@@ -113,17 +113,26 @@ data class GameConfig(
     val readingStyle: ReadingStyle = ReadingStyle.COMPETITIVE,
     /** 読み上げ音声を使うか。[ReadTiming.voice] が渡されているときだけ意味がある。false なら文字だけで進める。 */
     val voiceEnabled: Boolean = true,
-    /** 読み上げ音声の音量（0〜1）。再生器に渡すだけで、エンジンの動作は変えない。 */
+    /**
+     * 読み上げ音声の音量。クリップそのままの大きさを 1 とした倍率で、0..[MAX_VOICE_VOLUME]。
+     * 再生器に渡すだけで、エンジンの動作は変えない。
+     */
     val voiceVolume: Float = 1f,
 ) {
     init {
         require(emptyCardCount in 0..MAX_EMPTY_CARDS) { "emptyCardCount=$emptyCardCount" }
-        require(voiceVolume in 0f..1f) { "voiceVolume=$voiceVolume" }
+        require(voiceVolume in 0f..MAX_VOICE_VOLUME) { "voiceVolume=$voiceVolume" }
     }
 
     companion object {
         /** 各陣に最初に並べる札の枚数。 */
         const val CARDS_PER_SIDE = 5
         const val MAX_EMPTY_CARDS = 100 - 2 * CARDS_PER_SIDE
+
+        /**
+         * 読み上げ音声の音量の上限（200%、クリップそのままの大きさの 2 倍）。
+         * クリップの山は約 −7 dBFS なので、2 倍（+6 dB）でも割れない。
+         */
+        const val MAX_VOICE_VOLUME = 2f
     }
 }

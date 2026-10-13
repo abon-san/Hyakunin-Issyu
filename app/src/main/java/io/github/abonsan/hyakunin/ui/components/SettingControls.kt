@@ -163,6 +163,7 @@ fun SwitchSetting(
 
 /**
  * 朱の珠のつまみと細い溝のスライダー。選んだところまでの溝を朱にする。[steps] は両端の間の刻みの数（0 なら連続）。
+ * [marks] の値（[valueRange] の中）には、溝を横切る短い目盛りを控えめに付ける（つまみがそこにあれば隠れる）。
  * [enabled] が false なら、つまみと溝を薄墨にして動かせなくする。読み上げ機能向けの説明は [modifier] の semantics で付ける。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -174,6 +175,7 @@ fun WafuSlider(
     enabled: Boolean = true,
     valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
     steps: Int = 0,
+    marks: List<Float> = emptyList(),
 ) {
     Slider(
         value = value,
@@ -183,7 +185,7 @@ fun WafuSlider(
         valueRange = valueRange,
         steps = steps,
         thumb = { SliderKnob(enabled) },
-        track = { SliderLine(it, enabled) },
+        track = { SliderLine(it, enabled, marks) },
     )
 }
 
@@ -199,18 +201,23 @@ private fun SliderKnob(enabled: Boolean) {
     )
 }
 
-/** スライダーの溝。細い線で、選んだところまでを朱にする（動かせないときは薄墨）。 */
+/**
+ * スライダーの溝。細い線で、選んだところまでを朱にする（動かせないときは薄墨）。[marks] の値には、溝の上下に少しはみ出す
+ * 金茶の細い目盛りを溝の下に描く（朱の上でも上下の端が見える）。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SliderLine(state: SliderState, enabled: Boolean) {
+private fun SliderLine(state: SliderState, enabled: Boolean, marks: List<Float>) {
     val range = state.valueRange
     val span = range.endInclusive - range.start
-    val fraction = if (span > 0f) ((state.value - range.start) / span).coerceIn(0f, 1f) else 0f
+    fun fractionOf(value: Float) = if (span > 0f) ((value - range.start) / span).coerceIn(0f, 1f) else 0f
+    val fraction = fractionOf(state.value)
     val active = if (enabled) Shu else Usuzumi.copy(alpha = 0.6f)
+    val mark = if (enabled) Kincha.copy(alpha = 0.8f) else Usuzumi.copy(alpha = 0.45f)
     Canvas(
         Modifier
             .fillMaxWidth()
-            .height(6.dp),
+            .height(if (marks.isEmpty()) 6.dp else SliderMarkHeight),
     ) {
         val y = size.height / 2
         val stroke = 4.dp.toPx()
@@ -218,7 +225,15 @@ private fun SliderLine(state: SliderState, enabled: Boolean) {
         val startX = if (rtl) size.width else 0f
         val endX = if (rtl) 0f else size.width
         val activeX = startX + (endX - startX) * fraction
+        val markHalf = SliderMarkHeight.toPx() / 2
+        for (value in marks) {
+            val x = startX + (endX - startX) * fractionOf(value)
+            drawLine(mark, Offset(x, y - markHalf), Offset(x, y + markHalf), 1.5.dp.toPx(), StrokeCap.Round)
+        }
         drawLine(WashiDeep, Offset(startX, y), Offset(endX, y), stroke, StrokeCap.Round)
         drawLine(active, Offset(startX, y), Offset(activeX, y), stroke, StrokeCap.Round)
     }
 }
+
+/** スライダーの目盛りの高さ（溝の太さ 4dp の上下に 4dp ずつはみ出す）。 */
+private val SliderMarkHeight = 12.dp

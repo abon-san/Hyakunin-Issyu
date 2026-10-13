@@ -32,7 +32,8 @@ internal class VoicePlayerHolder(val player: VoicePlayer) : ViewModel() {
  * [MatchViewModel.setPaused] で対戦を止めて、表示と音声をそろえる（一時停止のダイアログから再開する）。
  *
  * @param warmUp 音声で読むなら true。最初の音が遅れないよう、再生器を先に用意する
- * @param volume 読み上げの音量（0〜1、設定の「音量」）。対戦を始めたときの値を、鳴らす前に再生器へ渡す
+ * @param volume 読み上げの音量（設定の「音量」。クリップそのままの大きさを 1 とした倍率で 0〜2）。対戦を始めたときの値を、
+ *   鳴らす前に再生器へ渡す
  */
 @Composable
 internal fun MatchVoicePlayback(match: MatchViewModel, warmUp: Boolean, volume: Float = 1f) {

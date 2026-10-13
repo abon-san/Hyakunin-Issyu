@@ -17,7 +17,8 @@ import org.junit.Test
  *
  * 今は、鳴っている間は音声が時計になり（エンジンが聞こえている位置に合わせて進む）、次のクリップを先に読み込むので、
  * ふつうに鳴っている間は位置を移さず、音量も変えず、音を出す再生器はいつも1つ。
- * 利用者の音量（設定の「音量」）は対戦の初めに再生器ごとに1回だけ渡し、聞こえる音量はそれに小さくして止めるときの音量を掛けたもの。
+ * 利用者の音量（設定の「音量」、0〜200%）は対戦の初めに再生器ごとに1回だけ渡して PCM に掛け、ExoPlayer の音量は
+ * 小さくして止めるときだけ下げる（1 を超えない）。聞こえる音量は、その2つを掛けたもの。
  */
 class PlaybackReproductionTest {
     private val all = listOf(
@@ -70,21 +71,22 @@ class PlaybackReproductionTest {
 
     @Test
     fun theUserVolumeScalesTheVoiceWithoutTouchingSteadyPlayback() {
-        // 音量を下げても、鳴らし方は 100% のときと同じ（位置を移さない・途中で止めない・音を出すのは1つだけ）。
-        // 音量は鳴らす前に再生器ごとに1回だけ渡し、聞こえる音量は最初から最後までそれを超えない
-        for (volume in listOf(0.2f, 0.65f)) {
+        // 50%・100%・200% のどれでも、鳴らし方は同じ（位置を移さない・途中で止めない・音を出すのは1つだけ・cue ごとに1回だけ読み込む）。
+        // 音量は鳴らす前に再生器ごとに1回だけ渡し（100% なら渡さない）、鳴っている間は渡さない。
+        // 聞こえる音量は最初から最後までそれを超えず、ExoPlayer の音量は 1 を超えない（200% は PCM に掛ける）
+        for (volume in listOf(0.5f, 1f, 2f)) {
             for ((name, scenario) in all) {
                 for (r in records(name, scenario, volume = volume)) {
                     assertSteady(r)
-                    assertEquals(r.toString(), 2, r.volumeCalls)
+                    assertEquals(r.toString(), if (volume == 1f) 0 else 2, r.volumeCalls)
                     assertEquals(r.toString(), volume, r.maxHeardGain)
+                    assertEquals(r.toString(), 1f, r.maxPlayerVolume)
                 }
             }
         }
-        // 100% なら音量は渡さない（作ったばかりの再生器の音量のまま）
-        for (r in records("ideal", SimScenarios.IDEAL)) {
-            assertEquals(r.toString(), 0, r.volumeCalls)
-            assertEquals(r.toString(), 1f, r.maxHeardGain)
+        for (r in records("ideal", SimScenarios.IDEAL, volume = 0.2f)) {
+            assertSteady(r)
+            assertEquals(r.toString(), 0.2f, r.maxHeardGain)
         }
     }
 

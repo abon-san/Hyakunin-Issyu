@@ -47,8 +47,9 @@ class ExoVoicePreviewTest {
         assertEquals(AudioManager.AUDIOFOCUS_GAIN, request.focusGain)
         assertEquals(AudioAttributes.USAGE_GAME, request.audioAttributes.usage)
         assertEquals(AudioAttributes.CONTENT_TYPE_SPEECH, request.audioAttributes.contentType)
-        // 選んだ音量で鳴らす
-        assertEquals(0.5f, preview.outputVolume)
+        // 選んだ音量で鳴らす（PCM に掛ける。ExoPlayer の音量は 1 のまま）
+        assertEquals(0.5f, preview.gain)
+        assertEquals(1f, preview.outputVolume)
         idle()
         preview.stop()
         assertSame(request, shadowOf(audioManager).lastAbandonedAudioFocusRequest)
@@ -57,15 +58,23 @@ class ExoVoicePreviewTest {
     }
 
     @Test
-    fun theVolumeChangesWhilePlaying() {
-        assertTrue(preview.play(joka, 0.3f))
+    fun aLiveChangeGoesToThePcmGainWithoutTouchingThePlayer() {
+        assertTrue(preview.play(joka, 0.5f))
         idle()
-        preview.setVolume(0.9f)
-        assertEquals(0.9f, preview.outputVolume)
+        // 鳴っている最中に 200% にする: PCM の音量だけが変わり（少しずつ寄せる）、ExoPlayer の音量は 1 のまま。止まらない
+        preview.setVolume(2f)
+        assertEquals(2f, preview.gain)
+        assertEquals(1f, preview.outputVolume)
+        idle()
+        preview.setVolume(1.25f)
+        assertEquals(1.25f, preview.gain)
+        assertEquals(1f, preview.outputVolume)
+        assertEquals(0, stops)
         // 止めてからもう一度鳴らすと、そのとき渡した音量で（読み直さずに）先頭から鳴る
         preview.stop()
         assertTrue(preview.play(joka, 0.6f))
-        assertEquals(0.6f, preview.outputVolume)
+        assertEquals(0.6f, preview.gain)
+        assertEquals(1f, preview.outputVolume)
     }
 
     @Test
@@ -81,12 +90,14 @@ class ExoVoicePreviewTest {
 
     @Test
     fun otherAppsShortSoundsOnlyLowerTheVolume() {
-        assertTrue(preview.play(joka, 0.5f))
+        assertTrue(preview.play(joka, 2f))
         val focus = shadowOf(audioManager).lastAudioFocusRequest
+        // ほかの音の間は ExoPlayer の音量で下げる（PCM の 200% はそのまま）
         focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
-        assertEquals(0.5f * VOICE_DUCK_GAIN, preview.outputVolume!!, 1e-6f)
+        assertEquals(VOICE_DUCK_GAIN, preview.outputVolume!!, 1e-6f)
+        assertEquals(2f, preview.gain)
         focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
-        assertEquals(0.5f, preview.outputVolume)
+        assertEquals(1f, preview.outputVolume)
         assertEquals(0, stops)
     }
 

@@ -24,9 +24,13 @@ class GameConfigTest {
 
     @Test
     fun theVoiceVolumeIsFullByDefaultAndStaysInRange() {
+        // 1 がクリップそのままの大きさ（100%）。200% まで大きくできる
         assertEquals(1f, GameConfig().voiceVolume)
         assertEquals(0f, GameConfig(voiceVolume = 0f).voiceVolume)
-        assertThrows(IllegalArgumentException::class.java) { GameConfig(voiceVolume = 1.5f) }
+        assertEquals(2f, GameConfig.MAX_VOICE_VOLUME)
+        assertEquals(1.5f, GameConfig(voiceVolume = 1.5f).voiceVolume)
+        assertEquals(2f, GameConfig(voiceVolume = 2f).voiceVolume)
+        assertThrows(IllegalArgumentException::class.java) { GameConfig(voiceVolume = 2.01f) }
         assertThrows(IllegalArgumentException::class.java) { GameConfig(voiceVolume = -0.1f) }
         assertThrows(IllegalArgumentException::class.java) { GameConfig(voiceVolume = Float.NaN) }
     }

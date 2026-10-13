@@ -8,12 +8,12 @@ import android.content.Context
  */
 interface VoicePreview {
     /**
-     * アセットの音声ファイル [asset] を、先頭から音量 [volume]（0〜1）で鳴らす。鳴っていれば先頭から鳴らし直す。
+     * アセットの音声ファイル [asset] を、先頭から音量 [volume]（クリップそのままの大きさを 1 とした倍率、0〜2）で鳴らす。鳴っていれば先頭から鳴らし直す。
      * 鳴らし始めたら true。音声フォーカスを得られない（電話中など）・手放した後なら、鳴らさずに false。
      */
     fun play(asset: String, volume: Float): Boolean
 
-    /** 音量を [volume]（0〜1）にする。鳴っていれば、そのまま音量だけ変わる。 */
+    /** 音量を [volume]（0〜2）にする。鳴っていれば、そのまま音量だけ変わる（少しずつ寄せる）。 */
     fun setVolume(volume: Float)
 
     /** 止める。鳴っていなければ何もしない。 */

@@ -33,6 +33,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.abonsan.hyakunin.R
+import io.github.abonsan.hyakunin.game.GameConfig
 import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.game.voice.VoiceClip
 import io.github.abonsan.hyakunin.ui.components.ChoiceRow
@@ -213,8 +214,14 @@ internal const val PREVIEW_LABEL = "試聴"
 /** 「試聴」で鳴らしている間のボタンの文字。 */
 internal const val PREVIEW_STOP_LABEL = "停止"
 
-/** 音量の刻みの数（5% ずつ）。 */
-private const val VOLUME_STEPS = 20
+/** 100%（クリップそのままの大きさ）の中の、音量の刻み（5%）の数。 */
+private const val STEPS_PER_FULL_VOLUME = 20
+
+/** 音量の刻みの数（0〜200% を 5% ずつ）。 */
+private val VOLUME_STEPS = (GameConfig.MAX_VOICE_VOLUME * STEPS_PER_FULL_VOLUME).roundToInt()
+
+/** スライダーの真ん中に目盛りを付ける音量（100%、クリップそのままの大きさ。以前の版の最大で、既定）。 */
+private const val FULL_VOLUME = 1f
 
 /** 読み上げ音声を切っているときの、音量の見出しと値の濃さ。 */
 private const val DISABLED_ALPHA = 0.5f
@@ -222,15 +229,16 @@ private const val DISABLED_ALPHA = 0.5f
 /** 音量の見出し・スライダー・値・「試聴」を1行に並べられる幅。これより狭ければ、見出しと値を上の行に分ける。 */
 private val VolumeOneLineMinWidth = 340.dp
 
-/** 音量 [volume]（0〜1）の表示（例:「80%」）。 */
+/** 音量 [volume]（倍率、0〜2）の表示（例:「80%」「150%」）。 */
 internal fun volumeText(volume: Float): String = "${(volume * 100).roundToInt()}%"
 
-/** スライダーの値 [value] を、音量の刻み（5%）にそろえる。 */
+/** スライダーの値 [value] を、音量の刻み（5%）にそろえる（0〜200%）。 */
 internal fun snapVolume(value: Float): Float =
-    (value * VOLUME_STEPS).roundToInt().coerceIn(0, VOLUME_STEPS) / VOLUME_STEPS.toFloat()
+    (value * STEPS_PER_FULL_VOLUME).roundToInt().coerceIn(0, VOLUME_STEPS) / STEPS_PER_FULL_VOLUME.toFloat()
 
 /**
- * 読み上げ音声の音量（0〜100%、5% 刻み）のスライダーと今の値、その音量で序歌の上の句を鳴らす「試聴」。
+ * 読み上げ音声の音量（0〜200%、5% 刻み）のスライダーと今の値、その音量で序歌の上の句を鳴らす「試聴」。
+ * 100%（クリップそのままの大きさ、既定）はスライダーの真ん中で、目盛りを付ける。それより右は 200% まで大きくできる。
  * 読み上げ音声を切っているときは淡くして動かせなくする（「試聴」は [previewClip] がないときも押せない）。
  * 「試聴」は、もう一度押すと止まる。鳴っている間にスライダーを動かすと、すぐその音量に変わる。
  * 見出しと値は読み上げ機能では読まない（スライダーが名前と値を持つ）。
@@ -279,7 +287,9 @@ private fun VolumeSetting(
                 stateDescription = text
             },
             enabled = enabled,
+            valueRange = 0f..GameConfig.MAX_VOICE_VOLUME,
             steps = VOLUME_STEPS - 1,
+            marks = listOf(FULL_VOLUME),
         )
     }
     val button = @Composable {

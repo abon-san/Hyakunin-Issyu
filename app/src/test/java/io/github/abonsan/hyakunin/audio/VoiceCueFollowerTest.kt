@@ -391,8 +391,28 @@ class VoiceCueFollowerTest {
     }
 
     @Test
+    fun twiceTheVolumeIsPassedOnceAndNothingChangesWhileItPlays() {
+        // 200%（クリップの 2 倍）も、そのまま再生器に渡す。鳴っている間は何も渡さない
+        follower.setVolume(2f)
+        assertEquals(listOf("volume 2.0"), a.take())
+        assertEquals(listOf("volume 2.0"), b.take())
+        val kami = cue(1, "k.ogg", start = 0L)
+        run(0L, 3_000L, kami)
+        assertEquals(listOf("speed 1.0", "prepare k.ogg", "play"), a.take())
+        assertEquals(emptyList<String>(), b.take())
+        follower.setVolume(2f)
+        run(3_020L, 4_000L, kami)
+        assertEquals(emptyList<String>(), a.take() + b.take())
+        assertEquals(2f, a.volume)
+    }
+
+    @Test
     fun theVolumeIsKeptInRange() {
         follower.setVolume(1.4f)
+        assertEquals(listOf("volume 1.4"), a.take())
+        follower.setVolume(2.6f)
+        assertEquals(listOf("volume 2.0"), a.take())
+        follower.setVolume(2f)
         assertEquals(emptyList<String>(), a.take())
         follower.setVolume(-0.5f)
         assertEquals(listOf("volume 0.0"), a.take())
