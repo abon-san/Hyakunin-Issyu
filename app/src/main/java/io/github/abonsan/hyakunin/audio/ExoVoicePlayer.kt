@@ -26,8 +26,9 @@ import io.github.abonsan.hyakunin.game.NextAudio
  * 音声フォーカスは自分で扱う（[VoiceAudioFocus]）。フォーカスを失ったとき・得られないとき・イヤホンが外れたときは
  * 音を止めて [onInterrupted] を呼ぶ（呼び出し側が対戦を一時停止する）。
  *
- * 出す音量は、利用者の音量（[setVolume]、設定の「音量」）× 小さくして止めるときの音量 × ほかの音の間の音量（[OutputGain]）。
- * ExoPlayer に渡すのは値が変わったときだけ（ふつうに鳴っている間は渡さない）。
+ * 音の大きさは2か所で決める。利用者の音量（[setVolume]、設定の「音量」、0〜2 倍）は PCM に掛け（[VoiceGainProcessor]）、
+ * 小さくして止めるときの音量とほかの音の間の音量は ExoPlayer の音量（1 以下、[OutputGain]）にする。
+ * どちらも値が変わったときだけ渡す（ふつうに鳴っている間は渡さない）。
  *
  * デバッグ版では、クリップごとに読み込みの時間・鳴らし始めの遅れ・位置を移した回数・ずれの最大・アンダーランの回数を
  * logcat（タグ [TAG]）に出す。
@@ -68,6 +69,10 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
     @VisibleForTesting
     internal val outputVolumes: List<Float?> get() = decks.map { it.exoVolume }
 
+    /** 再生器ごとの、PCM に掛ける利用者の音量。 */
+    @VisibleForTesting
+    internal val gains: List<Float> get() = decks.map { it.gain }
+
     override fun release() {
         if (released) return
         released = true
@@ -94,9 +99,12 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
 
         private var fade: Runnable? = null
 
+        /** 利用者の音量を PCM に掛ける段。この再生器の ExoPlayer の DefaultAudioSink に入れる。 */
+        private val gainStage = VoiceGainProcessor()
+
         /**
-         * ExoPlayer に渡す音量（利用者の音量 × 小さくして止めるときの音量 × ほかの音の間の音量）。変わるときだけ渡す
-         * （鳴っている間は、小さくして止めるとき・ほかの音の間・利用者が音量を変えたときしか変えない）。
+         * ExoPlayer に渡す音量（小さくして止めるときの音量 × ほかの音の間の音量）。変わるときだけ渡す
+         * （鳴っている間は、小さくして止めるとき・ほかの音の間しか変えない）。
          */
         private val output = OutputGain { exo?.volume = it }
 
@@ -188,7 +196,7 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
         }
 
         override fun setVolume(volume: Float) {
-            output.user = volume
+            gainStage.gain = volume
         }
 
         override fun stop(fadeOutMillis: Long) {
@@ -223,6 +231,8 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
 
         val exoVolume: Float? get() = exo?.volume
 
+        val gain: Float get() = gainStage.gain
+
         fun warmUp() {
             player()
         }
@@ -249,11 +259,11 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
             output.fade = 1f
         }
 
-        private fun player(): ExoPlayer = exo ?: buildVoiceExoPlayer(appContext).also {
+        private fun player(): ExoPlayer = exo ?: buildVoiceExoPlayer(appContext, gainStage).also {
             it.addListener(listener)
             it.addAnalyticsListener(analytics)
             exo = it
-            // 作ったばかりの ExoPlayer の音量は 1。利用者の音量などを渡し直す
+            // 作ったばかりの ExoPlayer の音量は 1。ほかの音の間の音量などを渡し直す（利用者の音量は gainStage が持つ）
             output.reattach()
         }
     }

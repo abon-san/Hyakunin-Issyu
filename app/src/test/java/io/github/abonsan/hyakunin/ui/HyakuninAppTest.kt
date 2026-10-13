@@ -162,21 +162,21 @@ class HyakuninAppTest {
         composeRule.onNodeWithText("設定").performClick()
         composeRule.onNodeWithContentDescription(VOLUME_LABEL)
             .performScrollTo()
-            .performSemanticsAction(SemanticsActions.SetProgress) { it(0.4f) }
-        assertEquals(0.4f, settingsStore.load().voiceVolume)
+            .performSemanticsAction(SemanticsActions.SetProgress) { it(1.6f) }
+        assertEquals(1.6f, settingsStore.load().voiceVolume)
         composeRule.onNodeWithContentDescription("戻る").performClick()
 
         // 対戦を始めるときに音量を対戦設定へ移し、鳴らす前に再生器へ渡す
         composeRule.onNodeWithText("競技モード").performClick()
         composeRule.onNodeWithText("対戦開始").performClick()
         composeRule.waitForIdle()
-        assertEquals(0.4f, activeMatch()!!.uiState.value.config.voiceVolume)
+        assertEquals(1.6f, activeMatch()!!.uiState.value.config.voiceVolume)
         val player = players.players.single()
-        assertEquals(listOf(0.4f), player.volumes)
+        assertEquals(listOf(1.6f), player.volumes)
         // 対戦の間は渡し直さない
         composeRule.onNodeWithText("すぐ読む").performClick()
         composeRule.advanceMainLooper(3_000L)
-        assertEquals(listOf(0.4f), player.volumes)
+        assertEquals(listOf(1.6f), player.volumes)
     }
 
     @Test

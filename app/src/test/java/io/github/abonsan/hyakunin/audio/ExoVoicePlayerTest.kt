@@ -72,28 +72,38 @@ class ExoVoicePlayerTest {
     }
 
     @Test
-    fun theUserVolumeReachesBothPlayersAndSurvivesTheFadeOut() {
-        // 100% なら ExoPlayer の音量は初めの 1 のまま
+    fun theUserVolumeGoesToThePcmGainOfBothPlayersAndTheirVolumeStaysAtOne() {
         player.warmUp()
-        assertEquals(listOf(1f, 1f), player.outputVolumes)
-        // 対戦の初めに渡した音量は、どちらの ExoPlayer にも渡る
-        player.setVolume(0.4f)
-        assertEquals(listOf(0.4f, 0.4f), player.outputVolumes)
+        assertEquals(listOf(1f, 1f), player.gains)
+        // 50%・100%・200%: 利用者の音量はどちらの再生器でも PCM に掛け、ExoPlayer の音量は 1 のまま（1 を超えられない）
+        for (volume in listOf(0.5f, 1f, 2f)) {
+            player.setVolume(volume)
+            assertEquals(listOf(volume, volume), player.gains)
+            assertEquals(listOf(1f, 1f), player.outputVolumes)
+        }
+        // 範囲の外の値は収める
+        player.setVolume(3f)
+        assertEquals(listOf(2f, 2f), player.gains)
         val t = playUntilStarted(kami)
         assertNotNull(shadowOf(audioManager).lastAudioFocusRequest)
-        assertEquals(0.4f, player.outputVolumes[0])
-        // 音声がなくなると小さくしてから止め、止め終えたら利用者の音量に戻す（次のクリップもその音量で鳴る）
-        player.update(null, t + 100L, paused = false)
+        // 鳴っている間も ExoPlayer の音量は変えない
+        player.update(kami, t + 500L, paused = false)
+        assertEquals(listOf(1f, 1f), player.outputVolumes)
+        // 音声がなくなると小さくしてから止め、止め終えたら ExoPlayer の音量を 1 に戻す。PCM の音量はそのまま（次のクリップも 200%）
+        player.update(null, t + 600L, paused = false)
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400))
-        assertEquals(listOf(0.4f, 0.4f), player.outputVolumes)
+        assertEquals(listOf(1f, 1f), player.outputVolumes)
+        assertEquals(listOf(2f, 2f), player.gains)
     }
 
     @Test
-    fun aVolumeSetBeforeThePlayersExistIsAppliedWhenTheyAreMade() {
-        player.setVolume(0.25f)
+    fun aVolumeSetBeforeThePlayersExistIsUsedWhenTheyAreMade() {
+        player.setVolume(1.75f)
         assertEquals(listOf(null, null), player.outputVolumes)
+        assertEquals(listOf(1.75f, 1.75f), player.gains)
         player.warmUp()
-        assertEquals(listOf(0.25f, 0.25f), player.outputVolumes)
+        assertEquals(listOf(1f, 1f), player.outputVolumes)
+        assertEquals(listOf(1.75f, 1.75f), player.gains)
     }
 
     @Test

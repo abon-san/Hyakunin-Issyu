@@ -15,7 +15,9 @@ import androidx.media3.exoplayer.ExoPlayer
  * （[VoiceAudioFocus]）は対戦の読み上げ（[ExoVoicePlayer]）と同じ。ExoPlayer は最初に鳴らすときに作り、
  * 同じクリップをもう一度鳴らすときは読み直さずに先頭へ戻す。
  *
- * 出す音量は、利用者の音量 × ほかのアプリの短い音の間の音量（[OutputGain]）。値が変わったときだけ ExoPlayer に渡す。
+ * 利用者の音量（0〜2 倍）は PCM に掛け（[VoiceGainProcessor]）、鳴っている最中に変えると少しずつ寄せる（段差の雑音を
+ * 出さない）。ExoPlayer の音量は、ほかのアプリの短い音の間だけ下げる（[OutputGain]、値が変わったときだけ渡す）。
+ * 出力に先に書いておく音を短くして（[PREVIEW_AUDIO_BUFFER_MILLIS]）、スライダーを動かした音量がすぐ聞こえるようにする。
  * 鳴り終えた・音声フォーカスを失った・イヤホンが外れた・鳴らせなかったときは止めて [onStopped] を呼ぶ。
  */
 @OptIn(UnstableApi::class)
@@ -29,6 +31,7 @@ class ExoVoicePreview(context: Context, private val onStopped: () -> Unit) : Voi
 
     private var exo: ExoPlayer? = null
     private var loadedAsset: String? = null
+    private val gainStage = VoiceGainProcessor()
     private val output = OutputGain { exo?.volume = it }
     private var playing = false
     private var released = false
@@ -53,7 +56,7 @@ class ExoVoicePreview(context: Context, private val onStopped: () -> Unit) : Voi
 
     override fun play(asset: String, volume: Float): Boolean {
         if (released || !focus.request()) return false
-        output.user = volume
+        gainStage.gain = volume
         val p = player()
         // 鳴っていれば止めてから先頭へ戻す（鳴っている最中には位置を移さない）
         p.pause()
@@ -70,12 +73,16 @@ class ExoVoicePreview(context: Context, private val onStopped: () -> Unit) : Voi
     }
 
     override fun setVolume(volume: Float) {
-        output.user = volume
+        gainStage.gain = volume
     }
 
     /** ExoPlayer に渡してある音量（まだ作っていなければ null）。 */
     @VisibleForTesting
     internal val outputVolume: Float? get() = exo?.volume
+
+    /** PCM に掛ける利用者の音量。 */
+    @VisibleForTesting
+    internal val gain: Float get() = gainStage.gain
 
     override fun stop() {
         if (!playing) return
@@ -100,10 +107,18 @@ class ExoVoicePreview(context: Context, private val onStopped: () -> Unit) : Voi
         onStopped()
     }
 
-    private fun player(): ExoPlayer = exo ?: buildVoiceExoPlayer(appContext).also {
+    private fun player(): ExoPlayer = exo ?: buildVoiceExoPlayer(appContext, gainStage, PREVIEW_AUDIO_BUFFER_MILLIS).also {
         it.addListener(listener)
         exo = it
-        // 作ったばかりの ExoPlayer の音量は 1。利用者の音量を渡し直す
+        // 作ったばかりの ExoPlayer の音量は 1。ほかの音の間の音量を渡し直す（利用者の音量は gainStage が持つ）
         output.reattach()
+    }
+
+    companion object {
+        /**
+         * 出力（AudioTrack）に先に書いておく音の長さ（ms）。PCM に掛けた音量は、これだけ遅れて聞こえる
+         * （Media3 の既定の 500ms では、スライダーを動かしてから音量が変わるまでが長い）。対戦の再生器は既定のまま。
+         */
+        const val PREVIEW_AUDIO_BUFFER_MILLIS = 150
     }
 }

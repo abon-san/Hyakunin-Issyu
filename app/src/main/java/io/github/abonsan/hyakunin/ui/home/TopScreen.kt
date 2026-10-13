@@ -75,7 +75,7 @@ internal val RuleMode.modeName: String
         RuleMode.SIMPLE -> "簡易モード"
     }
 
-/** トップ画面の下に小さく出す版（例:「Ver. 0.5.0」）。 */
+/** トップ画面に小さく出す版（例:「Ver. 0.5.0」）。 */
 internal val VERSION_LABEL = "Ver. ${BuildConfig.VERSION_NAME}"
 
 /** 版の、読み上げ機能向けの読み方。 */
@@ -90,8 +90,8 @@ internal val RuleMode.accent: Color
 
 /**
  * トップ画面。モードを選ぶと [onSelectMode]、「設定」で [onOpenSettings] を呼ぶ。
- * 横に広い画面では、左に題字、右にモードの選択を並べる。読み上げ音声のクレジットと版（[VERSION_LABEL]）は
- * 「設定」の下に1行ずつ小さく添える。
+ * 横に広い画面では、左に題字、右にモードの選択を並べ、スクロールせずに収める。読み上げ音声のクレジットと版
+ * （[VERSION_LABEL]）は1行ずつ小さく添える。縦長の画面では「設定」の下、横に広い画面では題字（副題）の下に置く。
  */
 @Composable
 fun TopScreen(
@@ -113,6 +113,8 @@ fun TopScreen(
                         .fillMaxHeight(),
                     wide = true,
                     compact = compact,
+                    // 右のモードの選択を低くして、スクロールしないで収まるようにする
+                    credits = true,
                 )
                 CenteredScrollColumn(
                     Modifier
@@ -134,6 +136,7 @@ fun TopScreen(
                                 bottom = if (compact) 10.dp else 16.dp,
                             ),
                         compact = compact,
+                        credits = false,
                     )
                 }
             }
@@ -161,6 +164,7 @@ fun TopScreen(
                         .heightIn(min = (viewport - MenuReservedHeight).coerceAtLeast(0.dp)),
                     wide = false,
                     compact = compact,
+                    credits = false,
                 )
                 ModeMenu(
                     onSelectMode = onSelectMode,
@@ -169,6 +173,7 @@ fun TopScreen(
                         .widthIn(max = 520.dp)
                         .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = if (compact) 10.dp else 16.dp),
                     compact = compact,
+                    credits = true,
                 )
             }
         }
@@ -181,9 +186,9 @@ private val CompactHeight = 600.dp
 /** 縦長の画面で、モードの選択に残しておく高さ（残りを題字の欄にする）。 */
 private val MenuReservedHeight = 420.dp
 
-/** 題字（扇に重ねた取り札と「百人一首」）。青海波の地を敷く。 */
+/** 題字（扇に重ねた取り札と「百人一首」）。青海波の地を敷く。[credits] なら副題の下にクレジットと版を添える。 */
 @Composable
-private fun TitleBanner(modifier: Modifier, wide: Boolean, compact: Boolean) {
+private fun TitleBanner(modifier: Modifier, wide: Boolean, compact: Boolean, credits: Boolean) {
     Box(
         modifier
             // 波の輪が隣の欄へはみ出さないように切る
@@ -237,6 +242,10 @@ private fun TitleBanner(modifier: Modifier, wide: Boolean, compact: Boolean) {
                     .padding(horizontal = if (wide) 12.dp else 36.dp),
                 style = MaterialTheme.typography.bodyMedium,
             )
+            if (credits) {
+                Spacer(Modifier.height(if (compact) 10.dp else 14.dp))
+                Credits()
+            }
         }
     }
 }
@@ -260,13 +269,14 @@ private fun FannedCards(cardWidth: Dp, modifier: Modifier = Modifier) {
     }
 }
 
-/** モードの選択と「設定」への入口、読み上げ音声のクレジットと版。 */
+/** モードの選択と「設定」への入口。[credits] なら、その下に読み上げ音声のクレジットと版を添える。 */
 @Composable
 private fun ModeMenu(
     onSelectMode: (RuleMode) -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    credits: Boolean = true,
 ) {
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         OrnamentTitle("モードを選んでください", Modifier.padding(horizontal = 12.dp))
@@ -282,7 +292,17 @@ private fun ModeMenu(
             icon = R.drawable.ic_settings,
             minHeight = if (compact) 44.dp else 48.dp,
         )
-        Spacer(Modifier.height(if (compact) 6.dp else 12.dp))
+        if (credits) {
+            Spacer(Modifier.height(if (compact) 6.dp else 12.dp))
+            Credits()
+        }
+    }
+}
+
+/** 読み上げ音声のクレジットと版。1行ずつ小さく添える。 */
+@Composable
+private fun Credits() {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(text = VOICE_CREDIT, style = MaterialTheme.typography.labelSmall, color = UsuzumiText)
         Spacer(Modifier.height(2.dp))
         // 版はクレジットの一部と読まれないよう、行を分けて同じく小さく添える

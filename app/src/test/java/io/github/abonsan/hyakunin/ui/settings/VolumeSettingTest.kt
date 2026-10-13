@@ -36,7 +36,7 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
-/** 設定の画面の「音量」の行: スライダー（5% 刻み）と値、読み上げ機能向けの説明、「試聴」。 */
+/** 設定の画面の「音量」の行: スライダー（0〜200%、5% 刻み。100% が真ん中）と値、読み上げ機能向けの説明、「試聴」。 */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [36], qualifiers = "w411dp-h891dp-xxhdpi")
@@ -69,29 +69,50 @@ class VolumeSettingTest {
 
     @Test
     fun theSliderShowsTheVolumeAndReadsItOutInPercent() {
-        show(AppSettings(voiceVolume = 0.8f))
-        // 読み上げ機能には「音量」と「80%」を渡す（0〜100% を 5% ずつ）
+        show(AppSettings(voiceVolume = 1.5f))
+        // 読み上げ機能には「音量」と「150%」を渡す（0〜200% を 5% ずつ。割合の 75% ではなく音量の % を読む）
         slider()
             .performScrollTo()
             .assertIsEnabled()
-            .assert(hasStateDescription("80%"))
-            .assertRangeInfoEquals(ProgressBarRangeInfo(0.8f, 0f..1f, steps = 19))
-        composeRule.onNodeWithText("80%").assertExists()
+            .assert(hasStateDescription("150%"))
+            .assertRangeInfoEquals(ProgressBarRangeInfo(1.5f, 0f..2f, steps = 39))
+        composeRule.onNodeWithText("150%").assertExists()
         // 見出しと値の文字は読み上げない（スライダーが名前と値を持つので、二重に読まない）
         val hidden = SemanticsMatcher.keyIsDefined(SemanticsProperties.HideFromAccessibility)
         composeRule.onNodeWithText(VOLUME_LABEL).assert(hidden)
-        composeRule.onNodeWithText("80%").assert(hidden)
+        composeRule.onNodeWithText("150%").assert(hidden)
     }
 
     @Test
-    fun movingTheSliderSavesTheVolumeInFivePercentSteps() {
+    fun theDefaultFullVolumeSitsAtTheCenterOfTheSlider() {
+        // 既定の 100%（以前の版の最大、クリップそのままの大きさ）は、0〜200% のちょうど真ん中
+        show()
+        slider()
+            .performScrollTo()
+            .assert(hasStateDescription("100%"))
+            .assertRangeInfoEquals(ProgressBarRangeInfo(1f, 0f..2f, steps = 39))
+        val range = slider().fetchSemanticsNode().config[SemanticsProperties.ProgressBarRangeInfo]
+        assertEquals(0.5f, (range.current - range.range.start) / (range.range.endInclusive - range.range.start))
+        composeRule.onNodeWithText("100%").assertExists()
+    }
+
+    @Test
+    fun movingTheSliderSavesTheVolumeInFivePercentStepsUpTo200Percent() {
         show()
         composeRule.onNodeWithText("100%").assertExists()
         // 読み上げ機能の操作（音量キーなど）でも刻みにそろう
-        slider().performScrollTo().performSemanticsAction(SemanticsActions.SetProgress) { it(0.43f) }
+        slider().performScrollTo().performSemanticsAction(SemanticsActions.SetProgress) { it(1.43f) }
+        assertEquals(1.45f, settings.voiceVolume)
+        composeRule.onNodeWithText("145%").assertExists()
+        slider().assert(hasStateDescription("145%"))
+        slider().performSemanticsAction(SemanticsActions.SetProgress) { it(0.43f) }
         assertEquals(0.45f, settings.voiceVolume)
         composeRule.onNodeWithText("45%").assertExists()
-        slider().assert(hasStateDescription("45%"))
+        // 最大は 200%（それより右へは行かない）
+        slider().performSemanticsAction(SemanticsActions.SetProgress) { it(2.6f) }
+        assertEquals(2f, settings.voiceVolume)
+        composeRule.onNodeWithText("200%").assertExists()
+        slider().assert(hasStateDescription("200%"))
         slider().performSemanticsAction(SemanticsActions.SetProgress) { it(0f) }
         assertEquals(0f, settings.voiceVolume)
         composeRule.onNodeWithText("0%").assertExists()
@@ -105,6 +126,7 @@ class VolumeSettingTest {
         composeRule.onNodeWithText("読み上げ音声").assertIsOff()
         slider().performScrollTo().assertIsNotEnabled()
         composeRule.onNodeWithText("40%").assertExists()
+        composeRule.onNodeWithText(VOLUME_LABEL).assertExists()
         previewButton().assertIsNotEnabled()
         composeRule.captureScreenshot("settings_voice_off")
         // オンにすると動かせる
@@ -115,9 +137,9 @@ class VolumeSettingTest {
 
     @Test
     fun thePreviewPlaysTheJokaAtTheChosenVolumeAndASecondPressStopsIt() {
-        show(AppSettings(voiceVolume = 0.7f))
+        show(AppSettings(voiceVolume = 1.5f))
         previewButton().performScrollTo().assertIsEnabled().performClick()
-        assertEquals("play ${FAKE_JOKA_KAMI.asset} 0.7", preview.commands.last { it.startsWith("play") })
+        assertEquals("play ${FAKE_JOKA_KAMI.asset} 1.5", preview.commands.last { it.startsWith("play") })
         assertTrue(preview.playing)
         // 鳴っている間は「停止」になる
         stopButton().assertIsEnabled()
@@ -134,11 +156,15 @@ class VolumeSettingTest {
     fun movingTheSliderWhilePlayingChangesTheVolumeLive() {
         show(AppSettings(voiceVolume = 0.7f))
         previewButton().performScrollTo().performClick()
+        val played = preview.commands.size
+        // 鳴っている最中に 200% まで上げてから 30% に下げる: 止めず・鳴らし直さずに、音量だけを変える
+        slider().performSemanticsAction(SemanticsActions.SetProgress) { it(2f) }
+        composeRule.waitForIdle()
+        assertEquals(2f, preview.volume)
         slider().performSemanticsAction(SemanticsActions.SetProgress) { it(0.3f) }
         composeRule.waitForIdle()
-        // 止めずに音量だけを変える
         assertEquals(0.3f, preview.volume)
-        assertEquals("volume 0.3", preview.commands.last())
+        assertEquals(listOf("volume 2.0", "volume 0.3"), preview.commands.drop(played))
         assertTrue(preview.playing)
         stopButton().assertExists()
     }

@@ -92,17 +92,27 @@ class AppSettingsTest {
 
     @Test
     fun theVolumeIsSavedUnderItsOwnKeyAndRestoredExactly() {
-        // スライダーの刻み（5%）のどの値も、そのまま戻る（別のインスタンスでも）
-        for (step in 0..20) {
+        // スライダーの刻み（0〜200% を 5% ずつ）のどの値も、そのまま戻る（別のインスタンスでも）
+        for (step in 0..40) {
             val volume = step / 20f
             AppSettingsStore(prefs).save(AppSettings(voiceVolume = volume))
             assertEquals(volume, prefs.getFloat("voice_volume", -1f))
             assertEquals(volume, AppSettingsStore(context).load().voiceVolume)
         }
         // 音量を変えても、ほかの設定は変わらない
-        val settings = AppSettings(ScreenOrientation.PORTRAIT, flipOpponentCards = false, voiceEnabled = false, voiceVolume = 0.35f)
+        val settings = AppSettings(ScreenOrientation.PORTRAIT, flipOpponentCards = false, voiceEnabled = false, voiceVolume = 1.65f)
         AppSettingsStore(prefs).save(settings)
         assertEquals(settings, AppSettingsStore(prefs).load())
+    }
+
+    @Test
+    fun aVolumeSavedByTheOlderVersionKeepsItsMeaning() {
+        // 以前の版（0〜100%）で保存した値は、同じキーで同じ倍率（クリップそのままの大きさを 1）として読む。
+        // 以前の最大の 100% は、今のスライダーの真ん中
+        for (old in listOf(0f, 0.05f, 0.35f, 0.8f, 1f)) {
+            prefs.edit { putFloat("voice_volume", old) }
+            assertEquals("saved=$old", old, AppSettingsStore(prefs).load().voiceVolume)
+        }
     }
 
     @Test
@@ -120,7 +130,8 @@ class AppSettingsTest {
 
     @Test
     fun anOutOfRangeVolumeIsClamped() {
-        for ((saved, loaded) in listOf(1.7f to 1f, 100f to 1f, -0.3f to 0f, Float.MIN_VALUE to Float.MIN_VALUE, 0f to 0f)) {
+        // 0〜200% に収める
+        for ((saved, loaded) in listOf(1.7f to 1.7f, 2f to 2f, 2.05f to 2f, 100f to 2f, -0.3f to 0f, Float.MIN_VALUE to Float.MIN_VALUE, 0f to 0f)) {
             prefs.edit { putFloat("voice_volume", saved) }
             assertEquals("saved=$saved", loaded, AppSettingsStore(prefs).load().voiceVolume)
         }
@@ -142,8 +153,9 @@ class AppSettingsTest {
 
     @Test
     fun aVolumeOutsideTheRangeIsRejected() {
-        // 画面と保存の値はいつも 0〜1（読み込みで収める）。範囲の外の値は作れない
-        assertThrows(IllegalArgumentException::class.java) { AppSettings(voiceVolume = 1.01f) }
+        // 画面と保存の値はいつも 0〜2（読み込みで収める）。範囲の外の値は作れない
+        assertEquals(2f, AppSettings(voiceVolume = 2f).voiceVolume)
+        assertThrows(IllegalArgumentException::class.java) { AppSettings(voiceVolume = 2.01f) }
         assertThrows(IllegalArgumentException::class.java) { AppSettings(voiceVolume = -0.01f) }
         assertThrows(IllegalArgumentException::class.java) { AppSettings(voiceVolume = Float.NaN) }
     }

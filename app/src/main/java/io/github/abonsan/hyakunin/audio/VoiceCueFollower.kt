@@ -2,6 +2,7 @@ package io.github.abonsan.hyakunin.audio
 
 import io.github.abonsan.hyakunin.game.AudioClock
 import io.github.abonsan.hyakunin.game.AudioCue
+import io.github.abonsan.hyakunin.game.GameConfig
 import io.github.abonsan.hyakunin.game.NextAudio
 import kotlin.math.abs
 import kotlin.math.max
@@ -28,7 +29,7 @@ import kotlin.math.roundToLong
  * - 音を出すのはいつも1つの再生器だけ。次の cue に移ったら前の再生器はすぐ止め（クリップは鳴り終えている）、
  *   鳴らし始める前にほかの再生器が鳴っていれば止める。先に読み込んだ再生器は、その cue が始まるまで鳴らさない
  * - 鳴っている間は音量を変えない。cue がなくなったら（次へ・やり直し）、[FADE_OUT_MILLIS] かけて小さくしてから止める
- * - 利用者の音量（[setVolume]、設定の「音量」）は、変わったときだけすべての再生器に渡す（ふつうは対戦の初めに1回、
+ * - 利用者の音量（[setVolume]、設定の「音量」、0〜2 倍）は、変わったときだけすべての再生器に渡す（ふつうは対戦の初めに1回、
  *   鳴らす前）。再生器が出す音量は、これに小さくして止めるときの音量を掛けたもの
  *
  * @param wallClock 診断用の実時間（ms）。鳴らしてから音が出始めるまでの時間を測る
@@ -68,12 +69,13 @@ class VoiceCueFollower(
     }
 
     /**
-     * 利用者の音量を [volume]（0〜1。範囲の外の値は収め、数でない値は無視する）にする。変わったときだけ、すべての再生器に
-     * 渡す（刻みごとには渡さない）。鳴っている最中に変えても、位置は移さずに音量だけが変わる。
+     * 利用者の音量を [volume]（クリップそのままの大きさを 1 とした倍率、0〜[GameConfig.MAX_VOICE_VOLUME]。範囲の外の値は
+     * 収め、数でない値は無視する）にする。変わったときだけ、すべての再生器に渡す（刻みごとには渡さない）。
+     * 鳴っている最中に変えても、位置は移さずに音量だけが変わる。
      */
     fun setVolume(volume: Float) {
         if (volume.isNaN()) return
-        val v = volume.coerceIn(0f, 1f)
+        val v = volume.coerceIn(0f, GameConfig.MAX_VOICE_VOLUME)
         if (v == this.volume) return
         this.volume = v
         for (deck in decks) deck.port.setVolume(v)

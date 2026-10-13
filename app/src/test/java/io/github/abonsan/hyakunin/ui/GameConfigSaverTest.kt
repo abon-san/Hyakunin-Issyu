@@ -39,6 +39,8 @@ class GameConfigSaverTest {
             ),
             GameConfig(readingStyle = ReadingStyle.SIMPLE),
             GameConfig(voiceVolume = 0f),
+            GameConfig(voiceVolume = 1.75f),
+            GameConfig(voiceVolume = GameConfig.MAX_VOICE_VOLUME),
             GameConfig(ruleMode = RuleMode.SIMPLE, readingStyle = ReadingStyle.COMPETITIVE, voiceEnabled = false),
         )
         for (config in configs) {
