@@ -3,12 +3,16 @@ package io.github.abonsan.hyakunin.ui
 import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.abonsan.hyakunin.data.Poems
@@ -21,13 +25,18 @@ import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.game.voice.VoiceBankSource
+import io.github.abonsan.hyakunin.game.voice.FAKE_JOKA_KAMI
 import io.github.abonsan.hyakunin.game.voice.VoiceBankState
 import io.github.abonsan.hyakunin.game.voice.fakeVoiceBank
 import io.github.abonsan.hyakunin.ui.home.GameConfigStore
 import io.github.abonsan.hyakunin.ui.match.LocalVoicePlayerFactory
 import io.github.abonsan.hyakunin.ui.settings.AppSettings
 import io.github.abonsan.hyakunin.ui.settings.AppSettingsStore
+import io.github.abonsan.hyakunin.ui.settings.FakeVoicePreviewFactory
+import io.github.abonsan.hyakunin.ui.settings.LocalVoicePreviewFactory
+import io.github.abonsan.hyakunin.ui.settings.PREVIEW_LABEL
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
+import io.github.abonsan.hyakunin.ui.settings.VOLUME_LABEL
 import io.github.abonsan.hyakunin.ui.theme.HyakuninTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -56,13 +65,14 @@ class HyakuninAppTest {
     private val settingsStore = AppSettingsStore(context)
     private val orientations = mutableListOf<ScreenOrientation>()
     private val players = RecordingVoicePlayerFactory()
+    private val previews = FakeVoicePreviewFactory()
 
     /**
-     * アプリを表示する。読み上げ音声は [voiceBanks]（既定は音声なし）で、再生器は記録するだけの偽物にする。
+     * アプリを表示する。読み上げ音声は [voiceBanks]（既定は音声なし）で、対戦と「試聴」の再生器は記録するだけの偽物にする。
      */
     private fun showApp(voiceBanks: VoiceBankSource = VoiceBankSource.ready(null)) {
         composeRule.setContent {
-            CompositionLocalProvider(LocalVoicePlayerFactory provides players) {
+            CompositionLocalProvider(LocalVoicePlayerFactory provides players, LocalVoicePreviewFactory provides previews) {
                 HyakuninTheme {
                     HyakuninApp(
                         configStore,
@@ -144,6 +154,71 @@ class HyakuninAppTest {
         assertEquals(VerseStyle.KANA, settingsStore.load().verseStyle)
         composeRule.onNodeWithText(ScreenOrientation.AUTO.label).performScrollTo().performClick()
         assertEquals(listOf(ScreenOrientation.LANDSCAPE, ScreenOrientation.AUTO), orientations)
+    }
+
+    @Test
+    fun theVolumeIsSavedAndTheMatchPlaysAtIt() {
+        showApp(voiceBanks = VoiceBankSource.ready(fakeVoiceBank(poems = Poems.all)))
+        composeRule.onNodeWithText("設定").performClick()
+        composeRule.onNodeWithContentDescription(VOLUME_LABEL)
+            .performScrollTo()
+            .performSemanticsAction(SemanticsActions.SetProgress) { it(0.4f) }
+        assertEquals(0.4f, settingsStore.load().voiceVolume)
+        composeRule.onNodeWithContentDescription("戻る").performClick()
+
+        // 対戦を始めるときに音量を対戦設定へ移し、鳴らす前に再生器へ渡す
+        composeRule.onNodeWithText("競技モード").performClick()
+        composeRule.onNodeWithText("対戦開始").performClick()
+        composeRule.waitForIdle()
+        assertEquals(0.4f, activeMatch()!!.uiState.value.config.voiceVolume)
+        val player = players.players.single()
+        assertEquals(listOf(0.4f), player.volumes)
+        // 対戦の間は渡し直さない
+        composeRule.onNodeWithText("すぐ読む").performClick()
+        composeRule.advanceMainLooper(3_000L)
+        assertEquals(listOf(0.4f), player.volumes)
+    }
+
+    @Test
+    fun theSettingsPreviewPlaysTheJokaFromTheVoiceBank() {
+        val loading = MutableStateFlow<VoiceBankState>(VoiceBankState.Loading)
+        var requests = 0
+        val source = object : VoiceBankSource {
+            override val state: StateFlow<VoiceBankState> = loading
+
+            override fun request() {
+                requests++
+            }
+        }
+        settingsStore.save(AppSettings(voiceVolume = 0.6f))
+        showApp(voiceBanks = source)
+        composeRule.onNodeWithText("設定").performClick()
+        composeRule.waitForIdle()
+        // 設定の画面を開いたら音声を読み込み始め、読み終えるまで「試聴」は押せない
+        assertTrue(requests > 0)
+        composeRule.onNodeWithText(PREVIEW_LABEL).performScrollTo().assertIsNotEnabled()
+        loading.value = VoiceBankState.Ready(fakeVoiceBank(poems = Poems.all))
+        composeRule.onNodeWithText(PREVIEW_LABEL).assertIsEnabled().performClick()
+        // 序歌の上の句を、設定の音量で鳴らす
+        val preview = previews.previews.single()
+        assertEquals("play ${FAKE_JOKA_KAMI.asset} 0.6", preview.commands.last { it.startsWith("play") })
+        // 設定の画面を離れると止めて手放す
+        composeRule.onNodeWithContentDescription("戻る").performClick()
+        composeRule.waitForIdle()
+        assertTrue(preview.released)
+    }
+
+    @Test
+    fun withTheVoiceOffTheSettingsScreenDoesNotLoadTheVoice() {
+        settingsStore.save(AppSettings(voiceEnabled = false))
+        val source = object : VoiceBankSource {
+            override val state: StateFlow<VoiceBankState> = MutableStateFlow(VoiceBankState.Loading)
+
+            override fun request() = error("読み上げ音声を使わないなら読み込まない")
+        }
+        showApp(voiceBanks = source)
+        composeRule.onNodeWithText("設定").performClick()
+        composeRule.onNodeWithContentDescription(VOLUME_LABEL).performScrollTo().assertIsNotEnabled()
     }
 
     @Test

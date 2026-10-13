@@ -76,6 +76,7 @@ internal fun readCounterText(readNumber: Int, totalReads: Int) = "第 $readNumbe
 /**
  * 読み上げ中の表示。句を [verseStyle] の仮名遣いで書き、[ReadingState.revealedKana]（読みの仮名の数）に
  * 対応する文字まで見せる。まだ読んでいない文字は透明で描き、文字が増えても配置が動かないようにする。
+ * 新しく読んだ文字は透明から浮かび上がらせる（[KanaFadeIn]。表示したときにもう読んであった文字はすぐ見せる）。
  * 配置は [VersePanel]。
  */
 @Composable
@@ -91,6 +92,7 @@ internal fun ReadingPanel(
         title = readCounterText(reading.readNumber, reading.totalReads),
         verse = verse,
         spanFor = { index -> if (index < revealed) Revealed else Hidden },
+        fade = rememberKanaFadeIn(verse, revealed),
         // 読み上げ済みの部分（表示している文字）だけを読み上げ機能に渡す
         description = verse.text.take(revealed),
         notice = notice,
@@ -104,6 +106,7 @@ internal fun ReadingPanel(
  * 1句1行では収まらない低い欄（分割画面など）では、句を横に並べて詰める。
  *
  * @param title 句の上の飾り罫つきの見出し
+ * @param fade 新しく見せた文字の浮かび上がり（[rememberKanaFadeIn]）。null ならすぐ見せる
  * @param description 読み上げ機能に渡す句の文字（表示している部分）
  * @param titleRequired 見出しを省けない（低い欄でも出す）なら true。省ける見出しは、句を横に並べても
  *   入り切らない低い欄では省く
@@ -113,6 +116,7 @@ internal fun VersePanel(
     title: String,
     verse: Verse,
     spanFor: (Int) -> SpanStyle,
+    fade: KanaFadeIn?,
     description: String,
     notice: LockoutNotice?,
     modifier: Modifier = Modifier,
@@ -149,9 +153,9 @@ internal fun VersePanel(
                             Spacer(Modifier.height(if (flowed) 8.dp else 14.dp))
                         }
                         if (flowed) {
-                            CompactVerseText(verse, verseTextStyle(fontSize), spanFor, verseSemantics.fillMaxWidth())
+                            CompactVerseText(verse, verseTextStyle(fontSize), spanFor, verseSemantics.fillMaxWidth(), fade)
                         } else {
-                            VerseText(verse, verseTextStyle(fontSize), spanFor, verseSemantics)
+                            VerseText(verse, verseTextStyle(fontSize), spanFor, verseSemantics, fade)
                         }
                     }
                 }

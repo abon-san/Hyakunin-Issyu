@@ -7,21 +7,13 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.OptIn
-import androidx.media3.common.AudioAttributes
-import androidx.media3.common.C
-import androidx.media3.common.MediaItem
+import androidx.annotation.VisibleForTesting
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.AssetDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.RenderersFactory
 import androidx.media3.exoplayer.analytics.AnalyticsListener
-import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
-import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.extractor.ogg.OggExtractor
 import io.github.abonsan.hyakunin.BuildConfig
 import io.github.abonsan.hyakunin.game.AudioCue
 import io.github.abonsan.hyakunin.game.NextAudio
@@ -34,6 +26,9 @@ import io.github.abonsan.hyakunin.game.NextAudio
  * 音声フォーカスは自分で扱う（[VoiceAudioFocus]）。フォーカスを失ったとき・得られないとき・イヤホンが外れたときは
  * 音を止めて [onInterrupted] を呼ぶ（呼び出し側が対戦を一時停止する）。
  *
+ * 出す音量は、利用者の音量（[setVolume]、設定の「音量」）× 小さくして止めるときの音量 × ほかの音の間の音量（[OutputGain]）。
+ * ExoPlayer に渡すのは値が変わったときだけ（ふつうに鳴っている間は渡さない）。
+ *
  * デバッグ版では、クリップごとに読み込みの時間・鳴らし始めの遅れ・位置を移した回数・ずれの最大・アンダーランの回数を
  * logcat（タグ [TAG]）に出す。
  */
@@ -45,13 +40,11 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
         audioManager = appContext.getSystemService(AudioManager::class.java),
         onLoss = ::interrupt,
         onDuck = { ducked ->
-            duckGain = if (ducked) DUCK_GAIN else 1f
-            decks.forEach { it.applyVolume() }
+            val gain = if (ducked) VOICE_DUCK_GAIN else 1f
+            decks.forEach { it.duck(gain) }
         },
     )
 
-    /** ほかのアプリの短い音の間に下げる音量。 */
-    private var duckGain = 1f
     private var released = false
 
     private val decks = List(DECK_COUNT) { Deck(it) }
@@ -66,6 +59,14 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
     override fun warmUp() {
         if (!released) decks.forEach { it.warmUp() }
     }
+
+    override fun setVolume(volume: Float) {
+        if (!released) follower.setVolume(volume)
+    }
+
+    /** 再生器ごとの、ExoPlayer に渡してある音量（まだ作っていなければ null）。 */
+    @VisibleForTesting
+    internal val outputVolumes: List<Float?> get() = decks.map { it.exoVolume }
 
     override fun release() {
         if (released) return
@@ -91,12 +92,13 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
         private var loadedAsset: String? = null
         private var failed = false
 
-        /** 止めるときに小さくしていく音量（1 から 0）。 */
-        private var fadeGain = 1f
         private var fade: Runnable? = null
 
-        /** ExoPlayer に渡した音量。変わるときだけ渡す（鳴っている間は、小さくして止めるとき・ほかの音の間しか変えない）。 */
-        private var appliedVolume = 1f
+        /**
+         * ExoPlayer に渡す音量（利用者の音量 × 小さくして止めるときの音量 × ほかの音の間の音量）。変わるときだけ渡す
+         * （鳴っている間は、小さくして止めるとき・ほかの音の間・利用者が音量を変えたときしか変えない）。
+         */
+        private val output = OutputGain { exo?.volume = it }
 
         /** 読み込みを頼んだ時刻（実時間）。読み込みが終わったら null。 */
         private var prepareStartedAt: Long? = null
@@ -154,7 +156,7 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
                 // 同じクリップ（序歌の下の句の2回目など）は読み直さずに先頭へ戻す
                 p.seekTo(0L)
             } else {
-                p.setMediaItem(MediaItem.fromUri(ASSET_URI_PREFIX + asset))
+                p.setMediaItem(voiceMediaItem(asset))
                 p.prepare()
                 loadedAsset = asset
                 failed = false
@@ -185,6 +187,10 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
             player().playbackParameters = PlaybackParameters(speed)
         }
 
+        override fun setVolume(volume: Float) {
+            output.user = volume
+        }
+
         override fun stop(fadeOutMillis: Long) {
             val p = exo ?: return
             cancelFade()
@@ -195,15 +201,13 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
             val start = SystemClock.uptimeMillis()
             val step = object : Runnable {
                 override fun run() {
-                    fadeGain = fadeOutGain(SystemClock.uptimeMillis() - start, fadeOutMillis)
-                    applyVolume()
-                    if (fadeGain > 0f) {
+                    output.fade = fadeOutGain(SystemClock.uptimeMillis() - start, fadeOutMillis)
+                    if (output.fade > 0f) {
                         handler.postDelayed(this, FADE_STEP_MILLIS)
                     } else {
                         fade = null
                         exo?.stop()
-                        fadeGain = 1f
-                        applyVolume()
+                        output.fade = 1f
                     }
                 }
             }
@@ -216,6 +220,8 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
         override val isPlaying: Boolean get() = exo?.isPlaying == true
 
         override val positionMillis: Long get() = exo?.currentPosition ?: 0L
+
+        val exoVolume: Float? get() = exo?.volume
 
         fun warmUp() {
             player()
@@ -232,42 +238,23 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
             exo = null
         }
 
-        fun applyVolume() {
-            val p = exo ?: return
-            val volume = fadeGain * duckGain
-            if (volume == appliedVolume) return
-            appliedVolume = volume
-            p.volume = volume
+        /** ほかのアプリの短い音の間の音量にする（戻すときは 1）。 */
+        fun duck(gain: Float) {
+            output.duck = gain
         }
 
         private fun cancelFade() {
             fade?.let(handler::removeCallbacks)
             fade = null
-            fadeGain = 1f
-            applyVolume()
+            output.fade = 1f
         }
 
-        private fun player(): ExoPlayer = exo ?: buildPlayer().also {
+        private fun player(): ExoPlayer = exo ?: buildVoiceExoPlayer(appContext).also {
+            it.addListener(listener)
+            it.addAnalyticsListener(analytics)
             exo = it
-            appliedVolume = 1f
-            applyVolume()
-        }
-
-        private fun buildPlayer(): ExoPlayer {
-            // 鳴らすのはアセットの Ogg（Vorbis / Opus）だけなので、音声の描画とアセットの Ogg の読み取りだけを入れる
-            // （映像・字幕の描画や、ほかの形式の読み取りを入れないぶん APK が小さくなる）
-            val renderers = RenderersFactory { eventHandler, _, audioListener, _, _ ->
-                arrayOf(MediaCodecAudioRenderer(appContext, MediaCodecSelector.DEFAULT, eventHandler, audioListener))
-            }
-            val source = ProgressiveMediaSource.Factory({ AssetDataSource(appContext) }, OggExtractor.FACTORY)
-            return ExoPlayer.Builder(appContext, renderers, source)
-                .setAudioAttributes(EXO_ATTRIBUTES, false)
-                .setHandleAudioBecomingNoisy(true)
-                .build()
-                .also {
-                    it.addListener(listener)
-                    it.addAnalyticsListener(analytics)
-                }
+            // 作ったばかりの ExoPlayer の音量は 1。利用者の音量などを渡し直す
+            output.reattach()
         }
     }
 
@@ -278,19 +265,8 @@ class ExoVoicePlayer(context: Context, private val onInterrupted: () -> Unit) : 
         /** ExoPlayer の数。1つで鳴らし、もう1つに次のクリップを読み込んでおく。 */
         private const val DECK_COUNT = 2
 
-        private const val ASSET_URI_PREFIX = "asset:///"
-
-        /** ほかのアプリの短い音の間の音量。 */
-        private const val DUCK_GAIN = 0.2f
-
         /** 音を小さくしていく刻み（ms）。 */
         private const val FADE_STEP_MILLIS = 16L
-
-        /** ゲームの読み上げ（声）。音声フォーカスは [VoiceAudioFocus] で扱うので ExoPlayer には任せない。 */
-        private val EXO_ATTRIBUTES: AudioAttributes = AudioAttributes.Builder()
-            .setUsage(C.USAGE_GAME)
-            .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
-            .build()
     }
 }
 

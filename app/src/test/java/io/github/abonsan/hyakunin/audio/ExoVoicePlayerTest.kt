@@ -72,6 +72,31 @@ class ExoVoicePlayerTest {
     }
 
     @Test
+    fun theUserVolumeReachesBothPlayersAndSurvivesTheFadeOut() {
+        // 100% なら ExoPlayer の音量は初めの 1 のまま
+        player.warmUp()
+        assertEquals(listOf(1f, 1f), player.outputVolumes)
+        // 対戦の初めに渡した音量は、どちらの ExoPlayer にも渡る
+        player.setVolume(0.4f)
+        assertEquals(listOf(0.4f, 0.4f), player.outputVolumes)
+        val t = playUntilStarted(kami)
+        assertNotNull(shadowOf(audioManager).lastAudioFocusRequest)
+        assertEquals(0.4f, player.outputVolumes[0])
+        // 音声がなくなると小さくしてから止め、止め終えたら利用者の音量に戻す（次のクリップもその音量で鳴る）
+        player.update(null, t + 100L, paused = false)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400))
+        assertEquals(listOf(0.4f, 0.4f), player.outputVolumes)
+    }
+
+    @Test
+    fun aVolumeSetBeforeThePlayersExistIsAppliedWhenTheyAreMade() {
+        player.setVolume(0.25f)
+        assertEquals(listOf(null, null), player.outputVolumes)
+        player.warmUp()
+        assertEquals(listOf(0.25f, 0.25f), player.outputVolumes)
+    }
+
+    @Test
     fun losingTheAudioFocusInterruptsTheMatch() {
         playUntilStarted(kami)
         val focus = shadowOf(audioManager).lastAudioFocusRequest

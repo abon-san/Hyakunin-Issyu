@@ -1,6 +1,9 @@
 package io.github.abonsan.hyakunin.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -9,10 +12,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -21,13 +29,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import io.github.abonsan.hyakunin.ui.theme.Gofun
 import io.github.abonsan.hyakunin.ui.theme.Kincha
 import io.github.abonsan.hyakunin.ui.theme.Kon
+import io.github.abonsan.hyakunin.ui.theme.Shu
 import io.github.abonsan.hyakunin.ui.theme.Sumi
 import io.github.abonsan.hyakunin.ui.theme.Usuzumi
 import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
@@ -145,5 +158,67 @@ fun SwitchSetting(
                 uncheckedBorderColor = Usuzumi,
             ),
         )
+    }
+}
+
+/**
+ * 朱の珠のつまみと細い溝のスライダー。選んだところまでの溝を朱にする。[steps] は両端の間の刻みの数（0 なら連続）。
+ * [enabled] が false なら、つまみと溝を薄墨にして動かせなくする。読み上げ機能向けの説明は [modifier] の semantics で付ける。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun WafuSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
+    steps: Int = 0,
+) {
+    Slider(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier,
+        enabled = enabled,
+        valueRange = valueRange,
+        steps = steps,
+        thumb = { SliderKnob(enabled) },
+        track = { SliderLine(it, enabled) },
+    )
+}
+
+/** スライダーのつまみ。朱の珠に胡粉の縁（動かせないときは薄墨の珠）。 */
+@Composable
+private fun SliderKnob(enabled: Boolean) {
+    Box(
+        Modifier
+            .size(26.dp)
+            .then(if (enabled) Modifier.shadow(2.dp, CircleShape) else Modifier)
+            .background(if (enabled) Shu else Usuzumi, CircleShape)
+            .border(2.5.dp, Gofun, CircleShape),
+    )
+}
+
+/** スライダーの溝。細い線で、選んだところまでを朱にする（動かせないときは薄墨）。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SliderLine(state: SliderState, enabled: Boolean) {
+    val range = state.valueRange
+    val span = range.endInclusive - range.start
+    val fraction = if (span > 0f) ((state.value - range.start) / span).coerceIn(0f, 1f) else 0f
+    val active = if (enabled) Shu else Usuzumi.copy(alpha = 0.6f)
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(6.dp),
+    ) {
+        val y = size.height / 2
+        val stroke = 4.dp.toPx()
+        val rtl = layoutDirection == LayoutDirection.Rtl
+        val startX = if (rtl) size.width else 0f
+        val endX = if (rtl) 0f else size.width
+        val activeX = startX + (endX - startX) * fraction
+        drawLine(WashiDeep, Offset(startX, y), Offset(endX, y), stroke, StrokeCap.Round)
+        drawLine(active, Offset(startX, y), Offset(activeX, y), stroke, StrokeCap.Round)
     }
 }

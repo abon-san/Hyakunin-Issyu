@@ -82,6 +82,8 @@ class MainActivityTest {
         composeRule.onNodeWithText("百人一首").assertExists()
         composeRule.onNodeWithText("競技モード").assertExists()
         composeRule.onNodeWithText("設定").assertExists()
+        // 版を小さく添える
+        composeRule.onNodeWithText("Ver. ${BuildConfig.VERSION_NAME}").assertExists()
         assertEquals(ActivityInfo.SCREEN_ORIENTATION_USER, scenario.activity().requestedOrientation)
         // 音量ボタンは読み上げ音声（メディア）の音量を変える
         assertEquals(AudioManager.STREAM_MUSIC, scenario.activity().volumeControlStream)

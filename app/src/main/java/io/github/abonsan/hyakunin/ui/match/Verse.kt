@@ -1,16 +1,21 @@
 package io.github.abonsan.hyakunin.ui.match
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -201,6 +206,8 @@ internal fun verseTextStyle(fontSize: Dp): TextStyle = with(LocalDensity.current
 /**
  * 句を1句1行で中央にそろえて書く。文字ごとの見た目は [spanFor]（引数は文字の通し番号）で決める。
  * 上の句と下の句の間は文字の大きさに合わせて空ける。
+ *
+ * @param fade 新しく見せた文字の浮かび上がり。null なら [spanFor] のとおりにすぐ描く
  */
 @Composable
 internal fun VerseText(
@@ -208,6 +215,7 @@ internal fun VerseText(
     style: TextStyle,
     spanFor: (Int) -> SpanStyle,
     modifier: Modifier = Modifier,
+    fade: KanaFadeIn? = null,
 ) {
     val gap = with(LocalDensity.current) { (style.fontSize * VERSE_GAP).toDp() }
     Column(
@@ -215,16 +223,16 @@ internal fun VerseText(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        verse.kami.forEach { VerseLineText(it, style, spanFor) }
+        verse.kami.forEach { VerseLineText(it, style, spanFor, fade) }
         // 下の句だけ（前置きの前の歌の下の句）のときは間を空けない
         if (verse.kami.isNotEmpty() && verse.shimo.isNotEmpty()) Spacer(Modifier.height(gap))
-        verse.shimo.forEach { VerseLineText(it, style, spanFor) }
+        verse.shimo.forEach { VerseLineText(it, style, spanFor, fade) }
     }
 }
 
 /**
  * 句を詰めて書く。上の句・下の句をそれぞれ句ごとに横へ並べ、入り切らなければ句の切れ目で折り返す。
- * 狭い欄で [VerseText] の代わりに使う。
+ * 狭い欄で [VerseText] の代わりに使う。[fade] は [VerseText] と同じ。
  */
 @Composable
 internal fun CompactVerseText(
@@ -232,26 +240,56 @@ internal fun CompactVerseText(
     style: TextStyle,
     spanFor: (Int) -> SpanStyle,
     modifier: Modifier = Modifier,
+    fade: KanaFadeIn? = null,
 ) {
     val gap = with(LocalDensity.current) { (style.fontSize * FLOW_PHRASE_GAP).toDp() }
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         for (lines in listOf(verse.kami, verse.shimo)) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(gap, Alignment.CenterHorizontally)) {
-                lines.forEach { VerseLineText(it, style, spanFor) }
+                lines.forEach { VerseLineText(it, style, spanFor, fade) }
             }
         }
     }
 }
 
+/**
+ * 1句を書く。[fade] があれば、元の色で描き終えた文字だけを下に描き、浮かび上がっている最中の文字は、同じ句を
+ * その文字だけ元の色にして重ね、その不透明度だけを描くときに変える（文字の配置は変わらず、句も組み直さない）。
+ */
 @Composable
-private fun VerseLineText(line: VerseLine, style: TextStyle, spanFor: (Int) -> SpanStyle) {
-    val text = buildAnnotatedString {
-        line.text.forEachIndexed { i, char ->
-            withStyle(spanFor(line.firstKana + i)) { append(char) }
+private fun VerseLineText(line: VerseLine, style: TextStyle, spanFor: (Int) -> SpanStyle, fade: KanaFadeIn?) {
+    if (fade == null) {
+        LineText(lineText(line, spanFor), style)
+        return
+    }
+    Box {
+        LineText(lineText(line) { if (fade.isSettled(it)) spanFor(it) else Hidden }, style)
+        for (kana in fade.risingIn(line)) {
+            key(kana) {
+                LineText(
+                    text = lineText(line) { if (it in kana) spanFor(it) else Hidden },
+                    style = style,
+                    modifier = Modifier.graphicsLayer {
+                        alpha = kana.alpha
+                        compositingStrategy = CompositingStrategy.ModulateAlpha
+                    },
+                )
+            }
         }
     }
+}
+
+/** [line] の文字を、通し番号ごとの見た目 [styleOf] で並べた文。 */
+private fun lineText(line: VerseLine, styleOf: (Int) -> SpanStyle): AnnotatedString = buildAnnotatedString {
+    line.text.forEachIndexed { i, char ->
+        withStyle(styleOf(line.firstKana + i)) { append(char) }
+    }
+}
+
+@Composable
+private fun LineText(text: AnnotatedString, style: TextStyle, modifier: Modifier = Modifier) {
     // 1句は必ず1行に書く（文字が増えても折り返しで形が変わらないように）
-    Text(text = text, style = style, textAlign = TextAlign.Center, softWrap = false, maxLines = 1)
+    Text(text = text, modifier = modifier, style = style, textAlign = TextAlign.Center, softWrap = false, maxLines = 1)
 }
 
 /** [style] の仮名遣いで句ごとに分けた歌を覚えておく。 */

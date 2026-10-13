@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 鳴らす（右向きの三角） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:autoMirrored="true">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M8.6,5.2L18.4,11.2a0.95,0.95 0,0 1,0 1.6L8.6,18.8a0.95,0.95 0,0 1,-1.45 -0.8V6a0.95,0.95 0,0 1,1.45 -0.8z" />
+</vector>

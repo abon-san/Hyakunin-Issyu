@@ -40,11 +40,14 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import io.github.abonsan.hyakunin.BuildConfig
 import io.github.abonsan.hyakunin.R
 import io.github.abonsan.hyakunin.data.Poems
 import io.github.abonsan.hyakunin.game.RuleMode
@@ -72,6 +75,12 @@ internal val RuleMode.modeName: String
         RuleMode.SIMPLE -> "簡易モード"
     }
 
+/** トップ画面の下に小さく出す版（例:「Ver. 0.5.0」）。 */
+internal val VERSION_LABEL = "Ver. ${BuildConfig.VERSION_NAME}"
+
+/** 版の、読み上げ機能向けの読み方。 */
+private val VERSION_DESCRIPTION = "バージョン ${BuildConfig.VERSION_NAME}"
+
 /** モードの印の色（競技は朱、簡易は紺）。 */
 internal val RuleMode.accent: Color
     get() = when (this) {
@@ -81,7 +90,8 @@ internal val RuleMode.accent: Color
 
 /**
  * トップ画面。モードを選ぶと [onSelectMode]、「設定」で [onOpenSettings] を呼ぶ。
- * 横に広い画面では、左に題字、右にモードの選択を並べる。読み上げ音声のクレジットは「設定」の下に小さく添える。
+ * 横に広い画面では、左に題字、右にモードの選択を並べる。読み上げ音声のクレジットと版（[VERSION_LABEL]）は
+ * 「設定」の下に1行ずつ小さく添える。
  */
 @Composable
 fun TopScreen(
@@ -117,7 +127,12 @@ fun TopScreen(
                         onOpenSettings = onOpenSettings,
                         modifier = Modifier
                             .widthIn(max = 480.dp)
-                            .padding(start = 8.dp, end = 28.dp, top = 16.dp, bottom = 16.dp),
+                            .padding(
+                                start = 8.dp,
+                                end = 28.dp,
+                                top = if (compact) 10.dp else 16.dp,
+                                bottom = if (compact) 10.dp else 16.dp,
+                            ),
                         compact = compact,
                     )
                 }
@@ -164,7 +179,7 @@ fun TopScreen(
 private val CompactHeight = 600.dp
 
 /** 縦長の画面で、モードの選択に残しておく高さ（残りを題字の欄にする）。 */
-private val MenuReservedHeight = 400.dp
+private val MenuReservedHeight = 420.dp
 
 /** 題字（扇に重ねた取り札と「百人一首」）。青海波の地を敷く。 */
 @Composable
@@ -245,7 +260,7 @@ private fun FannedCards(cardWidth: Dp, modifier: Modifier = Modifier) {
     }
 }
 
-/** モードの選択と「設定」への入口、読み上げ音声のクレジット。 */
+/** モードの選択と「設定」への入口、読み上げ音声のクレジットと版。 */
 @Composable
 private fun ModeMenu(
     onSelectMode: (RuleMode) -> Unit,
@@ -258,7 +273,7 @@ private fun ModeMenu(
         Spacer(Modifier.height(if (compact) 10.dp else 14.dp))
         RuleMode.entries.forEach { mode ->
             ModeCard(mode, onClick = { onSelectMode(mode) }, compact = compact)
-            Spacer(Modifier.height(if (compact) 10.dp else 12.dp))
+            Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
         }
         Spacer(Modifier.height(if (compact) 2.dp else 10.dp))
         SecondaryButton(
@@ -267,8 +282,16 @@ private fun ModeMenu(
             icon = R.drawable.ic_settings,
             minHeight = if (compact) 44.dp else 48.dp,
         )
-        Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
+        Spacer(Modifier.height(if (compact) 6.dp else 12.dp))
         Text(text = VOICE_CREDIT, style = MaterialTheme.typography.labelSmall, color = UsuzumiText)
+        Spacer(Modifier.height(2.dp))
+        // 版はクレジットの一部と読まれないよう、行を分けて同じく小さく添える
+        Text(
+            text = VERSION_LABEL,
+            modifier = Modifier.semantics { contentDescription = VERSION_DESCRIPTION },
+            style = MaterialTheme.typography.labelSmall,
+            color = UsuzumiText,
+        )
     }
 }
 

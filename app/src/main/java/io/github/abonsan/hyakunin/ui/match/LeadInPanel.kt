@@ -37,7 +37,8 @@ internal fun leadInRevealedKana(leadIn: LeadInState): Int {
 /**
  * 競技かるた式の前置き（序歌・前の歌の下の句）の表示。見出しの下に、読み上げ中と同じ句の部品（[VersePanel]）で
  * 読んだところまでを見せる。前の歌の下の句は下の句だけを書く。間合い（[LeadInState.inMa]）の間は、句をすべて
- * 控えめな色で見せる。前置きの間は札を取れず、「読み始める」やカウントダウンも出さない。
+ * 控えめな色で見せる。新しく読んだ文字は、読み上げ中と同じく透明からその色まで浮かび上がらせる。
+ * 前置きの間は札を取れず、「読み始める」やカウントダウンも出さない。
  */
 @Composable
 internal fun LeadInPanel(leadIn: LeadInState, verseStyle: VerseStyle, modifier: Modifier = Modifier) {
@@ -51,6 +52,7 @@ internal fun LeadInPanel(leadIn: LeadInState, verseStyle: VerseStyle, modifier: 
         title = leadInTitle(leadIn),
         verse = verse,
         spanFor = { index -> if (index < shown) tone else Hidden },
+        fade = rememberKanaFadeIn(verse, shown),
         description = full.text.substring(first, shown.coerceAtLeast(first)),
         notice = null,
         modifier = modifier,

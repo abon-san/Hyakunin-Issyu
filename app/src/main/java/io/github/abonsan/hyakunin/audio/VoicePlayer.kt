@@ -23,6 +23,12 @@ interface VoicePlayer : AudioClock {
     /** 最初の音が遅れないよう、再生器を先に用意しておく。 */
     fun warmUp() = Unit
 
+    /**
+     * 利用者の音量（設定の「音量」、0〜1。範囲の外の値は収める）。初めは 1。対戦を始めるときに渡す。
+     * 鳴っている最中に変えても、位置は移さずに音量だけ変える。
+     */
+    fun setVolume(volume: Float) = Unit
+
     /** 鳴らすのをやめて再生器を手放す。以後は使わない。 */
     fun release()
 
@@ -57,6 +63,12 @@ interface VoicePlayerPort {
 
     /** 再生速度の倍率。音の高さは変えない。読み込む前に合わせておく。 */
     fun setSpeed(speed: Float)
+
+    /**
+     * 利用者の音量（0〜1）。出す音量は、これに小さくして止めるときの音量などを掛けたもの。作ったばかりの再生器は 1。
+     * 鳴っている最中に変えても位置は移さない。
+     */
+    fun setVolume(volume: Float)
 
     /** [fadeOutMillis] かけて音を小さくしてから止める。 */
     fun stop(fadeOutMillis: Long)

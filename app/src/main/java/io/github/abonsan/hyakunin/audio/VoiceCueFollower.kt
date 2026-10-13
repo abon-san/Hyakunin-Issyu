@@ -28,6 +28,8 @@ import kotlin.math.roundToLong
  * - 音を出すのはいつも1つの再生器だけ。次の cue に移ったら前の再生器はすぐ止め（クリップは鳴り終えている）、
  *   鳴らし始める前にほかの再生器が鳴っていれば止める。先に読み込んだ再生器は、その cue が始まるまで鳴らさない
  * - 鳴っている間は音量を変えない。cue がなくなったら（次へ・やり直し）、[FADE_OUT_MILLIS] かけて小さくしてから止める
+ * - 利用者の音量（[setVolume]、設定の「音量」）は、変わったときだけすべての再生器に渡す（ふつうは対戦の初めに1回、
+ *   鳴らす前）。再生器が出す音量は、これに小さくして止めるときの音量を掛けたもの
  *
  * @param wallClock 診断用の実時間（ms）。鳴らしてから音が出始めるまでの時間を測る
  * @param onClipFinished クリップ1つを受け持ち終えた（別の cue に移った・止めた）ときに、その記録を渡す（診断用）
@@ -46,6 +48,9 @@ class VoiceCueFollower(
     /** 今の cue を受け持つ再生器。なければ null。 */
     private var current: Deck? = null
 
+    /** 利用者の音量。初めは 1（作ったばかりの再生器と同じ）。 */
+    private var volume = 1f
+
     fun update(cue: AudioCue?, engineTimeMillis: Long, paused: Boolean, next: NextAudio? = null) {
         if (cue == null) {
             current?.let { finish(it, FADE_OUT_MILLIS) }
@@ -60,6 +65,18 @@ class VoiceCueFollower(
             }
         }
         preload(next)
+    }
+
+    /**
+     * 利用者の音量を [volume]（0〜1。範囲の外の値は収め、数でない値は無視する）にする。変わったときだけ、すべての再生器に
+     * 渡す（刻みごとには渡さない）。鳴っている最中に変えても、位置は移さずに音量だけが変わる。
+     */
+    fun setVolume(volume: Float) {
+        if (volume.isNaN()) return
+        val v = volume.coerceIn(0f, 1f)
+        if (v == this.volume) return
+        this.volume = v
+        for (deck in decks) deck.port.setVolume(v)
     }
 
     override fun heardPositionMillis(cueId: Long): Long? {

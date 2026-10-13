@@ -66,7 +66,8 @@ internal enum class Screen {
  * 表示中の画面と対戦の設定は画面の回転などでも保つ。設定は変えるたびに保存する。
  *
  * @param onOrientationChange 画面の向きの設定が変わったときに呼ぶ（Activity に向きを指定する）。
- * @param voiceBanks 読み上げ音声の読み込み。読み上げ音声を使う設定なら、対戦設定を開いたときに裏で読み込み始める。
+ * @param voiceBanks 読み上げ音声の読み込み。読み上げ音声を使う設定なら、対戦設定か設定の画面を開いたときに裏で読み込み始める
+ *   （設定の画面では「試聴」に使う）。
  */
 @Composable
 fun HyakuninApp(
@@ -84,9 +85,9 @@ fun HyakuninApp(
     var setupConfig by remember(mode) { mutableStateOf(configStore.load(mode)) }
 
     BackHandler(enabled = screen == Screen.SETUP || screen == Screen.SETTINGS) { screen = Screen.TOP }
-    // 対戦を始めるまでに読み終えるよう、対戦設定を開いたら読み込み始める
+    // 対戦を始めるまでに読み終えるよう、対戦設定を開いたら読み込み始める（設定の画面の「試聴」にも使う）
     LaunchedEffect(screen, settings.voiceEnabled) {
-        if (settings.voiceEnabled && (screen == Screen.SETUP || screen == Screen.MATCH)) voiceBanks.request()
+        if (settings.voiceEnabled && screen != Screen.TOP) voiceBanks.request()
     }
 
     when (screen) {
@@ -104,27 +105,33 @@ fun HyakuninApp(
                 configStore.save(it)
             },
             onStart = {
-                // 画面の設定（敵陣の札の向き・句の表示・読み上げ音声）は、対戦を始めるときに対戦設定へ移す
+                // 画面の設定（敵陣の札の向き・句の表示・読み上げ音声とその音量）は、対戦を始めるときに対戦設定へ移す
                 matchConfig = setupConfig.copy(
                     flipOpponentCards = settings.flipOpponentCards,
                     verseStyle = settings.verseStyle,
                     voiceEnabled = settings.voiceEnabled,
+                    voiceVolume = settings.voiceVolume,
                 )
                 matchId++
                 screen = Screen.MATCH
             },
             onBack = { screen = Screen.TOP },
         )
-        Screen.SETTINGS -> SettingsScreen(
-            settings = settings,
-            onSettingsChange = { new ->
-                val orientationChanged = new.orientation != settings.orientation
-                settings = new
-                settingsStore.save(new)
-                if (orientationChanged) onOrientationChange(new.orientation)
-            },
-            onBack = { screen = Screen.TOP },
-        )
+        Screen.SETTINGS -> {
+            val voice by voiceBanks.state.collectAsState()
+            SettingsScreen(
+                settings = settings,
+                onSettingsChange = { new ->
+                    val orientationChanged = new.orientation != settings.orientation
+                    settings = new
+                    settingsStore.save(new)
+                    if (orientationChanged) onOrientationChange(new.orientation)
+                },
+                onBack = { screen = Screen.TOP },
+                // 「試聴」は序歌の上の句を鳴らす（読み込み終えるまで・音声がなければ押せない）
+                previewClip = (voice as? VoiceBankState.Ready)?.bank?.jokaKami,
+            )
+        }
         Screen.MATCH -> MatchScope(matchId = matchId, isActive = { screen == Screen.MATCH }) {
             VoicedMatch(config = matchConfig, voiceBanks = voiceBanks, onExit = { screen = Screen.SETUP })
         }
@@ -164,6 +171,7 @@ internal val GameConfigSaver: Saver<GameConfig, Any> = listSaver(
             it.readInterval.name,
             it.readingStyle.name,
             it.voiceEnabled,
+            it.voiceVolume,
         )
     },
     restore = {
@@ -181,6 +189,7 @@ internal val GameConfigSaver: Saver<GameConfig, Any> = listSaver(
             // 後から足した項目。足す前に保存した状態から戻すときは既定値
             readingStyle = (it.getOrNull(9) as String?)?.let(ReadingStyle::valueOf) ?: ruleMode.defaultReadingStyle,
             voiceEnabled = it.getOrNull(10) as Boolean? ?: true,
+            voiceVolume = it.getOrNull(11) as Float? ?: 1f,
         )
     },
 )

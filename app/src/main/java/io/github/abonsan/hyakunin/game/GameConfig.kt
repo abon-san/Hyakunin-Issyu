@@ -113,9 +113,12 @@ data class GameConfig(
     val readingStyle: ReadingStyle = ReadingStyle.COMPETITIVE,
     /** 読み上げ音声を使うか。[ReadTiming.voice] が渡されているときだけ意味がある。false なら文字だけで進める。 */
     val voiceEnabled: Boolean = true,
+    /** 読み上げ音声の音量（0〜1）。再生器に渡すだけで、エンジンの動作は変えない。 */
+    val voiceVolume: Float = 1f,
 ) {
     init {
         require(emptyCardCount in 0..MAX_EMPTY_CARDS) { "emptyCardCount=$emptyCardCount" }
+        require(voiceVolume in 0f..1f) { "voiceVolume=$voiceVolume" }
     }
 
     companion object {

@@ -13,6 +13,9 @@ internal class RecordingVoicePlayer(val onInterrupted: () -> Unit) : VoicePlayer
 
     /** [update] で渡された、次に鳴る見込みのクリップ（[updates] と同じ順）。 */
     val nexts = mutableListOf<NextAudio?>()
+
+    /** [setVolume] で渡された音量（渡された順）。 */
+    val volumes = mutableListOf<Float>()
     var warmedUp = false
     var released = false
 
@@ -26,6 +29,10 @@ internal class RecordingVoicePlayer(val onInterrupted: () -> Unit) : VoicePlayer
 
     override fun warmUp() {
         warmedUp = true
+    }
+
+    override fun setVolume(volume: Float) {
+        volumes += volume
     }
 
     override fun release() {

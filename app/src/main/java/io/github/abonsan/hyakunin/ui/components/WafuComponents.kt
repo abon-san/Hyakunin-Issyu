@@ -93,7 +93,7 @@ fun PrimaryButton(
     }
 }
 
-/** 金茶の枠の控えめなボタン。[icon] を付けると文字の前に置く。 */
+/** 金茶の枠の控えめなボタン。[icon] を付けると文字の前に置く。[enabled] が false なら淡くして押せなくする。 */
 @Composable
 fun SecondaryButton(
     text: String,
@@ -101,13 +101,15 @@ fun SecondaryButton(
     modifier: Modifier = Modifier,
     @DrawableRes icon: Int? = null,
     minHeight: Dp = 52.dp,
+    enabled: Boolean = true,
 ) {
     OutlinedButton(
         onClick = onClick,
         modifier = modifier.heightIn(min = minHeight),
+        enabled = enabled,
         shape = MaterialTheme.shapes.medium,
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = Sumi),
-        border = BorderStroke(1.dp, Kincha),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = Sumi, disabledContentColor = Usuzumi),
+        border = BorderStroke(1.dp, if (enabled) Kincha else Kincha.copy(alpha = 0.4f)),
         contentPadding = PaddingValues(
             start = if (icon != null) 18.dp else 24.dp,
             end = 24.dp,
@@ -116,7 +118,12 @@ fun SecondaryButton(
         ),
     ) {
         if (icon != null) {
-            Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(20.dp), tint = Sumi)
+            Icon(
+                painter = painterResource(icon),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = if (enabled) Sumi else Usuzumi,
+            )
             Spacer(Modifier.width(8.dp))
         }
         ButtonLabel(text)
