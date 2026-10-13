@@ -234,7 +234,8 @@ def short_tail_gain(t: np.ndarray, ts: float, tau40: float, power: float, platea
 def short_tail(x: np.ndarray, v0: float, v1: float, level_ln: float, tail_s: float, *,
                power: float = 1.25, plateau_s: float = 0.0, dim_start_s: float | None = None,
                end_s: float | None = None, end_db: float = 78.0, taper_s: float = 0.04,
-               tol_s: float = 0.008, fall_cents: float | None = None, **sustain_kw) -> tuple[np.ndarray, dict]:
+               tol_s: float = 0.008, fall_cents: float | None = None, fall_start_s: float | None = None,
+               **sustain_kw) -> tuple[np.ndarray, dict]:
     """x の最後の母音の「聞こえている長さ」を tail_s 秒（母音の開始から。AUDIBLE_DB 以内）にして返す。
 
     きれいな短い母音 x を、安定部のスペクトル・非周期性を持つ WORLD の持続音に切り替え点で接ぎ（sustain_vowel）、
@@ -246,12 +247,14 @@ def short_tail(x: np.ndarray, v0: float, v1: float, level_ln: float, tail_s: flo
     end_s: 減衰が 0 になる時刻（母音の開始から）。None なら -end_db に達した所。長い余韻は end_s を総尺に合わせる。
     fall_cents: None でなければ「ピッチを上げない」モード（sustain_vowel を参照）。F0 は切り替えの F0 から、減衰の開始
         （dim_start_s。無ければ plateau_s + 0.2）まで平ら、そこから減衰の終わりまで fall_cents（負）だけ下がる。
+    fall_start_s: F0 が下がり始める時刻（母音の開始から）。None なら上のとおり減衰の開始に合わせる（Dim なしの余韻用）。
     y の長さは母音の開始 + (end_s があればそれ、無ければ 1.8 * tail_s) + 0.1 秒（呼び出し側が総尺に合わせる）。"""
     assert 0.0 <= plateau_s <= 2.0, "平らな部分は 2 秒まで"
     sustain_s = (end_s + 0.3) if end_s is not None else 1.8 * tail_s + 0.3
     if fall_cents is not None:
         sustain_kw.update(fall_cents=fall_cents,
-                          fall_start_s=dim_start_s if dim_start_s is not None else plateau_s + 0.2,
+                          fall_start_s=(fall_start_s if fall_start_s is not None
+                                        else dim_start_s if dim_start_s is not None else plateau_s + 0.2),
                           fall_end_s=end_s if end_s is not None else 1.8 * tail_s)
     y, n_valid, sinfo = sustain_vowel(x, v0, v1, level_ln, sustain_s, match_level=True, **sustain_kw)
     i0 = int(round(v0 * SR))
