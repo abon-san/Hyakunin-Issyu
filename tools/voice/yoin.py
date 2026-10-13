@@ -556,7 +556,7 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
         if f_join is not None:
             t_end = (shf + w + add + tail_n) / SR          # 合成音の中で、元の ve に当たる時刻（位相合わせで ±1.5 周期ずれる）
             ramp_j = np.clip((tt - (t_end - Lb / SR - 0.004)) / (Lb / SR + 0.008), 0, 1)
-            lnf2 = lnf + np.minimum(f_join - lf, 25 * np.log(2) / 1200) * ramp_j      # 元の F0 へ合わせる。上げ幅は最大 +25 cent（下げは自由）
+            lnf2 = lnf + np.minimum(f_join - lf, 15 * np.log(2) / 1200) * ramp_j      # 元の F0 へ合わせる。上げ幅は最大 +15 cent（下げは自由。ビブラートと接ぎ目を足しても +30 cent の検査に収まるように）
             y = synth(lnf2)
     yy = y[shf:]
     # --- 位相合わせ（後ろ）: yy[e-L:e] が x[be-L : be] に一番合う e
