@@ -3,6 +3,8 @@ package io.github.abonsan.hyakunin.ui.home
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -26,6 +28,7 @@ import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.game.voice.FAKE_JOKA_KAMI
 import io.github.abonsan.hyakunin.ui.captureScreenshot
+import io.github.abonsan.hyakunin.ui.components.isWideLayout
 import io.github.abonsan.hyakunin.ui.settings.AppSettings
 import io.github.abonsan.hyakunin.ui.settings.FakeVoicePreviewFactory
 import io.github.abonsan.hyakunin.ui.settings.LocalVoicePreviewFactory
@@ -77,16 +80,39 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
         assertEquals("Ver. ${BuildConfig.VERSION_NAME}", VERSION_LABEL)
         composeRule.onNodeWithContentDescription("バージョン ${BuildConfig.VERSION_NAME}").assertExists()
         val version = boundsOf(VERSION_LABEL)
-        assertTrue("クレジットの下: $version / ${boundsOf(VOICE_CREDIT)}", version.top >= boundsOf(VOICE_CREDIT).bottom)
-        for (other in listOf(VOICE_CREDIT, "設定", "簡易モード", RuleMode.SIMPLE.description, "百人一首")) {
+        val credit = boundsOf(VOICE_CREDIT)
+        assertTrue("クレジットの下: $version / $credit", version.top >= credit.bottom)
+        for (other in listOf(VOICE_CREDIT, "設定", "簡易モード", RuleMode.SIMPLE.description, "百人一首", SUBTITLE)) {
             assertFalse("$other と重なる: $version / ${boundsOf(other)}", version.overlaps(boundsOf(other)))
         }
+        for (other in listOf("設定", "簡易モード", RuleMode.SIMPLE.description, "百人一首", SUBTITLE)) {
+            assertFalse("$other と重なる: $credit / ${boundsOf(other)}", credit.overlaps(boundsOf(other)))
+        }
         capture("top")
-        // 低い画面ではスクロールすれば、画面からはみ出さずに見える
-        composeRule.onNodeWithText(VERSION_LABEL).performScrollTo().assertIsDisplayed()
         val root = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
-        val scrolled = boundsOf(VERSION_LABEL)
-        assertTrue("画面からはみ出す: $scrolled / $root", root.intersect(scrolled) == scrolled)
+        val wide = with(composeRule.density) { isWideLayout(root.width.toDp(), root.height.toDp()) }
+        if (wide) {
+            // 横に広い画面: クレジットと版は題字の副題の下（左の欄）。モードの選択の欄も含めて、スクロールせずに収まる
+            assertTrue("副題の下: $credit / ${boundsOf(SUBTITLE)}", credit.top >= boundsOf(SUBTITLE).bottom)
+            assertTrue("題字の欄: $credit / ${boundsOf(MODE_CAPTION)}", credit.right <= boundsOf(MODE_CAPTION).left)
+            val scrollable = composeRule
+                .onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+                .fetchSemanticsNodes()
+            for (node in scrollable) {
+                val range = node.config[SemanticsProperties.VerticalScrollAxisRange]
+                assertEquals("スクロールできてしまう", 0f, range.maxValue())
+            }
+            for (text in listOf(VERSION_LABEL, "設定", "簡易モード", RuleMode.SIMPLE.description)) {
+                val bounds = boundsOf(text)
+                assertTrue("画面からはみ出す: $text $bounds / $root", root.intersect(bounds) == bounds)
+            }
+        } else {
+            // 縦長の画面: クレジットと版は「設定」の下。低い画面ではスクロールすれば、画面からはみ出さずに見える
+            assertTrue("設定の下: $credit / ${boundsOf("設定")}", credit.top >= boundsOf("設定").bottom)
+            composeRule.onNodeWithText(VERSION_LABEL).performScrollTo().assertIsDisplayed()
+            val scrolled = boundsOf(VERSION_LABEL)
+            assertTrue("画面からはみ出す: $scrolled / $root", root.intersect(scrolled) == scrolled)
+        }
     }
 
     @Test
@@ -157,6 +183,12 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
         capture("settings")
     }
 }
+
+/** トップ画面の題字の副題。 */
+private const val SUBTITLE = "かるた取り　コンピュータと対戦"
+
+/** トップ画面のモードの選択の見出し。 */
+private const val MODE_CAPTION = "モードを選んでください"
 
 /** 一般的な大きさのスマホの横画面。 */
 @RunWith(AndroidJUnit4::class)
