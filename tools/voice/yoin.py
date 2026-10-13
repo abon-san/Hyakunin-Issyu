@@ -508,7 +508,9 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
 
     add = int(round(add_s * SR))
     lead = int(0.06 * SR)
-    total = lead + w + add + int(0.06 * SR)
+    ve_i = int(round(ve * SR))
+    tail_n = max(0, ve_i - be) if no_rise else 0      # no_rise: 後ろの窓のあとの元の尾も、平らな F0 の合成音に置き換える
+    total = lead + w + add + tail_n + int(0.06 * SR)
     n = int(round(total / SR * 1000 / FRAME_MS)) + 2
     tt = np.arange(n) * FRAME_MS / 1000
     u_f = (lead + L / 2) / SR
@@ -518,8 +520,6 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
     if no_rise:
         tgt = min(lb, lf)
         lnf = lf + (tgt - lf) * r
-        if lb > tgt:
-            lnf = lnf + (lb - tgt) * np.clip((tt - (u_b - 0.020)) / 0.032, 0, 1)
     ramp = min(0.12, max(u_b - u_f, 0.0) / 2.5)
     mask = np.clip((tt - u_f - 0.03) / ramp, 0, 1) * np.clip((u_b - 0.03 - tt) / ramp, 0, 1)
     mask = 0.5 - 0.5 * np.cos(np.pi * mask)
@@ -533,7 +533,7 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
     y = pw.synthesize(np.exp(lnf), np.exp(lsp_t), np.tile(apm, (n, 1)), SR, FRAME_MS)
     y = y * 10 ** (tremolo_db * np.interp(np.arange(len(y)) / SR, tt, vib * mask) / 20)
     # --- 位相合わせ（前）
-    T = int(round(SR / float(np.exp(0.5 * (lf + lb)))))
+    T = int(round(SR / float(np.exp(lf if no_rise else 0.5 * (lf + lb)))))
     tgt_f = x[s0: s0 + L]
     best, shf = -9.0, lead
     for sh in range(max(0, lead - 3 * T), lead + 3 * T):
@@ -544,24 +544,53 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
     # --- 位相合わせ（後ろ）: yy[e-L:e] が x[be-L : be] に一番合う e
     tgt_b = x[be - L: be]
     bestb, e = -9.0, w + add
-    for ee in range(w + add - 2 * T, w + add + 2 * T + 1):
+    for ee in (range(w + add - 2 * T, w + add + 2 * T + 1) if not no_rise else [w + add]):    # no_rise: 元の波形に戻らないので位相合わせは不要
         if ee - L < L or ee > len(yy):
             continue
         cc = _xcorr(tgt_b, yy[ee - L: ee])
         if cc > bestb:
             bestb, e = cc, ee
-    yy = yy[:e].copy()
-    # --- 音量: 前の端と後ろの端を元の波形に合わせる（dB で直線的に）
-    gf = np.sqrt((tgt_f ** 2).mean() / ((yy[:L] ** 2).mean() + 1e-20))
-    gb = np.sqrt((tgt_b ** 2).mean() / ((yy[e - L:] ** 2).mean() + 1e-20))
-    gf, gb = float(np.clip(gf, 0.5, 2.0)), float(np.clip(gb, 0.5, 2.0))
-    yy *= np.exp(np.interp(np.arange(e), [L / 2, e - L / 2], [np.log(gf), np.log(gb)]))
     ramp_in = np.linspace(0.0, 1.0, L)
-    out = np.concatenate([x[:s0], yy, x[be:]])
-    out[s0: s0 + L] = x[s0: s0 + L] * (1 - ramp_in) + yy[:L] * ramp_in
-    out[s0 + e - L: s0 + e] = yy[e - L:] * (1 - ramp_in) + x[be - L: be] * ramp_in
+    if not no_rise:
+        yy = yy[:e].copy()
+        # --- 音量: 前の端と後ろの端を元の波形に合わせる（dB で直線的に）
+        gf = np.sqrt((tgt_f ** 2).mean() / ((yy[:L] ** 2).mean() + 1e-20))
+        gb = np.sqrt((tgt_b ** 2).mean() / ((yy[e - L:] ** 2).mean() + 1e-20))
+        gf, gb = float(np.clip(gf, 0.5, 2.0)), float(np.clip(gb, 0.5, 2.0))
+        yy *= np.exp(np.interp(np.arange(e), [L / 2, e - L / 2], [np.log(gf), np.log(gb)]))
+        out = np.concatenate([x[:s0], yy, x[be:]])
+        out[s0: s0 + L] = x[s0: s0 + L] * (1 - ramp_in) + yy[:L] * ramp_in
+        out[s0 + e - L: s0 + e] = yy[e - L:] * (1 - ramp_in) + x[be - L: be] * ramp_in
+    else:
+        # 元の波形に戻らない（元の尾は F0 が上がっていることがあり、戻る所で上向きにはねる）。後ろの窓のあとは、
+        # 同じ平らな F0 の合成音を、元の尾の音量の形（後ろの窓に対する比）で ve まで続け、最後の 8 ms だけ元の波形へ。
+        gf = float(np.clip(np.sqrt((tgt_f ** 2).mean() / ((yy[:L] ** 2).mean() + 1e-20)), 0.5, 2.0))
+        gb = float(np.clip(np.sqrt((tgt_b ** 2).mean() / ((yy[e - L:e] ** 2).mean() + 1e-20)), 0.5, 2.0))
+        body = yy[:e] * np.exp(np.interp(np.arange(e), [L / 2, e - L / 2], [np.log(gf), np.log(gb)]))
+        tail = yy[e: e + tail_n].copy()
+        if tail_n > 0:
+            nat = x[be - L: ve_i]
+            hop, win = int(0.005 * SR), int(0.015 * SR)
+            ctr = np.arange(L, len(nat) - win // 2, hop)
+            rms = np.array([np.sqrt((nat[c - win // 2: c + win // 2] ** 2).mean()) for c in ctr]) if len(ctr) else np.array([1.0])
+            ref = np.sqrt((nat[:L] ** 2).mean()) + 1e-12
+            gcur = np.clip(rms / ref, 0.0, 1.5)
+            if len(ctr) > 1:
+                gcur = np.convolve(np.pad(gcur, 1, mode="edge"), np.ones(3) / 3, mode="valid")
+                gt = np.interp(np.arange(tail_n), ctr - L, gcur)
+            else:
+                gt = np.full(tail_n, float(gcur[0]))
+            tail = tail * gb * gt
+        seg = np.concatenate([body, tail])
+        Lf = min(int(0.008 * SR), tail_n)
+        if Lf > 0:
+            r8 = np.linspace(0.0, 1.0, Lf)
+            seg[-Lf:] = seg[-Lf:] * (1 - r8) + x[ve_i - Lf: ve_i] * r8
+        out = np.concatenate([x[:s0], seg, x[ve_i:]])
+        out[s0: s0 + L] = x[s0: s0 + L] * (1 - ramp_in) + body[:L] * ramp_in
+        e_tail = e
     info = dict(s0=s0, w=w, ins_at=be, n_add=e - w, xcorr_front=best, xcorr_back=bestb,
                 f0_front=float(np.exp(lf)), f0_back=float(np.exp(lb)), anchor_s=s0 / SR,
                 xfade_front=(s0, s0 + L), xfade_back=(s0 + e - L, s0 + e),
-                per_front=pk["per_front"], per_back=pk["per_back"])
+                per_front=pk["per_front"], per_back=pk["per_back"], tail_n=tail_n, no_rise=no_rise)
     return out, info

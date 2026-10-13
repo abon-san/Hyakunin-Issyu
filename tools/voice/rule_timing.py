@@ -201,7 +201,7 @@ def render_rule_clip(engine: vk.Engine, qr: vk.QueryResult, plan: kr.VersePlan, 
                        xfade_front=[a + before for a in inf["xfade_front"]],
                        xfade_back=[a + before for a in inf["xfade_back"]],
                        ext_start_s=(inf["s0"] + before) / sr, ext_end_s=(inf["s0"] + before) / sr
-                       + (inf["n_add"] + inf["w"]) / sr)
+                       + (inf["n_add"] + inf["w"] + inf.get("tail_n", 0)) / sr, tail_s=inf.get("tail_n", 0) / sr, no_rise=inf.get("no_rise", False))
         holds.append(rec)
     info = dict(info, alpha=alpha, base_total_s=base_total, target_s=target, extra_s=extra)
     clip = kr.Clip(z, q, plan, qr, vk._kana_times(qr, tl2, 0.0), verse_s, yoin_s, gain,
@@ -231,23 +231,25 @@ def check_rule_clip(clip: kr.Clip, rules: kr.KarutaRules, tol_s: float = 0.15) -
     assert (np.abs(pcm) >= 32767).sum() == 0, "クリッピング"
     assert np.abs(clip.samples).max() < 10 ** (rules.peak_db / 20) + 1e-6, "ピークが -1 dBFS を超えた"
     for h in clip.holds:
-        assert "n_add_s" not in h or h["xcorr_front"] > 0.5 and h["xcorr_back"] > 0.5, f"接ぎ目の相関が低い: {h}"
+        assert "n_add_s" not in h or h["xcorr_front"] > 0.5 and (h["xcorr_back"] > 0.5 or h.get("no_rise")), f"接ぎ目の相関が低い: {h}"
     out: dict = {}
     if rules.pitch_mode == "anchored" and clip.holds:
         # 伸ばした母音の F0 が上がっていない（pitch_check.hold_pitch。後ろの窓へ合わせる最後の約 30 ms の上昇は含めない）
         import pitch_check
-        ends, slopes, ups = [], [], []
+        ends, slopes, ups, flicks = [], [], [], []
         for h in clip.holds:
             if "ext_start_s" not in h:
                 continue
             hp = pitch_check.hold_pitch(clip.samples, h["ext_start_s"], h["ext_end_s"])
             for nm in ("harvest", "acf"):
                 assert hp[f"end_cents_{nm}"] <= 12.0, f"『{h['text']}』の伸ばしで F0 が上がっている ({nm}): {hp[f'end_cents_{nm}']:+.1f} cent"
+            assert hp["flick_cents"] <= 30.0, f"『{h['text']}』の伸ばしの終わりで F0 が上向きにはねる: {hp['flick_cents']:+.1f} cent"
+            flicks.append(hp["flick_cents"])
             ends.append(max(hp["end_cents_harvest"], hp["end_cents_acf"]))
             slopes.append(max(hp["slope_cents_per_s_harvest"], hp["slope_cents_per_s_acf"]))
             ups.append(max(hp["max_above_start_cents_harvest"], hp["max_above_start_cents_acf"]))
         if ends:
-            out = dict(hold_end_cents_max=max(ends), hold_slope_cents_per_s_max=max(slopes), hold_above_start_cents_max=max(ups))
+            out = dict(hold_end_cents_max=max(ends), hold_slope_cents_per_s_max=max(slopes), hold_above_start_cents_max=max(ups), hold_end_flick_cents_max=max(flicks))
     return out
 
 

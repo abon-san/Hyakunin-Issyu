@@ -127,11 +127,16 @@ def tail_pitch(x: np.ndarray, i0: int, audible_s: float, dim_start_s: float = 1.
 
 
 def hold_pitch(x: np.ndarray, t0: float, t1: float) -> dict:
-    """伸ばした母音（置き換えた範囲 [t0, t1] 秒、x の時刻）のピッチ。基準 = 範囲の最初の 25%（クロスフェードの後）。
-    body: 前後のクロスフェードを除いた範囲。join_rise: 最後の 25 ms の F0 - body の最後の 25% の F0（cent。後ろの窓へ合わせる上昇）。"""
-    a, b = t0 + 0.035, t1 - 0.04
+    """伸ばした母音（置き換えた範囲 [t0, t1] 秒、x の時刻。no_rise では母音の終わりまで）のピッチ。基準 = 範囲の最初の 25%（クロスフェードの後）。
+    end_cents: 範囲の最後の 25%（最後の 10 ms を除く）の F0。
+    flick_cents: 終わりの上向きのはね。最後の 120 ms（最後の 10 ms を除く）の 30 ms 窓の中央値（5 ms 刻み）の最大 - その前 150 ms の中央値
+    （cent）。音量が範囲の最大より 12 dB 以内の有声フレームだけ。伸ばした所の終わりの 30 ms も含めて測る。"""
+    a, b = t0 + 0.035, t1 - 0.01
     th, fh = f0_harvest(x, t0 - 0.03, t1 + 0.03)
     ta, fa = f0_acf(x, t0 - 0.03, t1 + 0.03)
+    e = np.array([10 * np.log10((x[int(c * SR) - 240: int(c * SR) + 240] ** 2).mean() + 1e-14) for c in th])
+    top = e[(th >= t0) & (th <= t1)].max()
+    fh_g = np.where(e > top - 12, fh, 0.0)
     q = (b - a) / 4
     ref = _med(th, fh, a, a + max(q, 0.05))
     ctr = np.arange(a + 0.025, b - 0.025, 0.025)
@@ -142,6 +147,16 @@ def hold_pitch(x: np.ndarray, t0: float, t1: float) -> dict:
         out[f"max_above_start_cents_{name}"] = float(np.nanmax(c))
         out[f"max_upmove_cents_{name}"] = max_upmove(c)
         out[f"end_cents_{name}"] = float(np.nanmedian(c[ctr >= b - max(q, 0.05)]))
-    last = _med(th, fh, t1 - 0.03, t1 - 0.005) if True else ref
-    out["join_rise_cents"] = float(1200 * np.log2(last / _med(th, fh, b - max(q, 0.05), b)))
+    # 終わりのはね（verifier と同じ定義）
+    vend = t1 - 0.01
+    m_ref = (th >= vend - 0.27) & (th < vend - 0.12) & (fh_g > 0)
+    flick = 0.0
+    if m_ref.sum() >= 5:
+        r0 = np.median(fh_g[m_ref])
+        for cc in np.arange(vend - 0.12 + 0.015, vend - 0.01, 0.005):
+            mm = (np.abs(th - cc) <= 0.015) & (fh_g > 0)
+            if mm.sum() >= 3:
+                flick = max(flick, 1200 * np.log2(np.median(fh_g[mm]) / r0))
+    out["flick_cents"] = float(flick)
+    out["join_rise_cents"] = float(flick)      # 以前の名前（README 用）
     return out

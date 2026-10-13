@@ -141,7 +141,7 @@ def main() -> None:
             for h in holds:
                 print(f"    {h['part']} {h['text']}: end {h['end_cents_harvest']:+.1f}/{h['end_cents_acf']:+.1f} "
                       f"slope {h['slope_cents_per_s_harvest']:+.1f} above {h['max_above_start_cents_harvest']:+.1f} "
-                      f"join {h['join_rise_cents']:+.1f}", flush=True)
+                      f"flick {h['flick_cents']:+.1f}", flush=True)
         metrics[label] = recs
         # ---- 判定（修正版 3 種）
         b = recs["before"]
@@ -170,6 +170,8 @@ def main() -> None:
                 for nm in ("harvest", "acf"):
                     if h[f"end_cents_{nm}"] > 8.0:
                         problems.append(f"{tag} 『{h['text']}』の伸ばしで F0 が上がっている {h[f'end_cents_{nm}']:+.1f} cent ({nm})")
+                if h["flick_cents"] > 30.0:
+                    problems.append(f"{tag} 『{h['text']}』の伸ばしの終わりで上向きにはねる {h['flick_cents']:+.1f} cent")
                 if h["hnr_min"] < 12 or h["click_splice"] > 1.5 * h["click_body"] + 1.0 or h["edge_step_db"] > 3.0:
                     problems.append(f"{tag} 『{h['text']}』の伸ばしの HNR/クリック/端 {h['hnr_min']:.1f} {h['click_splice']:.1f} {h['edge_step_db']:.1f}")
             if "B_tail_pitch" in r:
@@ -223,7 +225,7 @@ def write_readme(out: Path, metrics: dict, keys: list, poem: int) -> None:
             for h in r["holds"]:
                 L.append(f"    伸ばし {'上の句' if h['part'] == 'kami' else '下の句'}『{h['text']}』({h['vowel_s']:.2f} 秒): "
                          f"範囲の終わりの F0 {h['end_cents_harvest']:+.0f} / {h['end_cents_acf']:+.0f} cent、傾き {h['slope_cents_per_s_harvest']:+.0f} cent/秒、"
-                         f"頭より高い窓の最大 {h['max_above_start_cents_harvest']:+.0f} cent、後ろの窓へ合わせる最後の約 30 ms の上昇 {h['join_rise_cents']:+.0f} cent、"
+                         f"頭より高い窓の最大 {h['max_above_start_cents_harvest']:+.0f} cent、終わりの 120 ms の上向きのはね {h['flick_cents']:+.0f} cent、"
                          f"HNR 最小 {h['hnr_min']:.0f} dB、接ぎ目のクリック {h['click_splice']:.1f}")
         L.append("")
     L += ["作り方の変更（pitch_mode=anchored）:",
@@ -231,8 +233,9 @@ def write_readme(out: Path, metrics: dict, keys: list, poem: int) -> None:
           "        そこから総尺（3.0 秒）まで、コサインのなめらかな形で -60 cent（_平ら は 0、_強め は -100）だけ下げる。上がる所はない。",
           "        ビブラートは ±3 cent の平均ゼロで、下降の間に 0 へ。ジッタは 1.5 cent で、ゆっくりした上昇を含まない（以前は ±8 cent と、累積する ±3 cent のゆらぎ）。",
           "        音色は固定（スペクトル包絡は切り替え窓のまま。高域が明るくなっていく変化はない）。",
-          "  伸ばした母音の中: F0 は front の窓の高さで平らに保つ（back のほうが低ければ、そこへゆるやかに下げる）。back のほうが高いときの上昇は、",
-          "        最後のクロスフェード（約 30 ms）の中だけで行う。以前は front から back へ全体でなだらかに上がっていた。",
+          "  伸ばした母音の中: F0 は front の窓の高さで平らに保つ（back のほうが低ければ、そこへゆるやかに下げる）。back のほうが高くても上げない。",
+          "        後ろの窓のあとも、元の尾の音量の形に合わせた平らな F0 の合成音で母音の終わりまで続け、元の波形（F0 が上がっていることがある）には戻らない",
+          "        （v5 では最後の約 30 ms で元へ戻し、最大 +179 cent 上向きにはねていた）。",
           "時間配分（kanaStartMs・総尺・上の句 / 下の句 / 余韻）・音量は修正前と同じです。",
           "再現: generate_all.py --yoin-mode short --timing rule --yoin-short-tail-s 2.8 --yoin-short-dim-start-s 1.0 --yoin-short-end-s 3.0"
           " --pitch-mode anchored --yoin-fall-cents -60",
