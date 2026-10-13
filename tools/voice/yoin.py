@@ -580,6 +580,8 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
                 gt = np.interp(np.arange(tail_n), ctr - L, gcur)
             else:
                 gt = np.full(tail_n, float(gcur[0]))
+            wr = np.clip(np.arange(tail_n) / (0.02 * SR), 0.0, 1.0)      # 接ぎ目（body → tail）で音量が飛ばないよう、20 ms かけて元の尾の形へ
+            gt = (1 - wr) + gt * wr
             tail = tail * gb * gt
         seg = np.concatenate([body, tail])
         Lf = min(int(0.008 * SR), tail_n)

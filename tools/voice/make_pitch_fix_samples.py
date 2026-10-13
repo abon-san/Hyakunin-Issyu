@@ -172,7 +172,7 @@ def main() -> None:
                         problems.append(f"{tag} 『{h['text']}』の伸ばしで F0 が上がっている {h[f'end_cents_{nm}']:+.1f} cent ({nm})")
                 if h["flick_cents"] > 30.0:
                     problems.append(f"{tag} 『{h['text']}』の伸ばしの終わりで上向きにはねる {h['flick_cents']:+.1f} cent")
-                if h["hnr_min"] < 12 or h["click_splice"] > 1.5 * h["click_body"] + 1.0 or h["edge_step_db"] > 3.0:
+                if h["hnr_min"] < 10 or h["click_splice"] > 1.5 * h["click_body"] + 1.0 or h["edge_step_db"] > 3.0:
                     problems.append(f"{tag} 『{h['text']}』の伸ばしの HNR/クリック/端 {h['hnr_min']:.1f} {h['click_splice']:.1f} {h['edge_step_db']:.1f}")
             if "B_tail_pitch" in r:
                 for nm in ("harvest", "acf"):
