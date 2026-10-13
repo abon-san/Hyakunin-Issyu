@@ -67,7 +67,7 @@ ALT_REPLACE = {
     (22, "shimo"): ("いう", "ゆう"),
     (45, "kami"): ("いう", "ゆう"),
     (63, "shimo"): ("いう", "ゆう"),
-    (76, "shimo"): ("まがう", "まごう"),
+    (76, "shimo"): ("まごう", "まがう"),   # アプリの読みは「まごう」（別版は「まがう」）
 }
 
 
@@ -130,6 +130,7 @@ class KarutaRules:
     rule_hold_vibrato_cents: float = 6.0   # 延ばした母音の中のビブラート（両端でゼロになる形）
     # ピッチを上げない（pitch_mode == "anchored"）。"legacy" は v1〜v4 の再現
     pitch_mode: str = "legacy"          # "legacy" / "anchored"
+    yoin_fall_start_s: float = 0.0      # > 0: anchored の余韻で F0 が下がり始める時刻（最後の母音の開始から）。0 なら減衰（Dim）の開始と同じ
     yoin_fall_cents: float = -60.0      # anchored: 余韻の F0 は減衰の開始まで平ら、減衰の終わり（余韻の総尺）までに cent だけ下がる
     anchored_vibrato_cents: float = 3.0   # anchored: ビブラート（平均ゼロ。余韻の下降の間に 0 へ）
     anchored_jitter_cents: float = 1.5    # anchored: ジッタ（ゆっくりした上昇を含まない）
@@ -143,7 +144,8 @@ class KarutaRules:
 def tail_pitch_kw(rules: KarutaRules) -> dict:
     """yoin.short_tail に渡すピッチ関係の引数（pitch_mode で切り替え）。"""
     if rules.pitch_mode == "anchored":
-        return dict(fall_cents=rules.yoin_fall_cents, vibrato_cents=rules.anchored_vibrato_cents,
+        return dict(fall_cents=rules.yoin_fall_cents, fall_start_s=rules.yoin_fall_start_s or None,
+                    vibrato_cents=rules.anchored_vibrato_cents,
                     jitter_cents=rules.anchored_jitter_cents)
     assert rules.pitch_mode == "legacy", rules.pitch_mode
     return dict(drift_ln=(rules.yoin_drift_ln if rules.yoin_drift_ln_short is None else rules.yoin_drift_ln_short),
@@ -554,7 +556,7 @@ def check_yoin(clip: Clip, rules: KarutaRules) -> dict:
             assert m["n_clip"] == 0, "クリッピング"
             if rules.pitch_mode == "anchored":
                 import pitch_check
-                tp = pitch_check.tail_pitch(x, i0, m["audible_s"], rules.yoin_short_dim_start_s or 1.0)
+                tp = pitch_check.tail_pitch(x, i0, m["audible_s"], rules.yoin_fall_start_s or rules.yoin_short_dim_start_s or 1.0)
                 out.update({f"pitch_{k}": float(v) for k, v in tp.items() if isinstance(v, (int, float, np.floating))})
                 for nm in ("harvest", "acf"):
                     assert tp[f"slope_cents_per_s_{nm}"] <= (0.0 if rules.yoin_fall_cents <= -10 else 1.5), f"余韻の F0 が上がっている ({nm}): {tp[f'slope_cents_per_s_{nm}']:+.1f} cent/s"

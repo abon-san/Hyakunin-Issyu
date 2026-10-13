@@ -29,6 +29,7 @@ internal val HISTORICAL_UNITS: List<Pair<String, String>> = listOf(
     "てふ" to "ちょう",
     "けふ" to "きょう",
     "あふ" to "おう",
+    "がふ" to "ごう",
     "わう" to "おう",
     "かう" to "こう",
     "さう" to "そう",

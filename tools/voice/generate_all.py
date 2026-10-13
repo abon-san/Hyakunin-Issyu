@@ -161,7 +161,7 @@ def build_trials(clips: dict, poems, rules: kr.KarutaRules, trial_dir: Path, tri
         if f"{n:03d}_kami_alt" not in clips and f"{n:03d}_shimo_alt" not in clips:
             continue
         name = first_ku(poems[n]["kamiYomi"])
-        for label, alt in (("いう" if n != 76 else "まがう", False), ("ゆう" if n != 76 else "まごう", True)):
+        for label, alt in (("いう" if n != 76 else "まごう", False), ("ゆう" if n != 76 else "まがう", True)):
             parts = {}
             for part in ("kami", "shimo"):
                 alt_key = f"{n:03d}_{part}_alt"
@@ -194,6 +194,7 @@ def main():
     ap.add_argument("--timing", choices=["default", "rule"], default="default")
     ap.add_argument("--pitch-mode", choices=["legacy", "anchored"], default="legacy")
     ap.add_argument("--yoin-fall-cents", type=float, default=-60.0)
+    ap.add_argument("--yoin-fall-start-s", type=float, default=0.0)
     ap.add_argument("--version-label")
     ap.add_argument("--character", default="冥鳴ひまり")
     ap.add_argument("--style", default="ノーマル")
@@ -203,7 +204,7 @@ def main():
         kr.PACE_REF, yoin_mode=args.yoin_mode, yoin_short_tail_s=args.yoin_short_tail_s,
         yoin_short_dim_start_s=args.yoin_short_dim_start_s, yoin_short_end_s=args.yoin_short_end_s,
         yoin_drift_ln_short=args.yoin_drift_ln_short, timing=args.timing,
-        pitch_mode=args.pitch_mode, yoin_fall_cents=args.yoin_fall_cents)
+        pitch_mode=args.pitch_mode, yoin_fall_cents=args.yoin_fall_cents, yoin_fall_start_s=args.yoin_fall_start_s)
     assert args.yoin_short_tail_s == 0 or args.yoin_mode == "short", "--yoin-short-tail-s は --yoin-mode short 用"
     assert (args.yoin_short_dim_start_s == 0 and args.yoin_short_end_s == 0) or args.yoin_short_tail_s > 0, \
         "--yoin-short-dim-start-s / --yoin-short-end-s は --yoin-short-tail-s が必要"
