@@ -478,7 +478,7 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
                     xfade_s: float = 0.025, vibrato_cents: float = 6.0,
                     vibrato_hz: float = 5.2, jitter_cents: float = 3.0, tremolo_db: float = 0.5,
                     ap_floor: float = 0.07, seed: int = 0, no_rise: bool = False,
-                    pick_kw: dict | None = None) -> tuple[np.ndarray, dict]:
+                    pick_kw: dict | None = None, join_orig: bool = False) -> tuple[np.ndarray, dict]:
     """x の母音 [vs, ve)（秒）を、内側で add_s 秒（約。ピッチ周期の端数ぶん ±数 ms）延ばして返す。
 
     母音全体を WORLD で作り直すのではなく、pick_windows が選んだ 2 つの安定した窓（front と back）の間 [fs, be] だけを、
@@ -530,8 +530,11 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
     cents = np.log(2) / 1200
     lnf = lnf + (vibrato_cents * cents) * vib * mask + (jitter_cents * cents) * walk * mask
     lsp_t = spf[None, :] * (1 - r[:, None]) + spb[None, :] * r[:, None]
-    y = pw.synthesize(np.exp(lnf), np.exp(lsp_t), np.tile(apm, (n, 1)), SR, FRAME_MS)
-    y = y * 10 ** (tremolo_db * np.interp(np.arange(len(y)) / SR, tt, vib * mask) / 20)
+    def synth(lnf_):
+        y_ = pw.synthesize(np.exp(lnf_), np.exp(lsp_t), np.tile(apm, (n, 1)), SR, FRAME_MS)
+        return y_ * 10 ** (tremolo_db * np.interp(np.arange(len(y_)) / SR, tt, vib * mask) / 20)
+
+    y = synth(lnf)
     # --- 位相合わせ（前）
     T = int(round(SR / float(np.exp(lf if no_rise else 0.5 * (lf + lb)))))
     tgt_f = x[s0: s0 + L]
@@ -540,6 +543,21 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
         cc = _xcorr(tgt_f, y[sh: sh + L])
         if cc > best:
             best, shf = cc, sh
+    # no_rise + join_orig（次の仮名が続く）: 終わりの Lb の間に、F0 を元の波形の終わりの F0 へ合わせ、位相をそろえて元の波形へつなぐ
+    Lb = min(int(0.025 * SR), tail_n) if (no_rise and join_orig) else 0
+    f_join = None
+    if Lb > 0:
+        seg_o = x[max(0, ve_i - int(0.08 * SR)): ve_i].astype(np.float64)
+        f_o, t_o = pw.harvest(seg_o, SR, f0_floor=150, f0_ceil=450, frame_period=FRAME_MS)
+        f_o = pw.stonemask(seg_o, f_o, t_o, SR)
+        m_o = (t_o >= len(seg_o) / SR - 0.03) & (f_o > 0)
+        if m_o.sum() >= 3:
+            f_join = float(np.log(np.median(f_o[m_o])))
+        if f_join is not None:
+            t_end = (shf + w + add + tail_n) / SR          # 合成音の中で、元の ve に当たる時刻（位相合わせで ±1.5 周期ずれる）
+            ramp_j = np.clip((tt - (t_end - Lb / SR - 0.004)) / (Lb / SR + 0.008), 0, 1)
+            lnf2 = lnf + np.minimum(f_join - lf, 25 * np.log(2) / 1200) * ramp_j      # 元の F0 へ合わせる。上げ幅は最大 +25 cent（下げは自由）
+            y = synth(lnf2)
     yy = y[shf:]
     # --- 位相合わせ（後ろ）: yy[e-L:e] が x[be-L : be] に一番合う e
     tgt_b = x[be - L: be]
@@ -550,6 +568,19 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
         cc = _xcorr(tgt_b, yy[ee - L: ee])
         if cc > bestb:
             bestb, e = cc, ee
+    if Lb > 0 and f_join is not None:
+        tgt_j = x[ve_i - Lb: ve_i]
+        bj, e = -9.0, w + add
+        for ee in range(w + add - int(1.5 * T), w + add + int(1.5 * T) + 1):
+            a_ = ee + tail_n - Lb
+            if a_ < L or ee + tail_n > len(yy):
+                continue
+            cc = _xcorr(tgt_j, yy[a_: ee + tail_n])
+            if cc > bj:
+                bj, e = cc, ee
+        join_xcorr = bj
+    else:
+        join_xcorr = None
     ramp_in = np.linspace(0.0, 1.0, L)
     if not no_rise:
         yy = yy[:e].copy()
@@ -584,7 +615,7 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
             gt = (1 - wr) + gt * wr
             tail = tail * gb * gt
         seg = np.concatenate([body, tail])
-        Lf = min(int(0.008 * SR), tail_n)
+        Lf = Lb if (Lb > 0 and join_xcorr is not None) else min(int(0.008 * SR), tail_n)
         if Lf > 0:
             r8 = np.linspace(0.0, 1.0, Lf)
             seg[-Lf:] = seg[-Lf:] * (1 - r8) + x[ve_i - Lf: ve_i] * r8
@@ -594,5 +625,5 @@ def extend_interior(x: np.ndarray, vs: float, ve: float, level_ln: float, add_s:
     info = dict(s0=s0, w=w, ins_at=be, n_add=e - w, xcorr_front=best, xcorr_back=bestb,
                 f0_front=float(np.exp(lf)), f0_back=float(np.exp(lb)), anchor_s=s0 / SR,
                 xfade_front=(s0, s0 + L), xfade_back=(s0 + e - L, s0 + e),
-                per_front=pk["per_front"], per_back=pk["per_back"], tail_n=tail_n, no_rise=no_rise)
+                per_front=pk["per_front"], per_back=pk["per_back"], tail_n=tail_n, no_rise=no_rise, join_xcorr=join_xcorr)
     return out, info

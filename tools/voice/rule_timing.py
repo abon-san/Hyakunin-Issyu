@@ -143,7 +143,7 @@ def render_rule_clip(engine: vk.Engine, qr: vk.QueryResult, plan: kr.VersePlan, 
         for kw in (pick_kw[i], *rules.rule_hold_relax):      # 窓の選びは周りの母音で数 ms 変わる。取れなければ条件をゆるめる
             try:
                 y, inf = yoin.extend_interior(y, tl.vowel_starts[i], tl.ends[i], lvl[plan.levels[i]], ext[i],
-                                              vibrato_hz=rules.yoin_vibrato_hz, **kr.hold_pitch_kw(rules), pick_kw=kw,
+                                              vibrato_hz=rules.yoin_vibrato_hz, **kr.hold_pitch_kw(rules), pick_kw=kw, join_orig=(i + 1 < len(units) and not (units[i + 1].ku != units[i].ku and plan.pause_after[units[i].ku])),
                                               tremolo_db=rules.yoin_tremolo_db, ap_floor=rules.yoin_ap_floor, seed=i)
                 break
             except ValueError as e:
