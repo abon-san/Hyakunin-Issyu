@@ -102,6 +102,43 @@ class ExoVoicePreviewTest {
     }
 
     @Test
+    fun pausingKeepsThePositionAndGivesTheFocusBackUntilResumed() {
+        assertNull(preview.positionMillis)
+        assertTrue(preview.play(joka, 1f))
+        idle()
+        assertNotNull(preview.positionMillis)
+        val request = shadowOf(audioManager).lastAudioFocusRequest.audioFocusRequest
+        preview.pause()
+        // 止めている間も位置は分かり、音声フォーカスは手放す
+        val paused = preview.positionMillis
+        assertNotNull(paused)
+        assertSame(request, shadowOf(audioManager).lastAbandonedAudioFocusRequest)
+        idle()
+        assertEquals(paused, preview.positionMillis)
+        // 続きから鳴らすときは、フォーカスを求め直す
+        assertTrue(preview.resume())
+        assertSame(request, shadowOf(audioManager).lastAudioFocusRequest.audioFocusRequest)
+        // 鳴っているときに続きから鳴らそうとしても何もしない
+        assertFalse(preview.resume())
+        preview.stop()
+        assertNull(preview.positionMillis)
+        assertFalse(preview.resume())
+        assertEquals(0, stops)
+    }
+
+    @Test
+    fun aRefusedFocusKeepsThePreviewPaused() {
+        assertTrue(preview.play(joka, 1f))
+        preview.pause()
+        shadowOf(audioManager).setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
+        assertFalse(preview.resume())
+        assertNotNull(preview.positionMillis)
+        // 後で得られれば、続きから鳴らせる
+        shadowOf(audioManager).setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
+        assertTrue(preview.resume())
+    }
+
+    @Test
     fun aRefusedFocusDoesNotPlay() {
         shadowOf(audioManager).setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
         assertFalse(preview.play(joka, 1f))

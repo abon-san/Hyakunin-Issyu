@@ -69,11 +69,12 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
     @Test
     fun top() {
         composeRule.setContent {
-            HyakuninTheme { TopScreen(onSelectMode = {}, onOpenSettings = {}) }
+            HyakuninTheme { TopScreen(onSelectMode = {}, onOpenQuiz = {}, onOpenSettings = {}) }
         }
         composeRule.onNodeWithText("競技モード").assertExists()
         composeRule.onNodeWithText(RuleMode.SIMPLE.description).assertExists()
         composeRule.onNodeWithText("設定").assertExists()
+        composeRule.onNodeWithText(QUIZ_LABEL).assertExists()
         // 読み上げ音声のクレジットを小さく添える
         composeRule.onNodeWithText(VOICE_CREDIT).assertExists()
         // 版（BuildConfig の versionName）は、クレジットの下の行に小さく添える。ほかの文字やボタンと重ならない
@@ -82,10 +83,10 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
         val version = boundsOf(VERSION_LABEL)
         val credit = boundsOf(VOICE_CREDIT)
         assertTrue("クレジットの下: $version / $credit", version.top >= credit.bottom)
-        for (other in listOf(VOICE_CREDIT, "設定", "簡易モード", RuleMode.SIMPLE.description, "百人一首", SUBTITLE)) {
+        for (other in listOf(VOICE_CREDIT, "設定", QUIZ_LABEL, "簡易モード", RuleMode.SIMPLE.description, "百人一首", SUBTITLE)) {
             assertFalse("$other と重なる: $version / ${boundsOf(other)}", version.overlaps(boundsOf(other)))
         }
-        for (other in listOf("設定", "簡易モード", RuleMode.SIMPLE.description, "百人一首", SUBTITLE)) {
+        for (other in listOf("設定", QUIZ_LABEL, "簡易モード", RuleMode.SIMPLE.description, "百人一首", SUBTITLE)) {
             assertFalse("$other と重なる: $credit / ${boundsOf(other)}", credit.overlaps(boundsOf(other)))
         }
         capture("top")
@@ -102,13 +103,14 @@ abstract class MenuScreensScreenshotTest(private val prefix: String) {
                 val range = node.config[SemanticsProperties.VerticalScrollAxisRange]
                 assertEquals("スクロールできてしまう", 0f, range.maxValue())
             }
-            for (text in listOf(VERSION_LABEL, "設定", "簡易モード", RuleMode.SIMPLE.description)) {
+            for (text in listOf(VERSION_LABEL, "設定", QUIZ_LABEL, "簡易モード", RuleMode.SIMPLE.description)) {
                 val bounds = boundsOf(text)
                 assertTrue("画面からはみ出す: $text $bounds / $root", root.intersect(bounds) == bounds)
             }
         } else {
             // 縦長の画面: クレジットと版は「設定」の下。低い画面ではスクロールすれば、画面からはみ出さずに見える
             assertTrue("設定の下: $credit / ${boundsOf("設定")}", credit.top >= boundsOf("設定").bottom)
+            assertTrue("札を覚えるの下: $credit / ${boundsOf(QUIZ_LABEL)}", credit.top >= boundsOf(QUIZ_LABEL).bottom)
             composeRule.onNodeWithText(VERSION_LABEL).performScrollTo().assertIsDisplayed()
             val scrolled = boundsOf(VERSION_LABEL)
             assertTrue("画面からはみ出す: $scrolled / $root", root.intersect(scrolled) == scrolled)

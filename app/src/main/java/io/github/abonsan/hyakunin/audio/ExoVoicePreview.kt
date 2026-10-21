@@ -11,7 +11,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 
 /**
- * Media3 ExoPlayer で「試聴」のクリップを鳴らす [VoicePreview]。ExoPlayer の作り方・音声の属性・音声フォーカスの扱い
+ * Media3 ExoPlayer で「試聴」や「札を覚える」のクリップを鳴らす [VoicePreview]。ExoPlayer の作り方・音声の属性・音声フォーカスの扱い
  * （[VoiceAudioFocus]）は対戦の読み上げ（[ExoVoicePlayer]）と同じ。ExoPlayer は最初に鳴らすときに作り、
  * 同じクリップをもう一度鳴らすときは読み直さずに先頭へ戻す。
  *
@@ -19,6 +19,7 @@ import androidx.media3.exoplayer.ExoPlayer
  * 出さない）。ExoPlayer の音量は、ほかのアプリの短い音の間だけ下げる（[OutputGain]、値が変わったときだけ渡す）。
  * 出力に先に書いておく音を短くして（[PREVIEW_AUDIO_BUFFER_MILLIS]）、スライダーを動かした音量がすぐ聞こえるようにする。
  * 鳴り終えた・音声フォーカスを失った・イヤホンが外れた・鳴らせなかったときは止めて [onStopped] を呼ぶ。
+ * [pause] で止めている間は音声フォーカスを手放し、[resume] で求め直す。
  */
 @OptIn(UnstableApi::class)
 class ExoVoicePreview(context: Context, private val onStopped: () -> Unit) : VoicePreview {
@@ -34,6 +35,9 @@ class ExoVoicePreview(context: Context, private val onStopped: () -> Unit) : Voi
     private val gainStage = VoiceGainProcessor()
     private val output = OutputGain { exo?.volume = it }
     private var playing = false
+
+    /** [pause] で止めている（[resume] で続きから鳴らせる）。 */
+    private var paused = false
     private var released = false
 
     private val listener = object : Player.Listener {
@@ -69,8 +73,28 @@ class ExoVoicePreview(context: Context, private val onStopped: () -> Unit) : Voi
         }
         p.play()
         playing = true
+        paused = false
         return true
     }
+
+    override fun pause() {
+        if (!playing) return
+        playing = false
+        paused = true
+        exo?.pause()
+        focus.abandon()
+    }
+
+    override fun resume(): Boolean {
+        if (released || !paused || !focus.request()) return false
+        paused = false
+        playing = true
+        exo?.play()
+        return true
+    }
+
+    override val positionMillis: Long?
+        get() = if (playing || paused) exo?.currentPosition else null
 
     override fun setVolume(volume: Float) {
         gainStage.gain = volume
@@ -85,8 +109,9 @@ class ExoVoicePreview(context: Context, private val onStopped: () -> Unit) : Voi
     internal val gain: Float get() = gainStage.gain
 
     override fun stop() {
-        if (!playing) return
+        if (!playing && !paused) return
         playing = false
+        paused = false
         exo?.pause()
         focus.abandon()
     }
@@ -95,6 +120,7 @@ class ExoVoicePreview(context: Context, private val onStopped: () -> Unit) : Voi
         if (released) return
         released = true
         playing = false
+        paused = false
         exo?.release()
         exo = null
         focus.abandon()
@@ -102,7 +128,7 @@ class ExoVoicePreview(context: Context, private val onStopped: () -> Unit) : Voi
 
     /** 鳴り終えた・外から止められた。止めて、呼び出し側に知らせる。 */
     private fun stopBySelf() {
-        if (!playing) return
+        if (!playing && !paused) return
         stop()
         onStopped()
     }

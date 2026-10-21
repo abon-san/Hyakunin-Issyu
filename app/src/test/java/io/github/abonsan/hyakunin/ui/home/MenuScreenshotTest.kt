@@ -40,18 +40,25 @@ import org.robolectric.annotation.GraphicsMode
 class MenuScreenshotTest : MenuScreensScreenshotTest(prefix = "") {
 
     @Test
-    fun topLeadsToEachModeAndSettings() {
+    fun topLeadsToEachModeTheQuizAndSettings() {
         val selected = mutableListOf<RuleMode>()
+        var quizOpened = 0
         var settingsOpened = 0
         composeRule.setContent {
             HyakuninTheme {
-                TopScreen(onSelectMode = { selected += it }, onOpenSettings = { settingsOpened++ })
+                TopScreen(
+                    onSelectMode = { selected += it },
+                    onOpenQuiz = { quizOpened++ },
+                    onOpenSettings = { settingsOpened++ },
+                )
             }
         }
         composeRule.onNodeWithText("競技モード").performClick()
         composeRule.onNodeWithText("簡易モード").performClick()
+        composeRule.onNodeWithText(QUIZ_LABEL).performClick()
         composeRule.onNodeWithText("設定").performClick()
         assertEquals(listOf(RuleMode.COMPETITIVE, RuleMode.SIMPLE), selected)
+        assertEquals(1, quizOpened)
         assertEquals(1, settingsOpened)
     }
 

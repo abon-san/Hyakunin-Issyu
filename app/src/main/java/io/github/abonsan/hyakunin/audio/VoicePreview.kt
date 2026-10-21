@@ -3,8 +3,8 @@ package io.github.abonsan.hyakunin.audio
 import android.content.Context
 
 /**
- * 設定の画面の「試聴」で、読み上げ音声のクリップ1つを鳴らすもの。メインスレッドからだけ呼ぶ。
- * 使い終えたら [release]。
+ * 読み上げ音声のクリップ1つを鳴らすもの。設定の画面の「試聴」と、「札を覚える」の上の句に使う。
+ * メインスレッドからだけ呼ぶ。使い終えたら [release]。
  */
 interface VoicePreview {
     /**
@@ -16,7 +16,19 @@ interface VoicePreview {
     /** 音量を [volume]（0〜2）にする。鳴っていれば、そのまま音量だけ変わる（少しずつ寄せる）。 */
     fun setVolume(volume: Float)
 
-    /** 止める。鳴っていなければ何もしない。 */
+    /** 鳴っていれば、位置を保ったまま止める（[resume] で続きから鳴らす）。鳴っていなければ何もしない。 */
+    fun pause()
+
+    /**
+     * [pause] で止めていれば、続きから鳴らす。鳴らし始めたら true。止めていない・音声フォーカスを得られない
+     * （電話中など）なら false（止めたまま）。
+     */
+    fun resume(): Boolean
+
+    /** 鳴らしている（[pause] で止めている間も）クリップの、聞こえている位置（ms）。鳴らしていなければ null。 */
+    val positionMillis: Long?
+
+    /** 止める（[pause] で止めていたものも）。鳴っていなければ何もしない。 */
     fun stop()
 
     /** 止めて再生器を手放す。以後は鳴らさない。 */

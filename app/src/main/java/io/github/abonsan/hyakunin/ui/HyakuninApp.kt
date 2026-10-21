@@ -25,6 +25,8 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.github.abonsan.hyakunin.data.Poem
+import io.github.abonsan.hyakunin.data.Poems
 import io.github.abonsan.hyakunin.game.CpuLevel
 import io.github.abonsan.hyakunin.game.GameConfig
 import io.github.abonsan.hyakunin.game.MemorizeTime
@@ -34,6 +36,8 @@ import io.github.abonsan.hyakunin.game.ReadingSpeed
 import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.VerseStyle
+import io.github.abonsan.hyakunin.game.quiz.quizPoems
+import io.github.abonsan.hyakunin.game.voice.VoiceBank
 import io.github.abonsan.hyakunin.game.voice.VoiceBankSource
 import io.github.abonsan.hyakunin.game.voice.VoiceBankState
 import io.github.abonsan.hyakunin.ui.home.GameConfigStore
@@ -41,6 +45,10 @@ import io.github.abonsan.hyakunin.ui.home.MatchSetupScreen
 import io.github.abonsan.hyakunin.ui.home.TopScreen
 import io.github.abonsan.hyakunin.ui.home.defaultReadingStyle
 import io.github.abonsan.hyakunin.ui.match.MatchRoute
+import io.github.abonsan.hyakunin.ui.quiz.QuizRoute
+import io.github.abonsan.hyakunin.ui.quiz.QuizSetupScreen
+import io.github.abonsan.hyakunin.ui.quiz.QuizStore
+import io.github.abonsan.hyakunin.ui.settings.AppSettings
 import io.github.abonsan.hyakunin.ui.settings.AppSettingsStore
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
 import io.github.abonsan.hyakunin.ui.settings.SettingsScreen
@@ -59,20 +67,28 @@ internal enum class Screen {
 
     /** 対戦。 */
     MATCH,
+
+    /** 「札を覚える」の出題範囲。 */
+    QUIZ_SETUP,
+
+    /** 「札を覚える」の練習。 */
+    QUIZ,
 }
 
 /**
- * トップ・対戦設定・設定・対戦の画面を切り替えるアプリ全体。
- * 表示中の画面と対戦の設定は画面の回転などでも保つ。設定は変えるたびに保存する。
+ * トップ・対戦設定・設定・対戦・「札を覚える」の画面を切り替えるアプリ全体。
+ * 表示中の画面と対戦の設定（練習なら出題する札）は画面の回転などでも保つ。設定は変えるたびに保存する。
  *
+ * @param quizStore 「札を覚える」の出題範囲と、間違えた札の記録
  * @param onOrientationChange 画面の向きの設定が変わったときに呼ぶ（Activity に向きを指定する）。
- * @param voiceBanks 読み上げ音声の読み込み。読み上げ音声を使う設定なら、対戦設定か設定の画面を開いたときに裏で読み込み始める
+ * @param voiceBanks 読み上げ音声の読み込み。読み上げ音声を使う設定なら、トップ以外の画面を開いたときに裏で読み込み始める
  *   （設定の画面では「試聴」に使う）。
  */
 @Composable
 fun HyakuninApp(
     configStore: GameConfigStore,
     settingsStore: AppSettingsStore,
+    quizStore: QuizStore,
     onOrientationChange: (ScreenOrientation) -> Unit = {},
     voiceBanks: VoiceBankSource = rememberAssetVoiceBanks(),
 ) {
@@ -83,9 +99,14 @@ fun HyakuninApp(
     var matchConfig by rememberSaveable(stateSaver = GameConfigSaver) { mutableStateOf(GameConfig()) }
     var settings by remember { mutableStateOf(settingsStore.load()) }
     var setupConfig by remember(mode) { mutableStateOf(configStore.load(mode)) }
+    var quizId by rememberSaveable { mutableIntStateOf(0) }
+    // 練習を始めたときに出題すると決めた札の歌番号（練習中は変わらない）
+    var quizPoemNos by rememberSaveable { mutableStateOf(IntArray(0)) }
 
-    BackHandler(enabled = screen == Screen.SETUP || screen == Screen.SETTINGS) { screen = Screen.TOP }
-    // 対戦を始めるまでに読み終えるよう、対戦設定を開いたら読み込み始める（設定の画面の「試聴」にも使う）
+    BackHandler(enabled = screen == Screen.SETUP || screen == Screen.SETTINGS || screen == Screen.QUIZ_SETUP) {
+        screen = Screen.TOP
+    }
+    // 対戦・練習を始めるまでに読み終えるよう、対戦設定・練習の設定を開いたら読み込み始める（設定の画面の「試聴」にも使う）
     LaunchedEffect(screen, settings.voiceEnabled) {
         if (settings.voiceEnabled && screen != Screen.TOP) voiceBanks.request()
     }
@@ -96,6 +117,7 @@ fun HyakuninApp(
                 mode = it
                 screen = Screen.SETUP
             },
+            onOpenQuiz = { screen = Screen.QUIZ_SETUP },
             onOpenSettings = { screen = Screen.SETTINGS },
         )
         Screen.SETUP -> MatchSetupScreen(
@@ -135,6 +157,72 @@ fun HyakuninApp(
         Screen.MATCH -> MatchScope(matchId = matchId, isActive = { screen == Screen.MATCH }) {
             VoicedMatch(config = matchConfig, voiceBanks = voiceBanks, onExit = { screen = Screen.SETUP })
         }
+        Screen.QUIZ_SETUP -> {
+            var quizConfig by remember { mutableStateOf(quizStore.loadConfig()) }
+            val missed = remember { quizStore.missed() }
+            val poems = remember(quizConfig, missed) { quizPoems(quizConfig, missed) }
+            QuizSetupScreen(
+                config = quizConfig,
+                missedCount = missed.size,
+                poemCount = poems.size,
+                onConfigChange = {
+                    quizConfig = it
+                    quizStore.saveConfig(it)
+                },
+                onStart = {
+                    quizPoemNos = poems.map { it.no }.toIntArray()
+                    quizId++
+                    screen = Screen.QUIZ
+                },
+                onBack = { screen = Screen.TOP },
+            )
+        }
+        Screen.QUIZ -> MatchScope(matchId = quizId, isActive = { screen == Screen.QUIZ }, holderKey = QUIZ_STORE_KEY) {
+            VoicedQuiz(
+                poems = remember(quizPoemNos) { quizPoemNos.map(Poems::byNo) },
+                settings = settings,
+                quizStore = quizStore,
+                voiceBanks = voiceBanks,
+                onExit = { screen = Screen.QUIZ_SETUP },
+            )
+        }
+    }
+}
+
+/** 練習の ViewModelStore を持つ [MatchStoreHolder] の key（対戦のものとは別にする）。 */
+internal const val QUIZ_STORE_KEY = "quiz"
+
+/**
+ * 「札を覚える」の練習。読み上げ音声を使うなら、読み込み終えてから始める（[VoicedMatch] と同じ）。
+ * 句の表示・読み上げ音声とその音量は、画面の設定（[settings]）に従う。
+ */
+@Composable
+private fun VoicedQuiz(
+    poems: List<Poem>,
+    settings: AppSettings,
+    quizStore: QuizStore,
+    voiceBanks: VoiceBankSource,
+    onExit: () -> Unit,
+) {
+    val quiz = @Composable { bank: VoiceBank? ->
+        QuizRoute(
+            poems = poems,
+            verseStyle = settings.verseStyle,
+            onAnswered = { poem, correct -> quizStore.recordAnswer(poem.no, correct) },
+            onExit = onExit,
+            voiceBank = bank,
+            volume = settings.voiceVolume,
+        )
+    }
+    if (!settings.voiceEnabled) {
+        quiz(null)
+        return
+    }
+    LaunchedEffect(voiceBanks) { voiceBanks.request() }
+    val voice by voiceBanks.state.collectAsState()
+    when (val loaded = voice) {
+        VoiceBankState.Loading -> Box(Modifier.fillMaxSize().background(Washi))
+        is VoiceBankState.Ready -> quiz(loaded.bank)
     }
 }
 
@@ -195,12 +283,18 @@ internal val GameConfigSaver: Saver<GameConfig, Any> = listSaver(
 )
 
 /**
- * 対戦ごとに新しい ViewModelStore を [content] に渡す。
+ * 対戦（または練習）ごとに新しい ViewModelStore を [content] に渡す。
  * 画面の回転などの構成変更では同じ対戦を続け、対戦を抜けたら（[isActive] が false）破棄する。
+ * [holderKey] は ViewModelStore を持つ [MatchStoreHolder] の key。練習は対戦と別のものを使う（null は対戦）。
  */
 @Composable
-private fun MatchScope(matchId: Int, isActive: () -> Boolean, content: @Composable () -> Unit) {
-    val holder = viewModel { MatchStoreHolder() }
+private fun MatchScope(
+    matchId: Int,
+    isActive: () -> Boolean,
+    holderKey: String? = null,
+    content: @Composable () -> Unit,
+) {
+    val holder = viewModel(key = holderKey) { MatchStoreHolder() }
     val owner = remember(holder, matchId) { holder.ownerFor(matchId) }
     val currentIsActive by rememberUpdatedState(isActive)
     DisposableEffect(owner) {
