@@ -1,6 +1,7 @@
 package io.github.abonsan.hyakunin.ui
 
 import android.content.Context
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.semantics.SemanticsActions
@@ -24,12 +25,28 @@ import io.github.abonsan.hyakunin.game.ReadStartMode
 import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.VerseStyle
+import io.github.abonsan.hyakunin.game.quiz.KimarijiGroup
+import io.github.abonsan.hyakunin.game.quiz.PoemNumberRange
+import io.github.abonsan.hyakunin.game.quiz.QuizConfig
+import io.github.abonsan.hyakunin.game.quiz.QuizPhase
 import io.github.abonsan.hyakunin.game.voice.VoiceBankSource
 import io.github.abonsan.hyakunin.game.voice.FAKE_JOKA_KAMI
 import io.github.abonsan.hyakunin.game.voice.VoiceBankState
 import io.github.abonsan.hyakunin.game.voice.fakeVoiceBank
 import io.github.abonsan.hyakunin.ui.home.GameConfigStore
+import io.github.abonsan.hyakunin.ui.home.QUIZ_LABEL
 import io.github.abonsan.hyakunin.ui.match.LocalVoicePlayerFactory
+import io.github.abonsan.hyakunin.ui.quiz.CORRECT_VERDICT
+import io.github.abonsan.hyakunin.ui.quiz.FINISH_LABEL
+import io.github.abonsan.hyakunin.ui.quiz.MISSED_ONLY_LABEL
+import io.github.abonsan.hyakunin.ui.quiz.QUIZ_START_LABEL
+import io.github.abonsan.hyakunin.ui.quiz.QuizStore
+import io.github.abonsan.hyakunin.ui.quiz.RETRY_MISSED_LABEL
+import io.github.abonsan.hyakunin.ui.quiz.SEE_RESULT_LABEL
+import io.github.abonsan.hyakunin.ui.quiz.WRONG_VERDICT
+import io.github.abonsan.hyakunin.ui.quiz.questionCounterText
+import io.github.abonsan.hyakunin.ui.quiz.quizCountText
+import io.github.abonsan.hyakunin.ui.quiz.scoreText
 import io.github.abonsan.hyakunin.ui.settings.AppSettings
 import io.github.abonsan.hyakunin.ui.settings.AppSettingsStore
 import io.github.abonsan.hyakunin.ui.settings.FakeVoicePreviewFactory
@@ -38,6 +55,23 @@ import io.github.abonsan.hyakunin.ui.settings.PREVIEW_LABEL
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
 import io.github.abonsan.hyakunin.ui.settings.VOLUME_LABEL
 import io.github.abonsan.hyakunin.ui.theme.HyakuninTheme
+import io.github.abonsan.hyakunin.ui.update.AUTO_UPDATE_CHECK_LABEL
+import io.github.abonsan.hyakunin.ui.update.CHECK_UPDATE_LABEL
+import io.github.abonsan.hyakunin.ui.update.LATER_LABEL
+import io.github.abonsan.hyakunin.ui.update.UPDATE_AVAILABLE_TITLE
+import io.github.abonsan.hyakunin.ui.update.UPDATE_LABEL
+import io.github.abonsan.hyakunin.ui.update.updateToLabel
+import io.github.abonsan.hyakunin.update.FakeApkDownloader
+import io.github.abonsan.hyakunin.update.FakeApkInstaller
+import io.github.abonsan.hyakunin.update.FakeReleaseSource
+import io.github.abonsan.hyakunin.update.InstallResult
+import io.github.abonsan.hyakunin.update.UpdateState
+import io.github.abonsan.hyakunin.update.UpdateViewModel
+import io.github.abonsan.hyakunin.update.testRelease
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
+import org.junit.rules.TemporaryFolder
+import org.robolectric.Shadows.shadowOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.junit.Assert.assertEquals
@@ -52,7 +86,7 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
-/** トップ・対戦設定・設定・対戦の行き来と、設定の保存。 */
+/** トップ・対戦設定・設定・対戦・「札を覚える」の行き来と、設定の保存。 */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [36], qualifiers = "w411dp-h891dp-xxhdpi")
@@ -63,9 +97,20 @@ class HyakuninAppTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private val configStore = GameConfigStore(context)
     private val settingsStore = AppSettingsStore(context)
+    private val quizStore = QuizStore(context)
     private val orientations = mutableListOf<ScreenOrientation>()
     private val players = RecordingVoicePlayerFactory()
     private val previews = FakeVoicePreviewFactory()
+
+    @get:Rule
+    val temp = TemporaryFolder()
+
+    /** 最新の版（既定はリリースなし）。アプリの更新は、この偽物で確かめる。 */
+    private val releases = FakeReleaseSource()
+    private val downloader by lazy { FakeApkDownloader(temp.root) }
+    private val installer = FakeApkInstaller()
+    private val installResults = MutableSharedFlow<InstallResult>(extraBufferCapacity = 8)
+    private var updates: UpdateViewModel? = null
 
     /**
      * アプリを表示する。読み上げ音声は [voiceBanks]（既定は音声なし）で、対戦と「試聴」の再生器は記録するだけの偽物にする。
@@ -77,8 +122,12 @@ class HyakuninAppTest {
                     HyakuninApp(
                         configStore,
                         settingsStore,
+                        quizStore,
                         onOrientationChange = { orientations += it },
                         voiceBanks = voiceBanks,
+                        updates = viewModel {
+                            UpdateViewModel(releases, downloader, installer, currentVersion = "0.7.0", installResults = installResults)
+                        }.also { updates = it },
                     )
                 }
             }
@@ -93,6 +142,12 @@ class HyakuninAppTest {
     }
 
     private fun activeMatch() = composeRule.waitForIdle().let { composeRule.activity.activeMatchViewModel() }
+
+    private fun activeQuiz() = composeRule.waitForIdle().let { composeRule.activity.activeQuizViewModel() }
+
+    /** 「札を覚える」で、1〜20 の一字決まり（18番「すみのえの」の1首だけ）を出す範囲にしておく。 */
+    private fun askOnlySumiNoE() =
+        quizStore.saveConfig(QuizConfig(numberRange = PoemNumberRange.FROM_1, kimarijiGroup = KimarijiGroup.ONE))
 
     @Test
     fun topLeadsToTheMatchSetupAndTheMatch() {
@@ -459,5 +514,168 @@ class HyakuninAppTest {
         composeRule.onNodeWithText("競技モード").performClick()
         composeRule.onNodeWithText("対戦開始").performClick()
         assertEquals(VerseStyle.KANA, activeMatch()!!.uiState.value.config.verseStyle)
+    }
+
+    @Test
+    fun theQuizReadsTheKamiAndJudgesTheChosenCard() {
+        askOnlySumiNoE()
+        settingsStore.save(AppSettings(voiceVolume = 0.8f))
+        showApp(voiceBanks = VoiceBankSource.ready(fakeVoiceBank(poems = Poems.all)))
+        composeRule.onNodeWithText(QUIZ_LABEL).performClick()
+        composeRule.onNodeWithText(quizCountText(1)).assertExists()
+        composeRule.onNodeWithText(QUIZ_START_LABEL).performClick()
+        composeRule.onNodeWithText(questionCounterText(1, 1)).assertExists()
+
+        // 上の句を設定の音量で鳴らし、聞こえている位置まで文字を出す（上の句は 100ms から 200ms ごと）
+        val preview = previews.previews.single()
+        assertEquals("play voice/p018_kami.ogg 0.8", preview.commands.last { it.startsWith("play") })
+        preview.position = 550L
+        composeRule.advanceMainLooper(100L)
+        assertEquals(3, activeQuiz()!!.uiState.value.revealedKana)
+        composeRule.onNodeWithContentDescription("すみの").assertExists()
+
+        // やめるかを確かめている間は止め、続けると続きから鳴らす
+        pressBack()
+        composeRule.onNodeWithText("練習をやめますか？").assertExists()
+        assertEquals("pause", preview.commands.last())
+        composeRule.onNodeWithText("続ける").performClick()
+        composeRule.waitForIdle()
+        assertEquals("resume", preview.commands.last())
+
+        // 正解の札を選ぶと、音声を止めて正解と出す
+        composeRule.onNodeWithContentDescription(Poems.byNo(18).shimoKana).performClick()
+        composeRule.onNodeWithText(CORRECT_VERDICT).assertExists()
+        assertEquals("stop", preview.commands.last())
+        assertEquals(QuizPhase.Answered(18, correct = true, revealedAtAnswer = 3), activeQuiz()!!.uiState.value.phase)
+        assertEquals(emptySet<Int>(), quizStore.missed())
+
+        composeRule.onNodeWithText(SEE_RESULT_LABEL).performClick()
+        composeRule.onNodeWithText(scoreText(1, 1)).assertExists()
+        // 「終わる」で練習の設定に戻り、再生器を手放す
+        composeRule.onNodeWithText(FINISH_LABEL).performClick()
+        composeRule.onNodeWithText(QUIZ_START_LABEL).assertExists()
+        assertNull(activeQuiz())
+        assertTrue(preview.released)
+        // 練習の設定から戻るとトップ
+        pressBack()
+        composeRule.onNodeWithText("モードを選んでください").assertExists()
+    }
+
+    @Test
+    fun aWrongAnswerIsRememberedForReview() {
+        askOnlySumiNoE()
+        // 読み上げ音声なし: 上の句を時間で1字ずつ出す
+        settingsStore.save(AppSettings(voiceEnabled = false))
+        showApp()
+        composeRule.onNodeWithText(QUIZ_LABEL).performClick()
+        composeRule.onNodeWithText(QUIZ_START_LABEL).performClick()
+        val quiz = activeQuiz()!!
+        composeRule.advanceMainLooper(1_000L)
+        val revealed = quiz.uiState.value.revealedKana
+        assertTrue("$revealed", revealed in 4..5)
+        assertTrue(previews.previews.all { preview -> preview.commands.none { it.startsWith("play") } })
+
+        // 違う札を選ぶと不正解と出し、間違えた札として残す
+        val wrong = quiz.uiState.value.question.choices.first { it.no != 18 }
+        composeRule.onNodeWithContentDescription(wrong.shimoKana).performClick()
+        composeRule.onNodeWithText(WRONG_VERDICT).assertExists()
+        assertEquals(setOf(18), quizStore.missed())
+        // 答えた後は文字が増えない
+        composeRule.advanceMainLooper(2_000L)
+        assertEquals(QuizPhase.Answered(wrong.no, correct = false, revealedAtAnswer = revealed), quiz.uiState.value.phase)
+
+        // 結果から、間違えた札だけをもう一度
+        composeRule.onNodeWithText(SEE_RESULT_LABEL).performClick()
+        composeRule.onNodeWithText(scoreText(0, 1)).assertExists()
+        composeRule.onNodeWithText(RETRY_MISSED_LABEL).performClick()
+        composeRule.onNodeWithText(questionCounterText(1, 1)).assertExists()
+        assertEquals(QuizPhase.Asking, quiz.uiState.value.phase)
+
+        // 途中でやめると練習の設定に戻る。「間違えた札だけ」にすると、記録した札だけを出す
+        pressBack()
+        composeRule.onNodeWithText("やめる").performClick()
+        composeRule.onNodeWithText(QUIZ_START_LABEL).assertExists()
+        assertNull(activeQuiz())
+        quizStore.saveConfig(QuizConfig())
+        pressBack()
+        composeRule.onNodeWithText(QUIZ_LABEL).performClick()
+        composeRule.onNodeWithText(quizCountText(100)).assertExists()
+        composeRule.onNodeWithText(MISSED_ONLY_LABEL).performScrollTo().performClick()
+        composeRule.onNodeWithText(quizCountText(1)).assertExists()
+        assertEquals(QuizConfig(missedOnly = true), quizStore.loadConfig())
+    }
+
+    @Test
+    fun aNewerVersionIsCheckedOnLaunchAndOfferedOnTheTopScreen() {
+        releases.release = testRelease("0.8.0")
+        showApp()
+        composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertExists()
+        assertEquals(1, releases.checks)
+
+        // 「更新」で落として入れ始め、Android の確認の画面を開く
+        composeRule.onNodeWithText(UPDATE_LABEL).performClick()
+        composeRule.waitForIdle()
+        assertEquals(listOf("apk"), installer.installed)
+        composeRule.onNodeWithText("インストールの確認を待っています").assertExists()
+        val confirm = Intent("android.content.pm.action.CONFIRM_INSTALL")
+        installResults.tryEmit(InstallResult.NeedsConfirmation(confirm))
+        composeRule.waitForIdle()
+        assertEquals(confirm.action, shadowOf(composeRule.activity).nextStartedActivity.action)
+        assertEquals(UpdateState.Installing(testRelease("0.8.0")), updates!!.state.value)
+
+        // 確認の画面でやめると、この起動の間はもう知らせない（設定の画面から更新できる）
+        installResults.tryEmit(InstallResult.Aborted)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertDoesNotExist()
+        composeRule.onNodeWithText("設定").performClick()
+        composeRule.onNodeWithText(updateToLabel(testRelease("0.8.0"))).performScrollTo().assertExists()
+    }
+
+    @Test
+    fun laterHidesTheOfferUntilTheNextLaunch() {
+        releases.release = testRelease("0.8.0")
+        showApp()
+        composeRule.onNodeWithText(LATER_LABEL).performClick()
+        composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertDoesNotExist()
+        // 対戦設定から戻っても、知らせ直さない
+        composeRule.onNodeWithText("競技モード").performClick()
+        pressBack()
+        composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertDoesNotExist()
+        assertTrue(installer.installed.isEmpty())
+        assertEquals(1, releases.checks)
+    }
+
+    @Test
+    fun withTheAutoCheckOffTheUpdateIsCheckedOnlyFromSettings() {
+        settingsStore.save(AppSettings(autoUpdateCheck = false))
+        releases.release = testRelease("0.8.0")
+        showApp()
+        composeRule.waitForIdle()
+        assertEquals(0, releases.checks)
+        composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertDoesNotExist()
+
+        // 設定の「今すぐ確認」で確かめる
+        composeRule.onNodeWithText("設定").performClick()
+        composeRule.onNodeWithText(CHECK_UPDATE_LABEL).performScrollTo().performClick()
+        assertEquals(1, releases.checks)
+        composeRule.onNodeWithText("新しい版（Ver. 0.8.0）があります").assertExists()
+        composeRule.onNodeWithText(updateToLabel(testRelease("0.8.0"))).performScrollTo().performClick()
+        composeRule.waitForIdle()
+        assertEquals(listOf("apk"), installer.installed)
+
+        // 起動時の確認を入れ直す
+        composeRule.onNodeWithText(AUTO_UPDATE_CHECK_LABEL).performScrollTo().performClick()
+        assertTrue(settingsStore.load().autoUpdateCheck)
+    }
+
+    @Test
+    fun withoutANewerVersionNothingIsShown() {
+        releases.release = testRelease("0.7.0")
+        showApp()
+        composeRule.waitForIdle()
+        assertEquals(UpdateState.UpToDate, updates!!.state.value)
+        composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertDoesNotExist()
+        composeRule.onNodeWithText("設定").performClick()
+        composeRule.onNodeWithText("最新の版です").performScrollTo().assertExists()
     }
 }

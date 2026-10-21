@@ -60,6 +60,9 @@ internal class Verse(
 
     /** 下の句だけの歌。文字の通し番号は元のまま（上の句の先頭を 0 として数える）。 */
     fun shimoOnly(): Verse = Verse(emptyList(), shimo, boundaries)
+
+    /** 上の句だけの歌（「札を覚える」で答える前）。 */
+    fun kamiOnly(): Verse = Verse(kami, emptyList(), boundaries)
 }
 
 /**
@@ -224,7 +227,7 @@ internal fun VerseText(
         verticalArrangement = Arrangement.Center,
     ) {
         verse.kami.forEach { VerseLineText(it, style, spanFor, fade) }
-        // 下の句だけ（前置きの前の歌の下の句）のときは間を空けない
+        // 下の句だけ（前置きの前の歌の下の句）・上の句だけ（札を覚える）のときは間を空けない
         if (verse.kami.isNotEmpty() && verse.shimo.isNotEmpty()) Spacer(Modifier.height(gap))
         verse.shimo.forEach { VerseLineText(it, style, spanFor, fade) }
     }

@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import io.github.abonsan.hyakunin.ui.HyakuninApp
 import io.github.abonsan.hyakunin.ui.home.GameConfigStore
+import io.github.abonsan.hyakunin.ui.quiz.QuizStore
 import io.github.abonsan.hyakunin.ui.settings.AppSettingsStore
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
 import io.github.abonsan.hyakunin.ui.theme.HyakuninTheme
@@ -23,6 +24,7 @@ class MainActivity : ComponentActivity() {
         volumeControlStream = AudioManager.STREAM_MUSIC
         val configStore = GameConfigStore(applicationContext)
         val settingsStore = AppSettingsStore(applicationContext)
+        val quizStore = QuizStore(applicationContext)
         // 中身を描く前に、設定した画面の向きを指定する
         applyOrientation(settingsStore.load().orientation)
         setContent {
@@ -30,6 +32,7 @@ class MainActivity : ComponentActivity() {
                 HyakuninApp(
                     configStore = configStore,
                     settingsStore = settingsStore,
+                    quizStore = quizStore,
                     onOrientationChange = ::applyOrientation,
                 )
             }

@@ -42,6 +42,8 @@ class AppSettingsTest {
         // 音量は初めは 100%（対戦設定の既定と同じ）
         assertEquals(1f, AppSettingsStore(context).load().voiceVolume)
         assertEquals(GameConfig().voiceVolume, AppSettings().voiceVolume)
+        // 起動時の更新の確認は初めからオン
+        assertTrue(AppSettingsStore(context).load().autoUpdateCheck)
     }
 
     @Test
@@ -54,6 +56,7 @@ class AppSettingsTest {
                     verseStyle = verseStyle,
                     voiceEnabled = verseStyle == VerseStyle.KANA,
                     voiceVolume = 0.05f * (orientation.ordinal * 2 + verseStyle.ordinal + 1),
+                    autoUpdateCheck = verseStyle == VerseStyle.READING,
                 )
                 AppSettingsStore(context).save(settings)
                 // 別のインスタンス（アプリの再起動に相当）でも読める
@@ -196,5 +199,18 @@ class AppSettingsTest {
         // 型の違う値も読めない値として扱う
         prefs.edit { putInt("verse_style", 1) }
         assertEquals(VerseStyle.KANA, AppSettingsStore(prefs).load().verseStyle)
+    }
+
+    @Test
+    fun theUpdateCheckIsOnUnlessTurnedOff() {
+        // 以前の版で保存した設定（起動時の確認の項目がない）でも、確認はオン
+        prefs.edit { putBoolean("voice_enabled", false) }
+        assertTrue(AppSettingsStore(context).load().autoUpdateCheck)
+        AppSettingsStore(context).save(AppSettings(autoUpdateCheck = false))
+        assertEquals(false, prefs.getBoolean("auto_update_check", true))
+        assertEquals(false, AppSettingsStore(context).load().autoUpdateCheck)
+        // 読めない値は既定値（オン）にする
+        prefs.edit { putString("auto_update_check", "no") }
+        assertTrue(AppSettingsStore(context).load().autoUpdateCheck)
     }
 }

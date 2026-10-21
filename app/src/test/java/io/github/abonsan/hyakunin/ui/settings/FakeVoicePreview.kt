@@ -6,11 +6,18 @@ import io.github.abonsan.hyakunin.audio.VoicePreviewFactory
 
 /** 渡された命令を記録するだけの「試聴」の再生器（音は鳴らさない）。[finish] で鳴り終えたことにできる。 */
 internal class FakeVoicePreview(private val onStopped: () -> Unit) : VoicePreview {
-    /** 渡された命令（「play 音声 音量」「volume 音量」「stop」「release」）。 */
+    /** 渡された命令（「play 音声 音量」「volume 音量」「pause」「resume」「stop」「release」）。 */
     val commands = mutableListOf<String>()
 
     var playing = false
         private set
+
+    /** [pause] で止めているか。 */
+    var paused = false
+        private set
+
+    /** 鳴らしている間に返す位置（ms）。テストが進める。 */
+    var position = 0L
 
     /** 今の音量。まだ渡されていなければ null。 */
     var volume: Float? = null
@@ -27,8 +34,28 @@ internal class FakeVoicePreview(private val onStopped: () -> Unit) : VoicePrevie
         if (released || !focusGranted) return false
         this.volume = volume
         playing = true
+        paused = false
+        position = 0L
         return true
     }
+
+    override fun pause() {
+        commands += "pause"
+        if (!playing) return
+        playing = false
+        paused = true
+    }
+
+    override fun resume(): Boolean {
+        commands += "resume"
+        if (!paused || !focusGranted) return false
+        paused = false
+        playing = true
+        return true
+    }
+
+    override val positionMillis: Long?
+        get() = if (playing || paused) position else null
 
     override fun setVolume(volume: Float) {
         commands += "volume $volume"
@@ -38,11 +65,13 @@ internal class FakeVoicePreview(private val onStopped: () -> Unit) : VoicePrevie
     override fun stop() {
         commands += "stop"
         playing = false
+        paused = false
     }
 
     override fun release() {
         commands += "release"
         playing = false
+        paused = false
         released = true
     }
 

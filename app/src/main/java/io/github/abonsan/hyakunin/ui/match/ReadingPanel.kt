@@ -65,6 +65,9 @@ private val NoticeSlotHeight = 64.dp
 /** 狭い欄では知らせを2段に積むので、欄を高くする。 */
 private val NarrowNoticeSlotHeight = 92.dp
 
+/** 知らせの欄を空けないときの、句の下の余白。 */
+private val NoNoticeBottomSpace = 12.dp
+
 /** 知らせ（印と文）を横に並べられる欄の幅。これより狭ければ積む。 */
 private val WideNoticeMinWidth = 320.dp
 
@@ -110,6 +113,7 @@ internal fun ReadingPanel(
  * @param description 読み上げ機能に渡す句の文字（表示している部分）
  * @param titleRequired 見出しを省けない（低い欄でも出す）なら true。省ける見出しは、句を横に並べても
  *   入り切らない低い欄では省く
+ * @param noticeSlot 知らせの欄を空けておくか。知らせを出さない欄（札を覚える）では false にして、句に高さを回す
  */
 @Composable
 internal fun VersePanel(
@@ -121,11 +125,16 @@ internal fun VersePanel(
     notice: LockoutNotice?,
     modifier: Modifier = Modifier,
     titleRequired: Boolean = false,
+    noticeSlot: Boolean = true,
 ) {
     CenterPanel(modifier) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val narrowNotice = maxWidth < WideNoticeMinWidth
-            val slotHeight = if (narrowNotice) NarrowNoticeSlotHeight else NoticeSlotHeight
+            val slotHeight = when {
+                !noticeSlot -> NoNoticeBottomSpace
+                narrowNotice -> NarrowNoticeSlotHeight
+                else -> NoticeSlotHeight
+            }
             val verseWidth = maxWidth - 32.dp
             val roomBelowHeader = maxHeight - slotHeight - ReadingHeaderHeight - 24.dp
             val flowed = roomBelowHeader < verseHeight(ReadingFontMin)
@@ -159,14 +168,18 @@ internal fun VersePanel(
                         }
                     }
                 }
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(slotHeight)
-                        .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (notice != null) LockoutBanner(notice, stacked = narrowNotice)
+                if (noticeSlot) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(slotHeight)
+                            .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (notice != null) LockoutBanner(notice, stacked = narrowNotice)
+                    }
+                } else {
+                    Spacer(Modifier.height(slotHeight))
                 }
             }
         }

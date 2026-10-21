@@ -88,14 +88,18 @@ internal val RuleMode.accent: Color
         RuleMode.SIMPLE -> Kon
     }
 
+/** トップ画面の「札を覚える」（練習）のボタンの文字。 */
+internal const val QUIZ_LABEL = "札を覚える"
+
 /**
- * トップ画面。モードを選ぶと [onSelectMode]、「設定」で [onOpenSettings] を呼ぶ。
+ * トップ画面。モードを選ぶと [onSelectMode]、「札を覚える」で [onOpenQuiz]、「設定」で [onOpenSettings] を呼ぶ。
  * 横に広い画面では、左に題字、右にモードの選択を並べ、スクロールせずに収める。読み上げ音声のクレジットと版
  * （[VERSION_LABEL]）は1行ずつ小さく添える。縦長の画面では「設定」の下、横に広い画面では題字（副題）の下に置く。
  */
 @Composable
 fun TopScreen(
     onSelectMode: (RuleMode) -> Unit,
+    onOpenQuiz: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -126,6 +130,7 @@ fun TopScreen(
                 ) {
                     ModeMenu(
                         onSelectMode = onSelectMode,
+                        onOpenQuiz = onOpenQuiz,
                         onOpenSettings = onOpenSettings,
                         modifier = Modifier
                             .widthIn(max = 480.dp)
@@ -168,6 +173,7 @@ fun TopScreen(
                 )
                 ModeMenu(
                     onSelectMode = onSelectMode,
+                    onOpenQuiz = onOpenQuiz,
                     onOpenSettings = onOpenSettings,
                     modifier = Modifier
                         .widthIn(max = 520.dp)
@@ -269,10 +275,14 @@ private fun FannedCards(cardWidth: Dp, modifier: Modifier = Modifier) {
     }
 }
 
-/** モードの選択と「設定」への入口。[credits] なら、その下に読み上げ音声のクレジットと版を添える。 */
+/**
+ * モードの選択と、「札を覚える」「設定」への入口。[credits] なら、その下に読み上げ音声のクレジットと版を添える。
+ * 「札を覚える」と「設定」は1行に並べて、モードの選択の高さを増やさない（横画面でもスクロールせずに収める）。
+ */
 @Composable
 private fun ModeMenu(
     onSelectMode: (RuleMode) -> Unit,
+    onOpenQuiz: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
@@ -286,12 +296,22 @@ private fun ModeMenu(
             Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
         }
         Spacer(Modifier.height(if (compact) 2.dp else 10.dp))
-        SecondaryButton(
-            text = "設定",
-            onClick = onOpenSettings,
-            icon = R.drawable.ic_settings,
-            minHeight = if (compact) 44.dp else 48.dp,
-        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            SecondaryButton(
+                text = QUIZ_LABEL,
+                onClick = onOpenQuiz,
+                modifier = Modifier.weight(1f),
+                icon = R.drawable.ic_cards,
+                minHeight = if (compact) 44.dp else 48.dp,
+            )
+            SecondaryButton(
+                text = "設定",
+                onClick = onOpenSettings,
+                modifier = Modifier.weight(1f),
+                icon = R.drawable.ic_settings,
+                minHeight = if (compact) 44.dp else 48.dp,
+            )
+        }
         if (credits) {
             Spacer(Modifier.height(if (compact) 6.dp else 12.dp))
             Credits()

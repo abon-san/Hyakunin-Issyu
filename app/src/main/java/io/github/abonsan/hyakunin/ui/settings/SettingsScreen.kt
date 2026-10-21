@@ -53,6 +53,10 @@ import io.github.abonsan.hyakunin.ui.theme.Sumi
 import io.github.abonsan.hyakunin.ui.theme.UsuzumiText
 import io.github.abonsan.hyakunin.ui.theme.Washi
 import io.github.abonsan.hyakunin.ui.theme.noLineBreak
+import io.github.abonsan.hyakunin.ui.update.AUTO_UPDATE_CHECK_LABEL
+import io.github.abonsan.hyakunin.ui.update.UpdateStatus
+import io.github.abonsan.hyakunin.update.AppRelease
+import io.github.abonsan.hyakunin.update.UpdateState
 import kotlin.math.roundToInt
 
 /** 縦に積むときの設定の板の幅の上限。 */
@@ -62,11 +66,13 @@ private val NarrowCardMaxWidth = 560.dp
 private val WideCardsMaxWidth = 960.dp
 
 /**
- * 設定の画面。画面の向きの板、対戦の板（句の表示・敵陣の札の向き・読み上げ音声とその音量）、クレジットの板を、
- * 縦長の画面では縦に積み、横に広い画面では左右の列に分けて上下に詰める。
+ * 設定の画面。画面の向きの板、対戦の板（句の表示・敵陣の札の向き・読み上げ音声とその音量）、アップデートの板、
+ * クレジットの板を、縦長の画面では縦に積み、横に広い画面では左右の列に分けて上下に詰める。
  * 変えた設定は [onSettingsChange] ですぐに渡す。
  *
  * @param previewClip 音量の「試聴」で鳴らすクリップ（序歌の上の句）。読み込み中・音声がないときは null で、「試聴」を押せない
+ * @param updateState アプリの更新の状態。「今すぐ確認」で [onCheckUpdate]、新しい版に更新するときは [onUpdate]、
+ *   ダウンロードをやめるときは [onCancelUpdate] を呼ぶ
  */
 @Composable
 fun SettingsScreen(
@@ -75,7 +81,16 @@ fun SettingsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     previewClip: VoiceClip? = null,
+    updateState: UpdateState = UpdateState.Idle,
+    onCheckUpdate: () -> Unit = {},
+    onUpdate: (AppRelease) -> Unit = {},
+    onCancelUpdate: () -> Unit = {},
 ) {
+    val updateSettings: @Composable (SettingSpacing) -> Unit = { spacing ->
+        SettingsCard {
+            UpdateSettings(settings, onSettingsChange, spacing, updateState, onCheckUpdate, onUpdate, onCancelUpdate)
+        }
+    }
     BoxWithConstraints(
         modifier
             .fillMaxSize()
@@ -100,7 +115,7 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 if (wide) {
-                    // 左に画面の向きとクレジット、右に対戦の設定（読み上げ音声の音量まで。右の方が少し高い）
+                    // 左に画面の向き・アップデート・クレジット、右に対戦の設定（読み上げ音声の音量まで）
                     Row(
                         Modifier
                             .widthIn(max = WideCardsMaxWidth)
@@ -109,6 +124,7 @@ fun SettingsScreen(
                     ) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             SettingsCard { OrientationSetting(settings, onSettingsChange, spacing) }
+                            updateSettings(spacing)
                             SettingsCard { Credits(spacing) }
                         }
                         SettingsCard(Modifier.weight(1f)) {
@@ -124,6 +140,8 @@ fun SettingsScreen(
                         SettingsCard { OrientationSetting(settings, onSettingsChange, spacing) }
                         Spacer(Modifier.height(14.dp))
                         SettingsCard { MatchDisplaySettings(settings, onSettingsChange, spacing, previewClip) }
+                        Spacer(Modifier.height(14.dp))
+                        updateSettings(spacing)
                         Spacer(Modifier.height(14.dp))
                         SettingsCard { Credits(spacing) }
                     }
@@ -201,6 +219,32 @@ private fun MatchDisplaySettings(
         onVolumeChange = { onSettingsChange(settings.copy(voiceVolume = it)) },
         enabled = settings.voiceEnabled,
         previewClip = previewClip,
+        spacing = spacing,
+    )
+}
+
+/** アップデート（今の版・今すぐ確認・起動時に確認するか）。 */
+@Composable
+private fun UpdateSettings(
+    settings: AppSettings,
+    onSettingsChange: (AppSettings) -> Unit,
+    spacing: SettingSpacing,
+    updateState: UpdateState,
+    onCheckUpdate: () -> Unit,
+    onUpdate: (AppRelease) -> Unit,
+    onCancelUpdate: () -> Unit,
+) {
+    SettingBlock(spacing = spacing) {
+        SectionLabel("アップデート")
+        Spacer(Modifier.height(spacing.label))
+        UpdateStatus(updateState, onCheckUpdate, onUpdate, onCancelUpdate)
+    }
+    PanelDivider()
+    SwitchSetting(
+        title = AUTO_UPDATE_CHECK_LABEL,
+        description = "アプリを開いたときに、新しい版が出ていないかを確かめます",
+        checked = settings.autoUpdateCheck,
+        onCheckedChange = { onSettingsChange(settings.copy(autoUpdateCheck = it)) },
         spacing = spacing,
     )
 }

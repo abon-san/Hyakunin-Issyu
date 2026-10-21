@@ -17,6 +17,10 @@ import io.github.abonsan.hyakunin.game.Side
 import io.github.abonsan.hyakunin.ui.home.GameConfigStore
 import io.github.abonsan.hyakunin.ui.match.MatchScreen
 import io.github.abonsan.hyakunin.ui.match.Scenes
+import io.github.abonsan.hyakunin.ui.quiz.QuizStore
+import io.github.abonsan.hyakunin.update.FakeReleaseSource
+import io.github.abonsan.hyakunin.update.UpdateViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.abonsan.hyakunin.ui.settings.AppSettingsStore
 import io.github.abonsan.hyakunin.ui.theme.HyakuninTheme
 import org.junit.Rule
@@ -57,7 +61,17 @@ class StateRestorationTest {
     fun theScreenAndTheSelectedModeAreKept() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         tester.setContent {
-            HyakuninTheme { HyakuninApp(GameConfigStore(context), AppSettingsStore(context)) }
+            HyakuninTheme {
+                HyakuninApp(
+                    GameConfigStore(context),
+                    AppSettingsStore(context),
+                    QuizStore(context),
+                    // 新しい版は確かめない（通信しない）
+                    updates = viewModel {
+                        UpdateViewModel(FakeReleaseSource(), { _, _ -> error("落とさない") }, { error("入れない") })
+                    },
+                )
+            }
         }
         composeRule.onNodeWithText("簡易モード").performClick()
         composeRule.onNodeWithText("対戦設定").assertExists()
