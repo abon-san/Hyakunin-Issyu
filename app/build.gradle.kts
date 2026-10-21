@@ -12,12 +12,27 @@ android {
         applicationId = "io.github.abonsan.hyakunin"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.6.0"
+        versionCode = 13
+        versionName = "0.7.0"
+    }
+
+    // リリースの署名。鍵は環境変数で渡す（GitHub Actions が Secrets から渡す。RELEASING.md）。
+    // 渡されていなければ、release ビルドは署名なしで作る
+    val releaseKeystore = System.getenv("HYAKUNIN_KEYSTORE_FILE")
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("HYAKUNIN_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("HYAKUNIN_KEY_ALIAS")
+                keyPassword = System.getenv("HYAKUNIN_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
+            if (releaseKeystore != null) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

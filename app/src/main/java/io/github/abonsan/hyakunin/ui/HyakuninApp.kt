@@ -53,6 +53,10 @@ import io.github.abonsan.hyakunin.ui.settings.AppSettingsStore
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
 import io.github.abonsan.hyakunin.ui.settings.SettingsScreen
 import io.github.abonsan.hyakunin.ui.theme.Washi
+import io.github.abonsan.hyakunin.ui.update.UpdateConfirmationLauncher
+import io.github.abonsan.hyakunin.ui.update.UpdateDialogs
+import io.github.abonsan.hyakunin.ui.update.rememberAppUpdates
+import io.github.abonsan.hyakunin.update.UpdateViewModel
 
 /** アプリの画面。 */
 internal enum class Screen {
@@ -83,6 +87,8 @@ internal enum class Screen {
  * @param onOrientationChange 画面の向きの設定が変わったときに呼ぶ（Activity に向きを指定する）。
  * @param voiceBanks 読み上げ音声の読み込み。読み上げ音声を使う設定なら、トップ以外の画面を開いたときに裏で読み込み始める
  *   （設定の画面では「試聴」に使う）。
+ * @param updates アプリの更新。設定の「起動時に更新を確認」がオンなら、起動したときに一度確かめ、新しい版があれば
+ *   トップ画面で知らせる。設定の画面でも確かめられる。
  */
 @Composable
 fun HyakuninApp(
@@ -91,6 +97,7 @@ fun HyakuninApp(
     quizStore: QuizStore,
     onOrientationChange: (ScreenOrientation) -> Unit = {},
     voiceBanks: VoiceBankSource = rememberAssetVoiceBanks(),
+    updates: UpdateViewModel = rememberAppUpdates(),
 ) {
     var screen by rememberSaveable { mutableStateOf(Screen.TOP) }
     var mode by rememberSaveable { mutableStateOf(RuleMode.COMPETITIVE) }
@@ -102,6 +109,14 @@ fun HyakuninApp(
     var quizId by rememberSaveable { mutableIntStateOf(0) }
     // 練習を始めたときに出題すると決めた札の歌番号（練習中は変わらない）
     var quizPoemNos by rememberSaveable { mutableStateOf(IntArray(0)) }
+    val updateState by updates.state.collectAsState()
+    // この起動の間は、新しい版の知らせをもう出さない（「あとで」を押した）
+    var updatePromptDismissed by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(updates) {
+        if (settings.autoUpdateCheck) updates.checkOnLaunch()
+    }
+    UpdateConfirmationLauncher(updates, updateState)
 
     BackHandler(enabled = screen == Screen.SETUP || screen == Screen.SETTINGS || screen == Screen.QUIZ_SETUP) {
         screen = Screen.TOP
@@ -112,14 +127,28 @@ fun HyakuninApp(
     }
 
     when (screen) {
-        Screen.TOP -> TopScreen(
-            onSelectMode = {
-                mode = it
-                screen = Screen.SETUP
-            },
-            onOpenQuiz = { screen = Screen.QUIZ_SETUP },
-            onOpenSettings = { screen = Screen.SETTINGS },
-        )
+        Screen.TOP -> {
+            TopScreen(
+                onSelectMode = {
+                    mode = it
+                    screen = Screen.SETUP
+                },
+                onOpenQuiz = { screen = Screen.QUIZ_SETUP },
+                onOpenSettings = { screen = Screen.SETTINGS },
+            )
+            UpdateDialogs(
+                state = updateState,
+                promptDismissed = updatePromptDismissed,
+                onUpdate = {
+                    // インストールをやめても、この起動の間は知らせ直さない
+                    updatePromptDismissed = true
+                    updates.update(it)
+                },
+                onCancel = updates::cancel,
+                onDismiss = updates::dismiss,
+                onLater = { updatePromptDismissed = true },
+            )
+        }
         Screen.SETUP -> MatchSetupScreen(
             config = setupConfig,
             onConfigChange = {
@@ -152,6 +181,10 @@ fun HyakuninApp(
                 onBack = { screen = Screen.TOP },
                 // 「試聴」は序歌の上の句を鳴らす（読み込み終えるまで・音声がなければ押せない）
                 previewClip = (voice as? VoiceBankState.Ready)?.bank?.jokaKami,
+                updateState = updateState,
+                onCheckUpdate = updates::check,
+                onUpdate = updates::update,
+                onCancelUpdate = updates::cancel,
             )
         }
         Screen.MATCH -> MatchScope(matchId = matchId, isActive = { screen == Screen.MATCH }) {

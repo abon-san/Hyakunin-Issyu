@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -386,6 +387,29 @@ fun WafuDialog(
     onDismiss: () -> Unit,
     onDismissRequest: () -> Unit,
 ) {
+    WafuDialogFrame(title = title, onDismissRequest = onDismissRequest) {
+        Text(message, style = MaterialTheme.typography.bodyMedium, color = UsuzumiText)
+        Spacer(Modifier.height(22.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+        ) {
+            SecondaryButton(dismissLabel, onDismiss)
+            PrimaryButton(confirmLabel, onConfirm)
+        }
+    }
+}
+
+/**
+ * [WafuDialog] の枠（和紙の面・金茶の枠・見出し）。見出しの下は [content] で自由に置く。
+ * 外に触れても閉じない（[onDismissRequest] は戻る操作で呼ぶ）。
+ */
+@Composable
+fun WafuDialogFrame(
+    title: String,
+    onDismissRequest: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     Dialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(dismissOnClickOutside = false, usePlatformDefaultWidth = false),
@@ -404,15 +428,7 @@ fun WafuDialog(
             Column(Modifier.padding(horizontal = 24.dp, vertical = 22.dp)) {
                 Text(title, style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(12.dp))
-                Text(message, style = MaterialTheme.typography.bodyMedium, color = UsuzumiText)
-                Spacer(Modifier.height(22.dp))
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
-                ) {
-                    SecondaryButton(dismissLabel, onDismiss)
-                    PrimaryButton(confirmLabel, onConfirm)
-                }
+                content()
             }
         }
     }

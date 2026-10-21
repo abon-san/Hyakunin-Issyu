@@ -22,6 +22,7 @@ import io.github.abonsan.hyakunin.ui.settings.AppSettingsStore
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
 import io.github.abonsan.hyakunin.ui.startFirstRead
 import org.junit.After
+import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -44,6 +45,12 @@ class MainActivityTest {
 
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private var scenario: ActivityScenario<MainActivity>? = null
+
+    @Before
+    fun setUp() {
+        // 本物の MainActivity は GitHub に新しい版を確かめに行くので、起動時の確認を切っておく
+        AppSettingsStore(context).save(AppSettings(autoUpdateCheck = false))
+    }
 
     @After
     fun tearDown() {
@@ -93,7 +100,7 @@ class MainActivityTest {
 
     @Test
     fun appliesTheSavedOrientationWhenLaunched() {
-        AppSettingsStore(context).save(AppSettings(orientation = ScreenOrientation.LANDSCAPE))
+        AppSettingsStore(context).save(AppSettings(orientation = ScreenOrientation.LANDSCAPE, autoUpdateCheck = false))
         val scenario = launch()
         assertEquals(ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE, scenario.activity().requestedOrientation)
     }

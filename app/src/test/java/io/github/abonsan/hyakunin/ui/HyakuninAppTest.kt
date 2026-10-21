@@ -1,6 +1,7 @@
 package io.github.abonsan.hyakunin.ui
 
 import android.content.Context
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.semantics.SemanticsActions
@@ -54,6 +55,23 @@ import io.github.abonsan.hyakunin.ui.settings.PREVIEW_LABEL
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
 import io.github.abonsan.hyakunin.ui.settings.VOLUME_LABEL
 import io.github.abonsan.hyakunin.ui.theme.HyakuninTheme
+import io.github.abonsan.hyakunin.ui.update.AUTO_UPDATE_CHECK_LABEL
+import io.github.abonsan.hyakunin.ui.update.CHECK_UPDATE_LABEL
+import io.github.abonsan.hyakunin.ui.update.LATER_LABEL
+import io.github.abonsan.hyakunin.ui.update.UPDATE_AVAILABLE_TITLE
+import io.github.abonsan.hyakunin.ui.update.UPDATE_LABEL
+import io.github.abonsan.hyakunin.ui.update.updateToLabel
+import io.github.abonsan.hyakunin.update.FakeApkDownloader
+import io.github.abonsan.hyakunin.update.FakeApkInstaller
+import io.github.abonsan.hyakunin.update.FakeReleaseSource
+import io.github.abonsan.hyakunin.update.InstallResult
+import io.github.abonsan.hyakunin.update.UpdateState
+import io.github.abonsan.hyakunin.update.UpdateViewModel
+import io.github.abonsan.hyakunin.update.testRelease
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
+import org.junit.rules.TemporaryFolder
+import org.robolectric.Shadows.shadowOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.junit.Assert.assertEquals
@@ -84,6 +102,16 @@ class HyakuninAppTest {
     private val players = RecordingVoicePlayerFactory()
     private val previews = FakeVoicePreviewFactory()
 
+    @get:Rule
+    val temp = TemporaryFolder()
+
+    /** 最新の版（既定はリリースなし）。アプリの更新は、この偽物で確かめる。 */
+    private val releases = FakeReleaseSource()
+    private val downloader by lazy { FakeApkDownloader(temp.root) }
+    private val installer = FakeApkInstaller()
+    private val installResults = MutableSharedFlow<InstallResult>(extraBufferCapacity = 8)
+    private var updates: UpdateViewModel? = null
+
     /**
      * アプリを表示する。読み上げ音声は [voiceBanks]（既定は音声なし）で、対戦と「試聴」の再生器は記録するだけの偽物にする。
      */
@@ -97,6 +125,9 @@ class HyakuninAppTest {
                         quizStore,
                         onOrientationChange = { orientations += it },
                         voiceBanks = voiceBanks,
+                        updates = viewModel {
+                            UpdateViewModel(releases, downloader, installer, currentVersion = "0.7.0", installResults = installResults)
+                        }.also { updates = it },
                     )
                 }
             }
@@ -572,5 +603,79 @@ class HyakuninAppTest {
         composeRule.onNodeWithText(MISSED_ONLY_LABEL).performScrollTo().performClick()
         composeRule.onNodeWithText(quizCountText(1)).assertExists()
         assertEquals(QuizConfig(missedOnly = true), quizStore.loadConfig())
+    }
+
+    @Test
+    fun aNewerVersionIsCheckedOnLaunchAndOfferedOnTheTopScreen() {
+        releases.release = testRelease("0.8.0")
+        showApp()
+        composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertExists()
+        assertEquals(1, releases.checks)
+
+        // 「更新」で落として入れ始め、Android の確認の画面を開く
+        composeRule.onNodeWithText(UPDATE_LABEL).performClick()
+        composeRule.waitForIdle()
+        assertEquals(listOf("apk"), installer.installed)
+        composeRule.onNodeWithText("インストールの確認を待っています").assertExists()
+        val confirm = Intent("android.content.pm.action.CONFIRM_INSTALL")
+        installResults.tryEmit(InstallResult.NeedsConfirmation(confirm))
+        composeRule.waitForIdle()
+        assertEquals(confirm.action, shadowOf(composeRule.activity).nextStartedActivity.action)
+        assertEquals(UpdateState.Installing(testRelease("0.8.0")), updates!!.state.value)
+
+        // 確認の画面でやめると、この起動の間はもう知らせない（設定の画面から更新できる）
+        installResults.tryEmit(InstallResult.Aborted)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertDoesNotExist()
+        composeRule.onNodeWithText("設定").performClick()
+        composeRule.onNodeWithText(updateToLabel(testRelease("0.8.0"))).performScrollTo().assertExists()
+    }
+
+    @Test
+    fun laterHidesTheOfferUntilTheNextLaunch() {
+        releases.release = testRelease("0.8.0")
+        showApp()
+        composeRule.onNodeWithText(LATER_LABEL).performClick()
+        composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertDoesNotExist()
+        // 対戦設定から戻っても、知らせ直さない
+        composeRule.onNodeWithText("競技モード").performClick()
+        pressBack()
+        composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertDoesNotExist()
+        assertTrue(installer.installed.isEmpty())
+        assertEquals(1, releases.checks)
+    }
+
+    @Test
+    fun withTheAutoCheckOffTheUpdateIsCheckedOnlyFromSettings() {
+        settingsStore.save(AppSettings(autoUpdateCheck = false))
+        releases.release = testRelease("0.8.0")
+        showApp()
+        composeRule.waitForIdle()
+        assertEquals(0, releases.checks)
+        composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertDoesNotExist()
+
+        // 設定の「今すぐ確認」で確かめる
+        composeRule.onNodeWithText("設定").performClick()
+        composeRule.onNodeWithText(CHECK_UPDATE_LABEL).performScrollTo().performClick()
+        assertEquals(1, releases.checks)
+        composeRule.onNodeWithText("新しい版（Ver. 0.8.0）があります").assertExists()
+        composeRule.onNodeWithText(updateToLabel(testRelease("0.8.0"))).performScrollTo().performClick()
+        composeRule.waitForIdle()
+        assertEquals(listOf("apk"), installer.installed)
+
+        // 起動時の確認を入れ直す
+        composeRule.onNodeWithText(AUTO_UPDATE_CHECK_LABEL).performScrollTo().performClick()
+        assertTrue(settingsStore.load().autoUpdateCheck)
+    }
+
+    @Test
+    fun withoutANewerVersionNothingIsShown() {
+        releases.release = testRelease("0.7.0")
+        showApp()
+        composeRule.waitForIdle()
+        assertEquals(UpdateState.UpToDate, updates!!.state.value)
+        composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertDoesNotExist()
+        composeRule.onNodeWithText("設定").performClick()
+        composeRule.onNodeWithText("最新の版です").performScrollTo().assertExists()
     }
 }

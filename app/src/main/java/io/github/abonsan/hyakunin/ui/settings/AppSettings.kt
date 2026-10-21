@@ -32,6 +32,8 @@ data class AppSettings(
      * 対戦開始時に [GameConfig.voiceVolume] へ渡す。設定の画面の「試聴」もこの音量で鳴らす。
      */
     val voiceVolume: Float = 1f,
+    /** 起動したときに、新しい版が出ていないかを確かめるか。 */
+    val autoUpdateCheck: Boolean = true,
 ) {
     init {
         require(voiceVolume in 0f..GameConfig.MAX_VOICE_VOLUME) { "voiceVolume=$voiceVolume" }
@@ -40,7 +42,7 @@ data class AppSettings(
 
 /**
  * [AppSettings] を SharedPreferences に保存・復元する。読めない値は既定値に戻す。
- * まだ保存していない項目（以前の版から更新した場合の句の表示・読み上げ音声・音量など）も既定値にする。
+ * まだ保存していない項目（以前の版から更新した場合の句の表示・読み上げ音声・音量・更新の確認など）も既定値にする。
  * 音量は、範囲の外の値なら 0〜[GameConfig.MAX_VOICE_VOLUME] に収める（数でない値・無限大は読めない値として既定値にする）。
  * 音量の値の意味（クリップそのままの大きさを 1 とした倍率）は以前の版と同じなので、以前の版で保存した 0〜1 はそのまま使う。
  */
@@ -64,6 +66,8 @@ class AppSettingsStore(private val prefs: SharedPreferences) {
                 ?.takeIf { it.isFinite() }
                 ?.coerceIn(0f, GameConfig.MAX_VOICE_VOLUME)
                 ?: default.voiceVolume,
+            autoUpdateCheck = runCatching { prefs.getBoolean(KEY_AUTO_UPDATE_CHECK, default.autoUpdateCheck) }
+                .getOrDefault(default.autoUpdateCheck),
         )
     }
 
@@ -74,6 +78,7 @@ class AppSettingsStore(private val prefs: SharedPreferences) {
             putString(KEY_VERSE_STYLE, settings.verseStyle.name)
             putBoolean(KEY_VOICE_ENABLED, settings.voiceEnabled)
             putFloat(KEY_VOICE_VOLUME, settings.voiceVolume)
+            putBoolean(KEY_AUTO_UPDATE_CHECK, settings.autoUpdateCheck)
         }
     }
 
@@ -88,5 +93,7 @@ class AppSettingsStore(private val prefs: SharedPreferences) {
         const val KEY_VOICE_ENABLED = "voice_enabled"
 
         const val KEY_VOICE_VOLUME = "voice_volume"
+
+        const val KEY_AUTO_UPDATE_CHECK = "auto_update_check"
     }
 }

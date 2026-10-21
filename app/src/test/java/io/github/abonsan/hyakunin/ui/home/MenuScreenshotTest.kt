@@ -22,11 +22,17 @@ import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.VerseStyle
 import io.github.abonsan.hyakunin.ui.captureScreenshot
+import io.github.abonsan.hyakunin.ui.captureWholeScreen
 import io.github.abonsan.hyakunin.ui.settings.AppSettings
 import io.github.abonsan.hyakunin.ui.settings.ScreenOrientation
 import io.github.abonsan.hyakunin.ui.settings.SettingsScreen
 import io.github.abonsan.hyakunin.ui.settings.settingsDescription
 import io.github.abonsan.hyakunin.ui.theme.HyakuninTheme
+import io.github.abonsan.hyakunin.ui.update.UPDATE_AVAILABLE_TITLE
+import io.github.abonsan.hyakunin.ui.update.UpdateDialogs
+import io.github.abonsan.hyakunin.ui.update.updateToLabel
+import io.github.abonsan.hyakunin.update.UpdateState
+import io.github.abonsan.hyakunin.update.testRelease
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -163,5 +169,59 @@ class MenuScreenshotTest : MenuScreensScreenshotTest(prefix = "") {
         }
         composeRule.onNodeWithText(VerseStyle.READING.settingsDescription).assertExists()
         composeRule.captureScreenshot("settings_reading")
+    }
+
+    @Test
+    fun settingsWithANewVersion() {
+        composeRule.setContent {
+            HyakuninTheme {
+                SettingsScreen(
+                    settings = AppSettings(),
+                    onSettingsChange = {},
+                    onBack = {},
+                    updateState = UpdateState.Available(testRelease("0.8.0")),
+                )
+            }
+        }
+        composeRule.onNodeWithText(updateToLabel(testRelease("0.8.0"))).performScrollTo()
+        composeRule.captureScreenshot("settings_update")
+    }
+
+    @Test
+    fun theTopScreenOffersANewVersion() {
+        composeRule.setContent {
+            HyakuninTheme {
+                TopScreen(onSelectMode = {}, onOpenQuiz = {}, onOpenSettings = {})
+                UpdateDialogs(
+                    state = UpdateState.Available(testRelease("0.8.0", notes = "札を覚える機能を足しました\n音量を200%まで上げられるようにしました")),
+                    promptDismissed = false,
+                    onUpdate = {},
+                    onCancel = {},
+                    onDismiss = {},
+                    onLater = {},
+                )
+            }
+        }
+        composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertExists()
+        composeRule.captureWholeScreen("top_update")
+    }
+
+    @Test
+    fun theDownloadProgressIsShown() {
+        composeRule.setContent {
+            HyakuninTheme {
+                TopScreen(onSelectMode = {}, onOpenQuiz = {}, onOpenSettings = {})
+                UpdateDialogs(
+                    state = UpdateState.Downloading(testRelease("0.8.0"), 0.42f),
+                    promptDismissed = true,
+                    onUpdate = {},
+                    onCancel = {},
+                    onDismiss = {},
+                    onLater = {},
+                )
+            }
+        }
+        composeRule.onNodeWithText("42%").assertExists()
+        composeRule.captureWholeScreen("top_update_downloading")
     }
 }

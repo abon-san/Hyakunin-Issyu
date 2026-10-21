@@ -7,10 +7,10 @@ import org.junit.Test
 /** アプリの版。リリースのたびに書き換える。 */
 class AppVersionTest {
     @Test
-    fun theVersionIs060() {
-        assertEquals(12, BuildConfig.VERSION_CODE)
-        assertEquals("0.6.0", BuildConfig.VERSION_NAME)
+    fun theVersionIs070() {
+        assertEquals(13, BuildConfig.VERSION_CODE)
+        assertEquals("0.7.0", BuildConfig.VERSION_NAME)
         // トップ画面の版は versionName から作る
-        assertEquals("Ver. 0.6.0", VERSION_LABEL)
+        assertEquals("Ver. 0.7.0", VERSION_LABEL)
     }
 }
