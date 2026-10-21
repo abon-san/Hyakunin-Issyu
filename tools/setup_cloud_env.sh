@@ -10,7 +10,8 @@ if [ ! -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
   mkdir -p "$SDK/cmdline-tools"
   mv "$tmp/cmdline-tools" "$SDK/cmdline-tools/latest"
 fi
-yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK" --licenses >/dev/null
+# この版の sdkmanager は入れるときにライセンスを受け入れる（--licenses は入力を読まずに終わるので、
+# yes をつなぐと SIGPIPE になり pipefail で止まる）
 "$SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK" "platforms;android-37.2" "build-tools;36.1.0" >/dev/null
 
 # Robolectric の実行時 Jar（Maven Central が 429 を返すことがあるため事前に取得）
