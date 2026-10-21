@@ -1,4 +1,5 @@
 # v から始まるタグ（例: v0.7.0）を push すると、テストを流し、署名したリリース版の APK を GitHub Releases に上げる。
+# Actions の画面の「Run workflow」からも出せる（タグは versionName から作る）。
 # アプリは起動時にここの最新のリリースを確かめて、新しい版を入れる（RELEASING.md）。
 name: Release
 
@@ -6,6 +7,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: リリースの注記（アプリの「新しい版があります」に先頭の数行が出る）
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -26,11 +33,22 @@ jobs:
       - name: タグと versionName を照らし合わせる
         run: |
           version=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::タグ $GITHUB_REF_NAME と versionName $version が合いません"
-            exit 1
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            # 「Run workflow」から出すときは、versionName からタグを作る（もうあれば版を上げ忘れている）
+            tag="v$version"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+              echo "::error::タグ $tag はもうあります。versionCode と versionName を上げてください"
+              exit 1
+            fi
+          else
+            tag="$GITHUB_REF_NAME"
+            if [ "v$version" != "$tag" ]; then
+              echo "::error::タグ $tag と versionName $version が合いません"
+              exit 1
+            fi
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
 
       - name: Android SDK とテストに要るものをそろえる
         # ランナーに入っている SDK ではなく、決まった版の sdkmanager で入れる
@@ -61,10 +79,19 @@ jobs:
       - name: GitHub Releases に上げる
         env:
           GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ inputs.notes }}
         run: |
-          # checkout はタグを軽量タグとして取ってくるので、注記つきのタグを取り直す
-          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
-          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > notes.md
-          gh release create "$GITHUB_REF_NAME" "hyakunin-issyu-$VERSION.apk" \
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            # 注記は入力から。タグはこのコミットに、Release と一緒に作る
+            printf '%s\n' "$NOTES" > notes.md
+            target=(--target "$GITHUB_SHA")
+          else
+            # checkout はタグを軽量タグとして取ってくるので、注記つきのタグを取り直す
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            git tag -l --format='%(contents)' "$TAG" > notes.md
+            target=()
+          fi
+          gh release create "$TAG" "hyakunin-issyu-$VERSION.apk" \
             --title "Ver. $VERSION" \
-            --notes-file notes.md
+            --notes-file notes.md \
+            "${target[@]}"

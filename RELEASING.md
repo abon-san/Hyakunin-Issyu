@@ -44,17 +44,20 @@ Android Studio などで入れたデバッグ版は、署名が違うためリ�
 ## リリースの手順
 
 1. `app/build.gradle.kts` の `versionCode` を1つ上げ、`versionName` を新しい版にする（`AppVersionTest` も合わせる）
-2. コミットして push する
-3. 注記つきのタグを打って push する。タグの名前は `v` と `versionName`（例: `v0.7.0`）。
-   タグの注記がリリースの注記になり、アプリの「新しい版があります」にも先頭の数行が出ます
+2. コミットして、既定のブランチに入れる
+3. 次のどちらかでリリースを出す。リリースの注記は、アプリの「新しい版があります」にも先頭の数行が出ます
+   - **ブラウザから:** リポジトリの「Actions」→ 左の「Release」→「Run workflow」。
+     「リリースの注記」を書いて「Run workflow」を押す。タグ（`v` と `versionName`。例: `v0.7.0`）は自動で作ります
+   - **タグを push する:** 注記つきのタグを打って push する。タグの名前は `v` と `versionName`（例: `v0.7.0`）で、
+     タグの注記がリリースの注記になります
 
-   ```sh
-   git tag -a v0.7.0 -m "自動アップデート機能を足しました"
-   git push origin v0.7.0
-   ```
+     ```sh
+     git tag -a v0.7.0 -m "自動アップデート機能を足しました"
+     git push origin v0.7.0
+     ```
 
 4. GitHub Actions の「Release」がテストを流し、署名したリリース版を作って GitHub Releases に上げる
-   （タグと `versionName` が合わなければ失敗します）
+   （タグと `versionName` が合わない・同じ版のタグがもうあるときは失敗します）
 
 ## 手元で署名したリリース版を作る
 
