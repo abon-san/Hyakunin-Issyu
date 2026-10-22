@@ -7,6 +7,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.abonsan.hyakunin.game.quiz.KimarijiGroup
 import io.github.abonsan.hyakunin.game.quiz.PoemNumberRange
 import io.github.abonsan.hyakunin.game.quiz.QuizConfig
+import io.github.abonsan.hyakunin.game.quiz.QuizReadRange
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,7 +28,7 @@ class QuizStoreTest {
 
     @Test
     fun theRangeIsSaved() {
-        val config = QuizConfig(PoemNumberRange.FROM_61, KimarijiGroup.THREE, missedOnly = true)
+        val config = QuizConfig(PoemNumberRange.FROM_61, KimarijiGroup.THREE, missedOnly = true, QuizReadRange.THROUGH_SHIMO)
         QuizStore(prefs).saveConfig(config)
         assertEquals(config, QuizStore(prefs).loadConfig())
     }
@@ -53,6 +54,7 @@ class QuizStoreTest {
             putString("quiz.number_range", "NOPE")
             putInt("quiz.kimariji", 3)
             putString("quiz.missed_only", "yes")
+            putString("quiz.read_range", "ALL")
             putString("quiz.missed", "18,x,,0,101,87")
         }
         val store = QuizStore(prefs)

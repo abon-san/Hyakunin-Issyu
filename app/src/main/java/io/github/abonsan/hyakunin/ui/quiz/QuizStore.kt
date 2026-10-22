@@ -7,7 +7,8 @@ import io.github.abonsan.hyakunin.game.quiz.QuizConfig
 import io.github.abonsan.hyakunin.ui.home.settingsPreferences
 
 /**
- * 「札を覚える」の出題範囲と、間違えた札の記録を SharedPreferences に保存・復元する（対戦設定と同じファイル）。
+ * 「札を覚える」の設定（出題範囲とどこまで読むか）と、間違えた札の記録を SharedPreferences に保存・復元する
+ * （対戦設定と同じファイル）。
  * 読めない値は既定値（記録なら空）にする。
  */
 class QuizStore(private val prefs: SharedPreferences) {
@@ -21,6 +22,7 @@ class QuizStore(private val prefs: SharedPreferences) {
             kimarijiGroup = enum(KEY_KIMARIJI) ?: default.kimarijiGroup,
             missedOnly = runCatching { prefs.getBoolean(KEY_MISSED_ONLY, default.missedOnly) }
                 .getOrDefault(default.missedOnly),
+            readRange = enum(KEY_READ_RANGE) ?: default.readRange,
         )
     }
 
@@ -29,6 +31,7 @@ class QuizStore(private val prefs: SharedPreferences) {
             putString(KEY_NUMBER_RANGE, config.numberRange.name)
             putString(KEY_KIMARIJI, config.kimarijiGroup.name)
             putBoolean(KEY_MISSED_ONLY, config.missedOnly)
+            putString(KEY_READ_RANGE, config.readRange.name)
         }
     }
 
@@ -55,6 +58,7 @@ class QuizStore(private val prefs: SharedPreferences) {
         const val KEY_NUMBER_RANGE = "quiz.number_range"
         const val KEY_KIMARIJI = "quiz.kimariji"
         const val KEY_MISSED_ONLY = "quiz.missed_only"
+        const val KEY_READ_RANGE = "quiz.read_range"
 
         /** 間違えた札の歌番号（カンマ区切り）。 */
         const val KEY_MISSED = "quiz.missed"

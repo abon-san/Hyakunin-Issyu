@@ -36,6 +36,7 @@ import io.github.abonsan.hyakunin.game.ReadingSpeed
 import io.github.abonsan.hyakunin.game.ReadingStyle
 import io.github.abonsan.hyakunin.game.RuleMode
 import io.github.abonsan.hyakunin.game.VerseStyle
+import io.github.abonsan.hyakunin.game.quiz.QuizReadRange
 import io.github.abonsan.hyakunin.game.quiz.quizPoems
 import io.github.abonsan.hyakunin.game.voice.VoiceBank
 import io.github.abonsan.hyakunin.game.voice.VoiceBankSource
@@ -107,8 +108,9 @@ fun HyakuninApp(
     var settings by remember { mutableStateOf(settingsStore.load()) }
     var setupConfig by remember(mode) { mutableStateOf(configStore.load(mode)) }
     var quizId by rememberSaveable { mutableIntStateOf(0) }
-    // 練習を始めたときに出題すると決めた札の歌番号（練習中は変わらない）
+    // 練習を始めたときに出題すると決めた札の歌番号と、下の句まで読むか（練習中は変わらない）
     var quizPoemNos by rememberSaveable { mutableStateOf(IntArray(0)) }
+    var quizReadsShimo by rememberSaveable { mutableStateOf(false) }
     val updateState by updates.state.collectAsState()
     // この起動の間は、新しい版の知らせをもう出さない（「あとで」を押した）
     var updatePromptDismissed by rememberSaveable { mutableStateOf(false) }
@@ -204,6 +206,7 @@ fun HyakuninApp(
                 },
                 onStart = {
                     quizPoemNos = poems.map { it.no }.toIntArray()
+                    quizReadsShimo = quizConfig.readRange == QuizReadRange.THROUGH_SHIMO
                     quizId++
                     screen = Screen.QUIZ
                 },
@@ -213,6 +216,7 @@ fun HyakuninApp(
         Screen.QUIZ -> MatchScope(matchId = quizId, isActive = { screen == Screen.QUIZ }, holderKey = QUIZ_STORE_KEY) {
             VoicedQuiz(
                 poems = remember(quizPoemNos) { quizPoemNos.map(Poems::byNo) },
+                readsShimo = quizReadsShimo,
                 settings = settings,
                 quizStore = quizStore,
                 voiceBanks = voiceBanks,
@@ -232,6 +236,7 @@ internal const val QUIZ_STORE_KEY = "quiz"
 @Composable
 private fun VoicedQuiz(
     poems: List<Poem>,
+    readsShimo: Boolean,
     settings: AppSettings,
     quizStore: QuizStore,
     voiceBanks: VoiceBankSource,
@@ -240,6 +245,7 @@ private fun VoicedQuiz(
     val quiz = @Composable { bank: VoiceBank? ->
         QuizRoute(
             poems = poems,
+            readsShimo = readsShimo,
             verseStyle = settings.verseStyle,
             onAnswered = { poem, correct -> quizStore.recordAnswer(poem.no, correct) },
             onExit = onExit,

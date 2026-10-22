@@ -32,11 +32,13 @@ import androidx.compose.ui.unit.dp
 import io.github.abonsan.hyakunin.game.quiz.KimarijiGroup
 import io.github.abonsan.hyakunin.game.quiz.PoemNumberRange
 import io.github.abonsan.hyakunin.game.quiz.QuizConfig
+import io.github.abonsan.hyakunin.game.quiz.QuizReadRange
 import io.github.abonsan.hyakunin.ui.components.ChoiceRow
 import io.github.abonsan.hyakunin.ui.components.PanelDivider
 import io.github.abonsan.hyakunin.ui.components.PrimaryButton
 import io.github.abonsan.hyakunin.ui.components.ScreenHeader
 import io.github.abonsan.hyakunin.ui.components.SectionLabel
+import io.github.abonsan.hyakunin.ui.components.SelectedDescription
 import io.github.abonsan.hyakunin.ui.components.SettingBlock
 import io.github.abonsan.hyakunin.ui.components.SettingSpacing
 import io.github.abonsan.hyakunin.ui.components.SettingsCard
@@ -56,6 +58,9 @@ internal const val QUIZ_START_LABEL = "練習開始"
 /** 練習のしかたの説明。 */
 internal const val QUIZ_DESCRIPTION = "上の句の読み上げを聞いて、下の句の取り札を4枚から選びます。範囲の札を1回ずつ出します。"
 
+/** どこまで読むかの見出し。 */
+internal const val READ_RANGE_LABEL = "読み上げ"
+
 /** 「間違えた札だけ」の見出し。 */
 internal const val MISSED_ONLY_LABEL = "間違えた札だけ"
 
@@ -73,7 +78,8 @@ private val NumberRangeRows = PoemNumberRange.entries.chunked(3)
 private const val WIDE_SIDE_WEIGHT = 0.36f
 
 /**
- * 「札を覚える」の設定の画面。歌番号・決まり字・間違えた札だけかで出題範囲を選び、「練習開始」で始める。
+ * 「札を覚える」の設定の画面。歌番号・決まり字・間違えた札だけかで出題範囲を選び、どこまで読むか（上の句だけ・
+ * 下の句まで）を選んで、「練習開始」で始める。
  * 範囲の保存は呼び出し側が [onConfigChange] で行う。範囲に合う札がない（[poemCount] が 0）ときは始められない。
  * 横に広い画面では、左に見出しと「練習開始」、右に設定を置く。低い画面ではスクロールする。
  *
@@ -98,7 +104,9 @@ fun QuizSetupScreen(
         val wide = isWideLayout(maxWidth, maxHeight)
         val spacing = if (wide) SettingSpacing.Dense else SettingSpacing.Regular
         val settings: @Composable ColumnScope.() -> Unit = {
-            QuizRangeSettings(config, missedCount, onConfigChange, spacing)
+            SettingsCard { QuizRangeSettings(config, missedCount, onConfigChange, spacing) }
+            Spacer(Modifier.height(if (wide) 12.dp else 14.dp))
+            SettingsCard { QuizReadRangeSetting(config, onConfigChange, spacing) }
         }
         if (wide) {
             Row(Modifier.fillMaxSize()) {
@@ -130,9 +138,8 @@ fun QuizSetupScreen(
                         .fadingBottomEdge(scroll, Washi)
                         .verticalScroll(scroll)
                         .padding(start = 8.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
-                ) {
-                    SettingsCard(content = settings)
-                }
+                    content = settings,
+                )
             }
         } else {
             Column(
@@ -152,7 +159,7 @@ fun QuizSetupScreen(
                         .padding(horizontal = 20.dp),
                 ) {
                     Description(Modifier.padding(start = 4.dp, top = 2.dp, bottom = 14.dp))
-                    SettingsCard(content = settings)
+                    settings()
                     Spacer(Modifier.height(12.dp))
                 }
                 StartArea(
@@ -192,6 +199,23 @@ private fun StartArea(poemCount: Int, onStart: () -> Unit, modifier: Modifier = 
                 .height(56.dp),
             enabled = poemCount > 0,
         )
+    }
+}
+
+/** どこまで読むか（上の句だけ・下の句まで）。 */
+@Composable
+private fun QuizReadRangeSetting(config: QuizConfig, onConfigChange: (QuizConfig) -> Unit, spacing: SettingSpacing) {
+    SettingBlock(spacing = spacing) {
+        SectionLabel(READ_RANGE_LABEL)
+        Spacer(Modifier.height(spacing.label))
+        ChoiceRow(
+            options = QuizReadRange.entries,
+            selected = config.readRange,
+            label = { it.label },
+            onSelect = { onConfigChange(config.copy(readRange = it)) },
+        )
+        Spacer(Modifier.height(8.dp))
+        SelectedDescription(QuizReadRange.entries, config.readRange, { it.description })
     }
 }
 

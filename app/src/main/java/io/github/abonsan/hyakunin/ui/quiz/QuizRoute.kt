@@ -19,10 +19,11 @@ import io.github.abonsan.hyakunin.game.voice.VoiceBank
 import io.github.abonsan.hyakunin.ui.components.WafuDialog
 
 /**
- * 「札を覚える」の入口。ViewModel と上の句の読み手（[QuizReader]）は、呼び出し側が練習ごとに用意した ViewModelStore に作る。
- * アプリが裏に回った間と、やめるかを確かめている間は、上の句の読みを止める。
+ * 「札を覚える」の入口。ViewModel と読み手（[QuizReader]）は、呼び出し側が練習ごとに用意した ViewModelStore に作る。
+ * アプリが裏に回った間と、やめるかを確かめている間は、読みを止める。
  *
  * @param poems 出題する札（1枚以上）
+ * @param readsShimo 答える前に下の句まで読むか。false なら上の句だけ
  * @param onAnswered 答えるたびに、その歌と正解したかを渡す（間違えた札の記録）
  * @param voiceBank 読み上げ音声。null なら文字だけで読む
  * @param volume 読み上げの音量（設定の「音量」）
@@ -30,13 +31,14 @@ import io.github.abonsan.hyakunin.ui.components.WafuDialog
 @Composable
 fun QuizRoute(
     poems: List<Poem>,
+    readsShimo: Boolean,
     verseStyle: VerseStyle,
     onAnswered: (Poem, Boolean) -> Unit,
     onExit: () -> Unit,
     voiceBank: VoiceBank? = null,
     volume: Float = 1f,
 ) {
-    val viewModel = viewModel { QuizViewModel(poems, onAnswered = onAnswered) }
+    val viewModel = viewModel { QuizViewModel(poems, readsShimo = readsShimo, onAnswered = onAnswered) }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val reader = rememberQuizReader()
     var confirmingExit by rememberSaveable { mutableStateOf(false) }

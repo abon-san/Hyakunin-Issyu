@@ -95,8 +95,11 @@ internal const val RETRY_LABEL = "もう一度"
 /** 結果の画面で、練習を終えるボタンの文字。 */
 internal const val FINISH_LABEL = "終わる"
 
-/** 答える前の句の欄の見出し。 */
+/** 答える前の句の欄の見出し（上の句だけを読むとき）。 */
 private const val KAMI_TITLE = "上の句"
+
+/** 答える前の句の欄の見出し（下の句まで読むとき）。 */
+private const val KAMI_SHIMO_TITLE = "上の句・下の句"
 
 /** 何問目か（例:「第 3 問 ／ 全 20 問」）。 */
 internal fun questionCounterText(number: Int, total: Int) = "第 $number 問 ／ 全 $total 問"
@@ -198,7 +201,8 @@ fun QuizScreen(
 }
 
 /**
- * 句の欄。答える前は上の句を、読んだ文字まで浮かび上がらせて書く（まだ読んでいない文字は場所だけ取る）。
+ * 句の欄。答える前は上の句（下の句まで読むなら歌全体）を、読んだ文字まで浮かび上がらせて書く
+ * （まだ読んでいない文字は場所だけ取る）。
  * 答えた後は歌全体を、決まり字・答えたときに読まれていた部分・読まれていなかった部分に分けて書く。
  */
 @Composable
@@ -222,15 +226,15 @@ private fun QuizVerse(state: QuizUiState, verseStyle: VerseStyle, modifier: Modi
             noticeSlot = false,
         )
     } else {
-        val kami = remember(verse) { verse.kamiOnly() }
+        val read = remember(verse, state.readsShimo) { if (state.readsShimo) verse else verse.kamiOnly() }
         val revealed = verse.displayCount(state.revealedKana)
         VersePanel(
-            title = KAMI_TITLE,
-            verse = kami,
+            title = if (state.readsShimo) KAMI_SHIMO_TITLE else KAMI_TITLE,
+            verse = read,
             spanFor = { index -> if (index < revealed) Revealed else Hidden },
             fade = rememberKanaFadeIn(state.readId, revealed),
             // 読んだ部分（表示している文字）だけを読み上げ機能に渡す
-            description = kami.text.take(revealed),
+            description = read.text.take(revealed),
             notice = null,
             modifier = modifier,
             noticeSlot = false,

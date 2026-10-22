@@ -19,6 +19,9 @@ data class QuizQuestion(
 ) {
     /** 上の句の仮名の数（空白を除く）。 */
     val kamiKanaCount: Int get() = kanaCount(poem.kamiYomi)
+
+    /** 下の句の仮名の数（空白を除く）。 */
+    val shimoKanaCount: Int get() = kanaCount(poem.shimoYomi)
 }
 
 sealed interface QuizPhase {
@@ -38,10 +41,12 @@ data class QuizUiState(
     /** 今の問題の番号（0始まり）。終えた後も最後の問題のまま。 */
     val index: Int,
     val phase: QuizPhase,
-    /** 今の問題の上の句で、読んで見せた仮名の数（読みの仮名で数える）。 */
+    /** 今の問題で、読んで見せた仮名の数（読みの仮名で、上の句から下の句へ通して数える）。 */
     val revealedKana: Int,
-    /** 上の句を読み始めるたびに（次の問題・読み直し・やり直し）増える番号。再生側はこれが変わったら鳴らし始める。 */
+    /** 読み始めるたびに（次の問題・読み直し・やり直し）増える番号。再生側はこれが変わったら鳴らし始める。 */
     val readId: Long,
+    /** 答える前に下の句まで読むか（[QuizReadRange.THROUGH_SHIMO]）。false なら上の句だけ。 */
+    val readsShimo: Boolean,
     val correctCount: Int,
     /** この回で間違えた歌（答えた順）。 */
     val missed: List<Poem>,
@@ -50,17 +55,23 @@ data class QuizUiState(
 
     /** 今の問題が最後の問題か。 */
     val isLast: Boolean get() = index == questions.lastIndex
+
+    /** 今の問題で読む仮名の数（上の句だけ、または下の句まで）。 */
+    val readKanaCount: Int
+        get() = question.kamiKanaCount + if (readsShimo) question.shimoKanaCount else 0
 }
 
 /**
- * 「札を覚える」の進行役。[poems] を1回ずつ無作為な順に出題する。上の句を読んで見せた仮名の数は、
+ * 「札を覚える」の進行役。[poems] を1回ずつ無作為な順に出題する。読んで見せた仮名の数は、
  * 再生側（音声の位置、または文字だけなら時間）が [reveal] で知らせる。UI のスレッド（メイン）からだけ呼ぶこと。
  *
+ * @param readsShimo 答える前に下の句まで読むか。false なら上の句だけ
  * @param allPoems 決まり字の判定と誤答の札に使う100首
  * @param onAnswered 答えるたびに、その歌と正解したかを渡す（間違えた札の記録に使う）
  */
 class QuizViewModel(
     poems: List<Poem>,
+    private val readsShimo: Boolean = false,
     private val random: Random = Random.Default,
     private val allPoems: List<Poem> = Poems.all,
     private val onAnswered: (Poem, Boolean) -> Unit = { _, _ -> },
@@ -82,14 +93,15 @@ class QuizViewModel(
             phase = QuizPhase.Asking,
             revealedKana = 0,
             readId = readId,
+            readsShimo = readsShimo,
             correctCount = 0,
             missed = emptyList(),
         )
     }
 
-    /** 上の句を [kana] 字目まで読んだ。答える前だけ、増えるときだけ受け付ける。 */
+    /** [kana] 字目まで読んだ（上の句から下の句へ通して数える）。答える前だけ、増えるときだけ受け付ける。 */
     fun reveal(kana: Int) {
-        val count = kana.coerceAtMost(state.question.kamiKanaCount)
+        val count = kana.coerceAtMost(state.readKanaCount)
         if (state.phase != QuizPhase.Asking || count <= state.revealedKana) return
         _uiState.value = state.copy(revealedKana = count)
     }
@@ -117,7 +129,7 @@ class QuizViewModel(
         }
     }
 
-    /** 答える前に、上の句を初めから読み直す。 */
+    /** 答える前に、初めから読み直す。 */
     fun replay() {
         if (state.phase != QuizPhase.Asking) return
         _uiState.value = state.copy(revealedKana = 0, readId = state.readId + 1)

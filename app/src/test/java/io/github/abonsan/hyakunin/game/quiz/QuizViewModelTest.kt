@@ -129,4 +129,28 @@ class QuizViewModelTest {
         assertEquals(listOf(18 to false), answers.take(3).filter { !it.second })
         assertEquals(18 to true, answers.last())
     }
+
+    @Test
+    fun readingThroughTheShimoRevealsTheWholePoem() {
+        val vm = QuizViewModel(listOf(Poems.byNo(18)), readsShimo = true, random = Random(7))
+        val question = vm.state.question
+        assertTrue(vm.state.readsShimo)
+        assertEquals(question.kamiKanaCount + question.shimoKanaCount, vm.state.readKanaCount)
+        // 上の句を越えて、下の句の終わりまで出せる
+        vm.reveal(question.kamiKanaCount + 3)
+        assertEquals(question.kamiKanaCount + 3, vm.state.revealedKana)
+        vm.reveal(100)
+        assertEquals(vm.state.readKanaCount, vm.state.revealedKana)
+        vm.answer(18)
+        assertEquals(QuizPhase.Answered(18, correct = true, revealedAtAnswer = vm.state.readKanaCount), vm.state.phase)
+        // やり直しても下の句まで読む
+        vm.restart(listOf(Poems.byNo(87)))
+        assertTrue(vm.state.readsShimo)
+
+        // 上の句だけなら、上の句の終わりで止まる
+        val kamiOnly = quiz(18)
+        assertEquals(kamiOnly.state.question.kamiKanaCount, kamiOnly.state.readKanaCount)
+        kamiOnly.reveal(100)
+        assertEquals(kamiOnly.state.question.kamiKanaCount, kamiOnly.state.revealedKana)
+    }
 }
