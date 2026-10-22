@@ -27,12 +27,25 @@ enum class KimarijiGroup(val label: String, val lengths: IntRange) {
     FOUR_OR_MORE("四字以上", 4..Int.MAX_VALUE),
 }
 
-/** 「札を覚える」の出題範囲。歌番号・決まり字・間違えた札の条件をすべて満たす札を出す。 */
+/** 「札を覚える」で、答える前にどこまで読むか。 */
+enum class QuizReadRange(val label: String, val description: String) {
+    /** 上の句だけを読む。 */
+    KAMI_ONLY("上の句だけ", "上の句を読んだら止めます"),
+
+    /** 上の句に続けて下の句も読む（文字も下の句まで出す）。下の句を聞いてから選べる。 */
+    THROUGH_SHIMO("下の句まで", "上の句に続けて下の句も読み、文字も出します"),
+}
+
+/**
+ * 「札を覚える」の設定。出題範囲（歌番号・決まり字・間違えた札の条件をすべて満たす札を出す）と、どこまで読むか。
+ */
 data class QuizConfig(
     val numberRange: PoemNumberRange = PoemNumberRange.ALL,
     val kimarijiGroup: KimarijiGroup = KimarijiGroup.ALL,
     /** これまでに間違えた札だけを出すか。 */
     val missedOnly: Boolean = false,
+    /** 答える前にどこまで読むか。出題範囲には関わらない。 */
+    val readRange: QuizReadRange = QuizReadRange.KAMI_ONLY,
 )
 
 /** [config] の範囲に入る札（歌番号順）。[missed] はこれまでに間違えた札の歌番号。 */

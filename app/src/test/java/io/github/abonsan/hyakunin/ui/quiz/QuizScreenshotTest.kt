@@ -99,6 +99,16 @@ abstract class QuizScreensScreenshotTest(private val prefix: String) {
     }
 
     @Test
+    fun askingThroughTheShimo() {
+        val vm = QuizViewModel(listOf(Poems.byNo(31)), readsShimo = true, random = Random(3))
+        // 上の句を読み終え、下の句の「よしのの」まで読んだ
+        vm.reveal(vm.uiState.value.question.kamiKanaCount + 4)
+        show(vm.uiState.value)
+        composeRule.onNodeWithContentDescription("あさぼらけありあけのつきとみるまでによしのの").assertExists()
+        capture("asking_shimo")
+    }
+
+    @Test
     fun answeredWrong() {
         val vm = quiz()
         vm.reveal(7)

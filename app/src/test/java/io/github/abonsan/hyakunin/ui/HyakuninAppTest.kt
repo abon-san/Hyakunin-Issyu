@@ -29,6 +29,7 @@ import io.github.abonsan.hyakunin.game.quiz.KimarijiGroup
 import io.github.abonsan.hyakunin.game.quiz.PoemNumberRange
 import io.github.abonsan.hyakunin.game.quiz.QuizConfig
 import io.github.abonsan.hyakunin.game.quiz.QuizPhase
+import io.github.abonsan.hyakunin.game.quiz.QuizReadRange
 import io.github.abonsan.hyakunin.game.voice.VoiceBankSource
 import io.github.abonsan.hyakunin.game.voice.FAKE_JOKA_KAMI
 import io.github.abonsan.hyakunin.game.voice.VoiceBankState
@@ -677,5 +678,63 @@ class HyakuninAppTest {
         composeRule.onNodeWithText(UPDATE_AVAILABLE_TITLE).assertDoesNotExist()
         composeRule.onNodeWithText("設定").performClick()
         composeRule.onNodeWithText("最新の版です").performScrollTo().assertExists()
+    }
+
+    @Test
+    fun theQuizCanReadThroughTheShimo() {
+        quizStore.saveConfig(
+            QuizConfig(
+                numberRange = PoemNumberRange.FROM_1,
+                kimarijiGroup = KimarijiGroup.ONE,
+                readRange = QuizReadRange.THROUGH_SHIMO,
+            ),
+        )
+        showApp(voiceBanks = VoiceBankSource.ready(fakeVoiceBank(poems = Poems.all)))
+        composeRule.onNodeWithText(QUIZ_LABEL).performClick()
+        composeRule.onNodeWithText(QuizReadRange.THROUGH_SHIMO.label).performScrollTo().assertIsSelected()
+        composeRule.onNodeWithText(QUIZ_START_LABEL).performClick()
+        composeRule.onNodeWithText(questionCounterText(1, 1)).assertExists()
+        val preview = previews.previews.single()
+        val quiz = activeQuiz()!!
+        val kami = quiz.uiState.value.question.kamiKanaCount
+        assertEquals("play voice/p018_kami.ogg 1.0", preview.commands.last { it.startsWith("play") })
+
+        // 上の句を最後まで聞いた（上の句は 100ms から 200ms ごと）
+        preview.position = 100L + 200L * (kami - 1)
+        composeRule.advanceMainLooper(100L)
+        assertEquals(kami, quiz.uiState.value.revealedKana)
+        preview.finish()
+        // 対戦と同じ間（0.65 秒）を置いて、下の句を鳴らす
+        composeRule.advanceMainLooper(300L)
+        assertTrue(preview.commands.none { it.startsWith("play voice/p018_shimo") })
+        composeRule.advanceMainLooper(600L)
+        assertEquals("play voice/p018_shimo.ogg 1.0", preview.commands.last { it.startsWith("play") })
+        // 下の句の文字も、聞こえている位置まで出す（下の句は 100ms から 300ms ごと）
+        preview.position = 450L
+        composeRule.advanceMainLooper(100L)
+        assertEquals(kami + 2, quiz.uiState.value.revealedKana)
+
+        // 答えると止める
+        composeRule.onNodeWithContentDescription(Poems.byNo(18).shimoKana).performClick()
+        assertEquals("stop", preview.commands.last())
+        assertEquals(QuizPhase.Answered(18, correct = true, revealedAtAnswer = kami + 2), quiz.uiState.value.phase)
+    }
+
+    @Test
+    fun theQuizStopsAfterTheKamiByDefault() {
+        askOnlySumiNoE()
+        showApp(voiceBanks = VoiceBankSource.ready(fakeVoiceBank(poems = Poems.all)))
+        composeRule.onNodeWithText(QUIZ_LABEL).performClick()
+        composeRule.onNodeWithText(QuizReadRange.KAMI_ONLY.label).performScrollTo().assertIsSelected()
+        composeRule.onNodeWithText(QUIZ_START_LABEL).performClick()
+        composeRule.onNodeWithText(questionCounterText(1, 1)).assertExists()
+        val preview = previews.previews.single()
+        preview.position = 5_000L
+        composeRule.advanceMainLooper(100L)
+        preview.finish()
+        composeRule.advanceMainLooper(2_000L)
+        // 下の句は鳴らさない
+        assertEquals(listOf("play voice/p018_kami.ogg 1.0"), preview.commands.filter { it.startsWith("play") })
+        assertEquals(activeQuiz()!!.uiState.value.question.kamiKanaCount, activeQuiz()!!.uiState.value.revealedKana)
     }
 }

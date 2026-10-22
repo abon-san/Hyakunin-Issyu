@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.abonsan.hyakunin"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.7.0"
+        versionCode = 14
+        versionName = "0.7.1"
     }
 
     // リリースの署名。鍵は環境変数で渡す（GitHub Actions が Secrets から渡す。RELEASING.md）。
